@@ -1,0 +1,14 @@
+# Hello world Python project on ares.
+# Creates a small project directory and runs it.
+
+id: hello-python
+name: "Hello Python — first project on ares"
+worker: ares
+
+eval:
+  commands:
+    - mkdir -p ~/factory/hello-python
+    - 'echo "print(\"hello from ares!\")" > ~/factory/hello-python/hello.py'
+    - python3 ~/factory/hello-python/hello.py
+  working_dir: /tmp
+  timeout: 30

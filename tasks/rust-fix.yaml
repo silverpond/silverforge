@@ -1,0 +1,20 @@
+# Feedback loop test — broken code is already planted, Claude must fix it.
+
+id: rust-fix
+name: "Rust fix — feedback loop test"
+worker: ares
+
+coder:
+  prompt: |
+    You are working in a Rust project at ~/factory/projects/hello-rust.
+    The function `celsius_to_fahrenheit` in src/main.rs has a bug causing tests to fail.
+    Find and fix the bug so all tests in the conversion_tests module pass.
+    Do not remove or modify the tests.
+  max_iterations: 3
+  session_timeout: 300
+
+eval:
+  commands:
+    - cargo test conversion_tests
+  working_dir: ~/factory/projects/hello-rust
+  timeout: 60

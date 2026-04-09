@@ -1,0 +1,25 @@
+# Tests the feedback loop — divide has edge cases Claude often gets wrong first time.
+
+id: rust-divide
+name: "Rust divide — feedback loop test"
+worker: ares
+
+coder:
+  prompt: |
+    You are working in a Rust project at ~/factory/projects/hello-rust.
+    Add a function called `divide` to src/main.rs with this exact signature:
+      pub fn divide(a: f64, b: f64) -> Result<f64, String>
+    It should:
+    - Return Ok(a / b) for normal division
+    - Return Err("division by zero".to_string()) if b is 0.0
+    - Return Err("negative divisor".to_string()) if b is negative
+
+    Also add tests that cover all three cases. Do not remove any existing code.
+  max_iterations: 3
+  session_timeout: 300
+
+eval:
+  commands:
+    - cargo test divide
+  working_dir: ~/factory/projects/hello-rust
+  timeout: 60

@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Run artifacts — machine-specific, not useful to others
+runs/
+!runs/.gitkeep
+

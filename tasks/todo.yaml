@@ -1,0 +1,42 @@
+# Task template for the rust-todo GitHub poll workflow.
+# This is passed to `factory poll --template tasks/todo.yaml --repo owner/rust-todo`
+#
+# The issue title + body become the coder prompt (see factory/poller.py).
+# Replace OWNER below with your GitHub username once the repo is created.
+
+id: todo
+name: "Rust TODO app — template (overridden per issue)"
+worker: ares
+
+repo:
+  path: ~/factory/projects/rust-todo
+  branch: master
+  url: https://github.com/gokhanpicgeta/rust-todo
+
+coder:
+  prompt: ""           # filled in from GitHub issue by poller
+  max_iterations: 3
+  session_timeout: 600
+
+untangle:
+  lang: rust
+  fail_on: fanout-increase,new-scc
+  timeout: 30
+
+crucible:
+  block_on: Critical
+  timeout: 300
+
+evaluator:
+  criteria: |
+    The fix must be correct, minimal, and not break existing functionality.
+    Tests must cover the fixed behaviour.
+    If the fix is incomplete or the tests are missing, return NEEDS_CHANGES.
+  timeout: 120
+
+eval:
+  commands:
+    - cargo test
+    - cargo clippy -- -D warnings
+  working_dir: ~/factory/projects/rust-todo
+  timeout: 120

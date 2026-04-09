@@ -1,0 +1,28 @@
+# Hello Rust — coder + cargo test, each run in its own git worktree.
+
+id: hello-rust
+name: "Hello Rust — coder + cargo test"
+worker: ares
+
+repo:
+  path: ~/factory/projects/hello-rust
+  branch: master
+
+coder:
+  prompt: |
+    You are working in a Rust project.
+    Add a function called `multiply` to src/main.rs that takes two i32 arguments
+    and returns their product. Also add a test for it using #[cfg(test)] and #[test].
+    Do not remove the existing main function.
+  max_iterations: 3
+  session_timeout: 300
+
+evaluator:
+  criteria: "ensure the function handles edge cases like negative numbers and zero"
+
+eval:
+  commands:
+    - cargo build
+    - cargo test
+  working_dir: ~/factory/projects/hello-rust  # overridden by worktree at runtime
+  timeout: 120

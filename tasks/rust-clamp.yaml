@@ -1,0 +1,36 @@
+# Evaluator rejection test — coder writes minimal tests, evaluator rejects them.
+
+id: rust-clamp
+name: "Rust clamp — evaluator rejection test"
+worker: ares
+
+repo:
+  path: ~/factory/projects/hello-rust
+  branch: master
+
+coder:
+  prompt: |
+    You are working in a Rust project at ~/factory/projects/hello-rust.
+    Add a function called `clamp` to src/main.rs with this signature:
+      pub fn clamp(value: i32, min: i32, max: i32) -> i32
+    It should return value clamped between min and max.
+    Add exactly ONE test for it. Do not remove existing code.
+  max_iterations: 3
+  session_timeout: 300
+
+evaluator:
+  criteria: |
+    Tests must cover ALL of the following cases or return NEEDS_CHANGES:
+    1. value below min (should return min)
+    2. value above max (should return max)
+    3. value already within range (should return value unchanged)
+    4. value equals min exactly
+    5. value equals max exactly
+    If any of these cases are missing from the tests, return NEEDS_CHANGES and list which cases are missing.
+  timeout: 120
+
+eval:
+  commands:
+    - cargo test clamp
+  working_dir: ~/factory/projects/hello-rust
+  timeout: 60

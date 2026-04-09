@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=42"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "silverpond-factory"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "typer[all]>=0.12",
+    "rich>=13",
+    "pydantic>=2",
+    "pyyaml>=6",
+]
+
+[tool.setuptools.packages.find]
+include = ["factory*"]
+
+[project.scripts]
+factory = "factory.cli:app"

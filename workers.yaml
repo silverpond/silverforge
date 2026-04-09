@@ -1,0 +1,12 @@
+# Worker machine configuration.
+# Add more workers here as the fleet grows (zeus, artemis, ...).
+
+workers:
+  ares:
+    host: ares.silverpond.com.au
+    user: vishprasad
+    port: 22
+    identity_file: ~/.ssh/id_ed25519
+    aoe_available: true
+    default_worktree_base: ~/factory/worktrees
+    shell_init: "export PATH=$HOME/.nix-profile/bin:$HOME/.cargo/bin:$PATH"  # loads Nix + Rust for non-interactive SSH

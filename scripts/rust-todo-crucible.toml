@@ -1,0 +1,16 @@
+[coordinator]
+rounds = 1
+quorum = 1
+reviewer_timeout_secs = 120
+
+[verdict]
+block_on = ["Critical"]
+
+[prechecks]
+untangle = false   # factory already runs untangle separately
+linters = false
+type_checks = false
+tests = false      # factory already runs cargo test separately
+
+[plugins]
+reviewers = ["claude-code"]

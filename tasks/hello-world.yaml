@@ -1,0 +1,14 @@
+# Hello-world task — proves the SSH → eval → store loop works.
+# No repo, no agent. Just runs three simple commands on ares and saves the output.
+
+id: hello-world
+name: "Hello World — ares connectivity check"
+worker: ares
+
+eval:
+  commands:
+    - echo "hello from ares"
+    - uname -a
+    - hostname
+  working_dir: /tmp
+  timeout: 10

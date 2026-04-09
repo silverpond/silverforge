@@ -1,0 +1,22 @@
+# Feedback loop test — todo!() stub guarantees iteration 1 fails.
+
+id: rust-median
+name: "Rust median — forced feedback loop"
+worker: ares
+
+coder:
+  prompt: |
+    You are working in a Rust project at ~/factory/projects/hello-rust.
+    The file src/stats.rs contains a `median` function with a todo!() stub.
+    Implement it so all tests in stats::tests pass.
+    The function takes a mutable Vec<i32> and returns f64.
+    It must handle odd-length, even-length, and single-element vectors correctly.
+    Do not modify the tests.
+  max_iterations: 3
+  session_timeout: 300
+
+eval:
+  commands:
+    - cargo test stats
+  working_dir: ~/factory/projects/hello-rust
+  timeout: 60

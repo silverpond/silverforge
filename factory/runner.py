@@ -62,7 +62,7 @@ def launch_task(task: TaskDefinition, workers_path: Path = Path("workers.yaml"))
     if task.slack is not None and slack_token:
         try:
             slack_client = SlackClient(slack_token)
-            channel_id = slack_client.find_or_create_channel("factory", cached_id=get_cached_channel_id())
+            channel_id = slack_client.find_or_create_channel(f"factory-{worker.user}", cached_id=get_cached_channel_id())
             run.slack_channel_id = channel_id
             if task.slack.reviewers:
                 slack_client.invite(channel_id, task.slack.reviewers)

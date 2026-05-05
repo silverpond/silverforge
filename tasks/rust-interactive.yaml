@@ -1,0 +1,30 @@
+# Interactive test — agent pauses and waits for human input via Slack before proceeding.
+
+id: rust-interactive
+name: "Rust interactive — Slack input test"
+worker: ares
+
+slack:
+  reviewers:
+    - U0ALFSY45E0
+
+coder:
+  prompt: |
+    You are working in a Rust project at ~/factory/projects/hello-rust.
+
+    Step 1: Read src/main.rs and describe what you see. Then STOP and ask the human:
+    "What would you like me to do with this file? Please reply in Slack."
+
+    Wait for a reply before doing anything else.
+
+    Step 2: Once the human replies, carry out their instruction.
+
+    Step 3: Output a completion summary as required.
+  max_iterations: 1
+  session_timeout: 600
+
+eval:
+  commands:
+    - echo "interaction complete"
+  working_dir: ~/factory/projects/hello-rust
+  timeout: 10

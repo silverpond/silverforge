@@ -11,12 +11,15 @@ worker: ares
 repo:
   path: ~/factory/projects/rust-todo
   branch: master
-  url: https://github.com/gokhanpicgeta/rust-todo
+  url: git@github.com:gokhanpicgeta/rust-todo.git
 
 coder:
   prompt: ""           # filled in from GitHub issue by poller
   max_iterations: 3
   session_timeout: 600
+  agents:
+    - claude
+    - codex
 
 untangle:
   lang: rust
@@ -26,6 +29,9 @@ untangle:
 crucible:
   block_on: Critical
   timeout: 300
+
+slack:
+  reviewers: []   # add Slack user IDs here, e.g. ["U12345678"]
 
 evaluator:
   criteria: |

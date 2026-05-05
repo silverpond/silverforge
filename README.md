@@ -1,39 +1,43 @@
 # Silverpond Factory
 
-An automated software factory that polls GitHub issues, fixes them using Claude AI agents on a remote worker machine, and opens pull requests.
+An automated software factory that runs Claude AI agents on a remote worker machine to implement tasks, reviews the code with Crucible, and opens pull requests — all from a single command.
 
-## How it works
+---
 
-1. You label a GitHub issue with `factory`
-2. Run `factory poll` — the factory picks up all labeled issues in parallel
-3. For each issue, on the remote worker:
-   - Creates an isolated git worktree
-   - Runs a Claude coder agent to fix the issue
-   - Evaluates with `cargo test` + `cargo clippy`
-   - Runs [untangle](https://github.com/jonochang/untangle) for structural analysis
-   - Runs [crucible](https://github.com/jonochang/crucible) for multi-agent code review
-   - Runs an evaluator agent to verify the fix matches the issue
-4. On pass: commits, pushes branch, opens PR, closes issue
+## Two ways to use it
 
-## Requirements
+### 1. One-off task
 
-### Local machine
+```bash
+factory run "Add a health check endpoint that returns {\"status\": \"ok\"}" --repo owner/my-repo
+```
 
-- Python 3.10+
-- `gh` CLI (authenticated)
-- SSH access to a worker machine
+Claude runs on the worker, implements the task, Crucible reviews the result, and if anything needs fixing it retries automatically.
 
-### Worker machine
+### 2. Batch from GitHub issues
 
-- Claude CLI (`claude`) installed and authenticated
-- `cargo` / Rust toolchain
-- `untangle` — `cargo install untangle`
-- `crucible` — `nix profile install github:jonochang/crucible`
-- `tmux`
+Label issues with `factory`, then:
+
+```bash
+factory poll owner/my-repo
+```
+
+Every labeled issue gets picked up in parallel — each becomes a task for Claude to fix, with a PR opened on success.
+
+---
+
+## Prerequisites
+
+Before you start, ask your admin to set up:
+
+- **SSH access to ares** — your public key needs to be added to the worker machine
+- **Claude authenticated on ares** — already done once for the team, nothing to do here
+
+---
 
 ## Setup
 
-### 1. Install the factory CLI
+### 1. Install
 
 ```bash
 git clone https://github.com/silverpond/silverpond-factory
@@ -41,115 +45,117 @@ cd silverpond-factory
 pip install -e .
 ```
 
-### 2. Configure your worker
-
-Edit `workers.yaml`:
-
-```yaml
-workers:
-  ares: # name for your worker
-    host: your-worker.example.com # change this
-    user: youruser # change this
-    port: 22
-    identity_file: ~/.ssh/id_ed21125 # path to your SSH private key
-    aoe_available: true
-    default_worktree_base: ~/factory/worktrees
-    shell_init: "export PATH=$HOME/.nix-profile/bin:$HOME/.cargo/bin:$PATH"
-```
-
-### 3. Set your GitHub token
+### 2. Fill in your `.env`
 
 ```bash
-export FACTORY_GITHUB_TOKEN=ghp_your_token_here
+cp .env.example .env
 ```
 
-### 4. Test connectivity
+Then edit `.env` and add:
+
+| Variable | Where to get it |
+|---|---|
+| `FACTORY_GITHUB_TOKEN` | Create at https://github.com/settings/tokens — scopes: `repo`, `issues`, `pull_requests`, `workflows` |
+| `SLACK_BOT_TOKEN` | Ask your admin — from the shared Slack app at api.slack.com/apps |
+| `SLACK_APP_TOKEN` | Ask your admin — same Slack app, under "App-Level Tokens" |
+
+Slack is optional — leave those blank to skip notifications.
+
+### 3. Run the setup wizard
 
 ```bash
-factory ping ares
+factory setup
 ```
 
-## Usage
+This asks for your username on the worker machine, your SSH key, writes your GitHub token to the worker so clone/push works, and optionally creates the standard factory labels on your repo.
 
-### Run a single task
+> **Note:** `workers.yaml` is already configured for the Silverpond ares machine. Your personal SSH key and username stay in `.env` (gitignored) — not in the repo.
+
+### Worker machine requirements
+
+- `claude` CLI installed and authenticated
+- `tmux`
+- `crucible` — `nix profile install github:jonochang/crucible` (for code review)
+- `untangle` — `cargo install untangle` (Rust projects only)
+
+---
+
+## Running tasks
+
+### Inline
 
 ```bash
-factory run tasks/hello-world.yaml
+# Basic
+factory run "Fix the login bug" --repo owner/my-repo
+
+# With eval commands (run after the agent finishes each iteration)
+factory run "Add input validation" --repo owner/my-repo --eval "pytest" --eval "ruff check ."
+
+# Override model and effort
+factory run "Refactor the auth module" --repo owner/my-repo --model opus --effort high
+
+# If you're inside a git repo, --repo is inferred automatically
+cd ~/projects/my-repo
+factory run "Add a health check endpoint"
 ```
+
+Without `--eval`, Crucible is the only quality gate — it reviews the diff and sends feedback to Claude if it finds critical issues.
 
 ### Poll GitHub issues
 
 ```bash
-factory poll owner/repo --template tasks/todo.yaml
+# Basic — picks up all issues labeled 'factory'
+factory poll owner/my-repo
+
+# With eval commands
+factory poll owner/my-repo --eval "bundle exec rails test"
+
+# Override model/effort for all issues in this poll
+factory poll owner/my-repo --model opus --effort low
+
+# Cap how many issues run in parallel (default: worker slot count)
+factory poll owner/my-repo --max-concurrency 2
 ```
 
-Any open issue labeled `factory` will be picked up and processed in parallel.
+Individual issues can override model/effort via labels:
+- `factory:model:opus` — run that issue with Opus
+- `factory:effort:low` — run with low effort
 
-### Check run status
+---
+
+## Monitoring
+
+The terminal frees up immediately after launch. Use these to check on runs:
 
 ```bash
-factory status
-factory status <run_id>
+factory status                  # list all runs
+factory status <run_id>         # detail for one run
+factory attach <run_id>         # attach to the live tmux session on the worker
+factory logs <run_id>           # tail agent output
+factory kill <run_id>           # stop a run
+factory workers                 # show active sessions + CPU/mem on each worker
 ```
 
-### Attach to a live coder session
+---
+
+## Advanced: task YAML files
+
+For repeatable or complex tasks, define them in a YAML file:
 
 ```bash
-factory attach <run_id>
+factory init                    # interactive wizard to create a task YAML
+factory run tasks/my-task.yaml  # run from YAML
+factory poll owner/my-repo --template tasks/my-task.yaml  # poll with YAML template
 ```
 
-## Task template
+YAML files let you configure the full pipeline — eval commands, crucible, untangle, evaluator, Slack reviewers, service ports, and more. See `tasks/todo.yaml` for a complete example.
 
-Tasks are defined in YAML. See `tasks/todo.yaml` for a full example:
+---
 
-```yaml
-id: my-task
-name: "My Task"
-worker: ares # must match a worker in workers.yaml
+## Pipeline
 
-repo:
-  path: ~/projects/my-repo
-  branch: master
-  url: https://github.com/owner/repo # cloned if path doesn't exist
-
-coder:
-  prompt: "" # filled in from GitHub issue when polling
-  max_iterations: 3
-  session_timeout: 600
-
-untangle:
-  lang: rust
-  fail_on: fanout-increase,new-scc
-  timeout: 30
-
-crucible:
-  block_on: Critical
-  timeout: 300
-
-evaluator:
-  criteria: |
-    The fix must be correct and tests must cover the new behaviour.
-  timeout: 120
-
-eval:
-  commands:
-    - cargo test
-    - cargo clippy -- -D warnings
-  working_dir: ~/projects/my-repo
-  timeout: 120
+```
+worktree → agent → eval → crucible → evaluator → PR
 ```
 
-## GitHub setup
-
-Create the required labels in your repo:
-
-```bash
-gh label create factory --repo owner/repo --color 0075ca
-gh label create factory:running --repo owner/repo --color e4e669
-```
-
-Then label any issue you want the factory to fix:
-
-```bash
-gh issue edit <number> --repo owner/repo --add-label factory
-```
+Any stage that fails sends feedback back to the agent for another iteration (up to `max_iterations`, default 3). Stages not configured are skipped.

@@ -4,6 +4,10 @@ id: rust-fix
 name: "Rust fix — feedback loop test"
 worker: ares
 
+slack:
+  reviewers:
+    - U0ALFSY45E0
+
 coder:
   prompt: |
     You are working in a Rust project at ~/factory/projects/hello-rust.

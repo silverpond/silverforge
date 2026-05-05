@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(find /Users/vish/Documents/github/highlighter -type f \\\\\\( -name \"*.py\" -o -name \"*.rb\" \\\\\\) -exec wc -l {} +)",
+      "Bash(git -C /Users/vish/Documents/github/highlighter log --oneline)",
+      "Bash(git:*)"
     ]
   }
 }

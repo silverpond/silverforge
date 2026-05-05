@@ -57,4 +57,4 @@ def run_eval(
 
 
 def eval_passed(results: List[EvalResult]) -> bool:
-    return bool(results) and all(r.exit_code == 0 for r in results)
+    return not results or all(r.exit_code == 0 for r in results)

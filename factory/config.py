@@ -3,6 +3,7 @@ Configuration loading — workers.yaml and task YAML files.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -20,6 +21,12 @@ class WorkerConfig(BaseModel):
     shell_init: Optional[str] = None    # command prepended to every remote command, e.g. "source /etc/profile"
     aoe_available: bool = False
     default_worktree_base: str = "~/factory/worktrees"
+    slots: int = 1           # max concurrent port-using runs on this worker
+    slot_port_base: int = 12000  # slot N gets port slot_port_base + N
+    model: str = "sonnet"    # default claude model alias for all runs on this worker
+    effort: str = "medium"   # default claude effort level for all runs on this worker
+    # Map of agent name -> command on this worker, e.g. {"claude": "claude", "codex": "codex"}
+    agents: Dict[str, str] = {"claude": "claude"}
 
 
 class GlobalConfig(BaseModel):
@@ -29,7 +36,16 @@ class GlobalConfig(BaseModel):
 def load_workers(path: Path = Path("workers.yaml")) -> GlobalConfig:
     with open(path) as f:
         data = yaml.safe_load(f)
-    return GlobalConfig(**data)
+    config = GlobalConfig(**data)
+    # Allow per-engineer overrides via env vars — keeps personal config out of the repo
+    ssh_identity = os.environ.get("FACTORY_SSH_IDENTITY")
+    worker_user = os.environ.get("FACTORY_WORKER_USER")
+    for worker in config.workers.values():
+        if ssh_identity and worker.identity_file is None:
+            worker.identity_file = ssh_identity
+        if worker_user:
+            worker.user = worker_user
+    return config
 
 
 def load_task(path: Path) -> TaskDefinition:

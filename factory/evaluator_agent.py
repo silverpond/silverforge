@@ -8,7 +8,7 @@ it returns a structured verdict.
 from __future__ import annotations
 
 import base64
-from typing import List
+from typing import List, Optional
 
 from factory.models import EvalResult
 from factory.ssh import SSHClient, SSHResult
@@ -50,13 +50,20 @@ REASON: <specific description of what needs to change>
 """
 
 
-def get_diff(client: SSHClient, worktree_path: str) -> str:
-    """Get the uncommitted diff from the worktree (what the coder wrote)."""
-    result = client.run(f"git -C {worktree_path} diff")
-    if result.stdout.strip():
-        return result.stdout
-    # If changes were committed in the worktree, diff against the base branch
-    result = client.run(f"git -C {worktree_path} diff HEAD~1 2>/dev/null || git -C {worktree_path} show HEAD")
+def get_diff(client: SSHClient, worktree_path: str, base_branch: str = "main") -> str:
+    """Get all changes in the worktree relative to base_branch.
+
+    Stages untracked files first so new files written by the agent are visible.
+    The git add -A is safe here — this is a dedicated per-run worktree.
+    """
+    client.run(f"git -C {worktree_path} add -A 2>/dev/null || true", timeout=15)
+    # Diff everything staged against the remote base branch
+    for ref in (f"origin/{base_branch}", base_branch, "HEAD~1"):
+        result = client.run(f"git -C {worktree_path} diff --cached {ref} 2>/dev/null")
+        if result.stdout.strip():
+            return result.stdout
+    # Last resort: show HEAD commit
+    result = client.run(f"git -C {worktree_path} show HEAD 2>/dev/null")
     return result.stdout or "(no diff available)"
 
 
@@ -67,9 +74,12 @@ def run_evaluator(
     eval_results: List[EvalResult],
     extra_criteria: str = "",
     timeout: int = 120,
+    base_branch: str = "main",
+    model: Optional[str] = None,
+    effort: Optional[str] = None,
 ) -> SSHResult:
     """Run claude -p with the review prompt and return the raw result."""
-    diff = get_diff(client, worktree_path)
+    diff = get_diff(client, worktree_path, base_branch)
 
     test_output = "\n".join(
         f"$ {r.command}\n{r.stdout}{r.stderr}".strip()
@@ -84,7 +94,12 @@ def run_evaluator(
     )
 
     encoded = base64.b64encode(prompt.encode()).decode()
-    cmd = f'claude -p "$(echo \'{encoded}\' | base64 -d)"'
+    flags = "-p"
+    if model:
+        flags += f" --model {model}"
+    if effort:
+        flags += f" --effort {effort}"
+    cmd = f'claude {flags} "$(echo \'{encoded}\' | base64 -d)"'
     return client.run(cmd, timeout=timeout)
 
 

@@ -6,6 +6,9 @@ __pycache__/
 dist/
 build/
 
+# Local engineer config — never commit
+.env
+
 # Run artifacts — machine-specific, not useful to others
 runs/
 !runs/.gitkeep

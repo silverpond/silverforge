@@ -5,6 +5,10 @@ id: hello-world
 name: "Hello World — ares connectivity check"
 worker: ares
 
+slack:
+  reviewers:
+    - U0ALFSY45E0
+
 eval:
   commands:
     - echo "hello from ares"

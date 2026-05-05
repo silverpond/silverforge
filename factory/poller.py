@@ -17,13 +17,23 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import typer
+from rich.console import Console
+from rich.text import Text
 
 from factory.config import load_task, load_workers
 from factory.github import GitHubClient
-from factory.models import CoderConfig, EvalConfig, Run, TaskDefinition
-from factory.runner import run_task
+from factory.models import CoderConfig, EvalConfig, Run, RunState, TaskDefinition
+from factory.runner import launch_task, spawn_watcher
+from factory.slack import SlackClient, get_token as get_slack_token
 from factory.ssh import SSHClient
 from factory import store
+
+_console = Console(highlight=False)
+
+
+def _plog(issue_number: int, msg: str, style: str = "") -> None:
+    prefix = Text(f"[#{issue_number}] ", style="bold magenta")
+    _console.print(prefix + Text(msg, style=style))
 
 
 def issue_to_task(issue: Dict, template: TaskDefinition) -> TaskDefinition:
@@ -37,8 +47,12 @@ def issue_to_task(issue: Dict, template: TaskDefinition) -> TaskDefinition:
     title = issue["title"]
     body = issue.get("body") or ""
 
+    # Use the template's coder prompt as a prefix if set, otherwise generic
+    template_prompt = (template.coder.prompt or "") if template.coder else ""
+    preamble = f"{template_prompt}\n\n" if template_prompt.strip() else ""
+
     prompt = (
-        f"You are working on a Rust project.\n\n"
+        f"{preamble}"
         f"GitHub Issue #{number}: {title}\n\n"
         f"{body}\n\n"
         f"Fix this issue in the codebase. Make sure all existing tests still pass."
@@ -48,6 +62,8 @@ def issue_to_task(issue: Dict, template: TaskDefinition) -> TaskDefinition:
         prompt=prompt,
         max_iterations=template.coder.max_iterations if template.coder else 3,
         session_timeout=template.coder.session_timeout if template.coder else 600,
+        agents=template.coder.agents if template.coder else ["claude"],
+        rate_limit_markers=template.coder.rate_limit_markers if template.coder else [],
     )
 
     return TaskDefinition(
@@ -59,6 +75,8 @@ def issue_to_task(issue: Dict, template: TaskDefinition) -> TaskDefinition:
         evaluator=template.evaluator,
         untangle=template.untangle,
         crucible=template.crucible,
+        slack=template.slack,
+        service=template.service,
         eval=template.eval,
     )
 
@@ -95,8 +113,9 @@ def _push_and_pr(
         timeout=30,
     )
 
+    push_url = f"https://github.com/{repo}.git"
     result = client.run(
-        f"git -C {worktree} push origin HEAD:{branch}",
+        f"git -C {worktree} push {push_url} HEAD:{branch}",
         timeout=60,
     )
     if not result.ok:
@@ -105,9 +124,10 @@ def _push_and_pr(
 
     base_branch = task.repo.branch if task.repo else "master"
     verdict_line = f"\n\n**Evaluator:** {run.evaluator_reason}" if run.evaluator_verdict else ""
+    service_line = f"\n\n**Preview:** http://{worker.host}:{run.service_port}" if run.service_port else ""
     pr_body = (
         f"Fixes #{number}\n\n"
-        f"Automated fix by Silverpond Factory (run `{run.run_id}`).{verdict_line}"
+        f"Automated fix by Silverpond Factory (run `{run.run_id}`).{verdict_line}{service_line}"
     )
     try:
         pr = gh.create_pr(
@@ -117,9 +137,24 @@ def _push_and_pr(
             head=branch,
             base=base_branch,
         )
-        typer.echo(f"[issue-{number}] PR opened: {pr['html_url']}")
+        _plog(number, f"PR opened: {pr['html_url']}", style="green")
+        return pr["html_url"]
     except RuntimeError as exc:
-        typer.echo(f"[issue-{number}] WARNING: could not open PR: {exc}")
+        _plog(number, f"WARNING: could not open PR: {exc}", style="yellow")
+    return None
+
+
+def _issue_overrides(issue: Dict) -> Tuple[Optional[str], Optional[str]]:
+    """Extract factory:model:<name> and factory:effort:<level> from issue labels."""
+    model = None
+    effort = None
+    for label in issue.get("labels", []):
+        name = label["name"]
+        if name.startswith("factory:model:"):
+            model = name[len("factory:model:"):]
+        elif name.startswith("factory:effort:"):
+            effort = name[len("factory:effort:"):]
+    return model, effort
 
 
 def _run_one_issue(
@@ -129,46 +164,57 @@ def _run_one_issue(
     repo: str,
     workers_path: Path,
 ) -> Tuple[Dict, Run]:
-    """Run the factory pipeline for a single issue."""
+    """Launch the factory pipeline for a single issue (non-blocking)."""
     number = issue["number"]
     task = issue_to_task(issue, template)
 
-    typer.echo(f"[issue-{number}] starting: {issue['title']}")
+    model, effort = _issue_overrides(issue)
+    if model and task.coder:
+        task.coder.model = model
+        _plog(number, f"  model override: {model}")
+    if effort and task.coder:
+        task.coder.effort = effort
+        _plog(number, f"  effort override: {effort}")
+
+    _plog(number, issue["title"])
     gh.add_label(repo, number, "factory:running")
 
     try:
-        run = run_task(task, workers_path)
+        run = launch_task(task, workers_path)
     except Exception as exc:
-        typer.echo(f"[issue-{number}] ERROR: {exc}")
-        gh.comment_on_issue(repo, number, f"❌ Factory run crashed: {exc}")
+        _plog(number, f"ERROR: {exc}", style="red")
+        gh.comment_on_issue(repo, number, f"❌ Factory launch crashed: {exc}")
         gh.remove_label(repo, number, "factory:running")
         raise
 
-    gh.remove_label(repo, number, "factory:running")
-    gh.remove_label(repo, number, "factory")
+    if run.state == RunState.failed:
+        _plog(number, f"launch failed: {run.notes}", style="red")
+        gh.comment_on_issue(repo, number, f"❌ Factory launch failed: {run.notes or 'unknown error'}")
+        gh.remove_label(repo, number, "factory:running")
+        return issue, run
 
-    if run.state.value == "passed":
-        verdict_line = ""
-        if run.evaluator_verdict:
-            verdict_line = f"\n\n**Evaluator:** {run.evaluator_reason}"
-
-        comment = (
-            f"✅ Factory run **passed** (run `{run.run_id}`)"
-            f"{verdict_line}\n\n"
-            f"Branch: `{_branch_name(task.id, run.run_id)}`"
-        )
-        gh.comment_on_issue(repo, number, comment)
-        gh.close_issue(repo, number)
-        _push_and_pr(gh, repo, run, task, issue, workers_path)
-    else:
-        comment = (
-            f"❌ Factory run **failed** (run `{run.run_id}`)\n\n"
-            f"Notes: {run.notes or 'see run logs'}"
-        )
-        gh.comment_on_issue(repo, number, comment)
-
-    typer.echo(f"[issue-{number}] done → {run.state}")
+    spawn_watcher(run, workers_path, repo=repo, issue_number=number)
+    _plog(number, f"launched  run={run.run_id}", style="green")
     return issue, run
+
+
+def _slack_post_result(run: Run, passed: bool, pr_url: Optional[str] = None) -> None:
+    token = get_slack_token()
+    if not token or not run.slack_channel_id:
+        return
+    try:
+        sl = SlackClient(token)
+        if passed:
+            msg = ":white_check_mark: Run passed"
+            if run.evaluator_reason:
+                msg += f"\n> {run.evaluator_reason}"
+            if pr_url:
+                msg += f"\n:arrow_right: PR opened: {pr_url}"
+        else:
+            msg = f":x: Run failed\n> {run.notes or 'see run logs'}"
+        sl.post(run.slack_channel_id, msg, thread_ts=run.slack_thread_ts or None)
+    except Exception:
+        pass
 
 
 def poll(
@@ -176,9 +222,11 @@ def poll(
     template: TaskDefinition,
     gh: GitHubClient,
     workers_path: Path = Path("workers.yaml"),
+    max_concurrency: int = 4,
 ) -> List[Tuple[Dict, Run]]:
     """
     Fetch all 'factory'-labeled issues and run them in parallel.
+    Concurrency is capped at max_concurrency (default: worker slot count).
     Returns a list of (issue, run) pairs.
     """
     issues = gh.get_issues(repo, "factory")
@@ -188,13 +236,18 @@ def poll(
                [l["name"] for l in i.get("labels", [])]]
 
     if not pending:
-        typer.echo("No pending factory issues found.")
+        _console.print("  [dim]No pending factory issues found.[/dim]")
         return []
 
-    typer.echo(f"Found {len(pending)} issue(s) to process — running in parallel...")
+    cap = min(len(pending), max_concurrency)
+    parallel_note = f"up to {cap} at a time" if len(pending) > cap else "all in parallel"
+    _console.print(f"  Found [bold]{len(pending)}[/bold] issue(s) — {parallel_note}")
+    for i in pending:
+        _console.print(f"    [dim]#{i['number']}[/dim]  {i['title']}")
+    _console.print()
 
     results = []
-    with ThreadPoolExecutor(max_workers=len(pending)) as executor:
+    with ThreadPoolExecutor(max_workers=cap) as executor:
         futures = {
             executor.submit(
                 _run_one_issue, issue, template, gh, repo, workers_path
@@ -206,7 +259,7 @@ def poll(
                 results.append(future.result())
             except Exception as exc:
                 issue = futures[future]
-                typer.echo(f"[issue-{issue['number']}] unhandled error: {exc}")
+                _plog(issue["number"], f"unhandled error: {exc}", style="red")
 
     return results
 

@@ -1,0 +1,20 @@
+id: rust-todo-v2
+name: Rust Todo v2
+worker: ares
+repo:
+  path: ~/factory/projects/rust-todo-v2
+  branch: master
+  url: git@github.com:gokhanpicgeta/rust-todo.git
+coder:
+  prompt: ''
+  max_iterations: 3
+  session_timeout: 600
+  agents:
+  - claude
+  - codex
+eval:
+  commands:
+  - cargo test
+  - cargo clippy -- -D warnings
+  working_dir: ~/factory/projects/rust-todo-v2
+  timeout: 120

@@ -1,0 +1,41 @@
+id: rails-sample
+name: "Rails Sample App"
+worker: ares
+
+repo:
+  path: ~/factory/projects/rails-sample
+  branch: main
+  url: git@github.com:gokhanpicgeta/rails-sample.git
+
+coder:
+  prompt: |
+    Add a simple health check endpoint to the Rails app.
+
+    Create a GET /health route that returns JSON: {"status": "ok"}
+    Write a controller test for it.
+    All existing tests must continue to pass.
+  max_iterations: 3
+  session_timeout: 600
+  agents:
+    - claude
+    - codex
+
+crucible:
+  block_on: Critical
+  timeout: 300
+
+slack: {}
+
+service:
+  port: 3000
+
+evaluator:
+  criteria: |
+    The fix must be correct and not break existing functionality.
+  timeout: 120
+
+eval:
+  commands:
+    - bundle exec rails test
+  working_dir: ~/factory/projects/rails-sample
+  timeout: 120

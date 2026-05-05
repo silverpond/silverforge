@@ -1,0 +1,44 @@
+id: helix-test-target
+name: "Helix test target — add greet None handling"
+worker: ares
+
+slack:
+  reviewers:
+    - U0ALFSY45E0
+
+repo:
+  url: https://github.com/gokhanpicgeta/helix-test-target.git
+  path: ~/factory/repos/helix-test-target
+  branch: main
+
+coder:
+  prompt: |
+    You are working in a Python project. The file app/utils.py currently has two
+    functions: greet() and calculate_discount(). You need to extend it significantly.
+
+    Add the following new functions to app/utils.py:
+
+    1. `format_currency(amount, currency="USD")` — formats a number as a currency
+       string. E.g. format_currency(1234.5) -> "$1,234.50", format_currency(99, "GBP") -> "£99.00".
+       Support USD, GBP, EUR. Raise ValueError for unsupported currencies.
+
+    2. `paginate(items, page, page_size=10)` — returns a dict with keys:
+       `items` (the slice), `page`, `page_size`, `total_pages`, `total_items`.
+       Raise ValueError if page < 1 or page_size < 1.
+
+    3. `slugify(text)` — converts a string to a URL-safe slug.
+       E.g. "Hello World!" -> "hello-world", "  Foo  Bar  " -> "foo-bar".
+       Strip leading/trailing whitespace, lowercase, replace spaces/special chars with hyphens,
+       collapse multiple hyphens into one.
+
+    Write thorough tests for all three functions in tests/test_utils.py covering
+    normal cases, edge cases, and error cases. Think carefully before writing —
+    read the existing code first, then plan your approach, then implement.
+  max_iterations: 3
+  session_timeout: 600
+
+eval:
+  commands:
+    - pytest tests/ -v
+  working_dir: .
+  timeout: 60

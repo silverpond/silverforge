@@ -71,6 +71,7 @@ class CrucibleConfig(BaseModel):
     block_on: str = "Critical"   # severity level that blocks the run
     timeout: int = 300           # seconds for the review
     rounds: int = 1              # how many sequential crucible passes required
+    model: Optional[str] = None  # claude model for crucible's reviewer (e.g. "claude-haiku-4-5-20251001")
 
 
 class GeminiReviewConfig(BaseModel):

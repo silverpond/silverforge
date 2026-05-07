@@ -149,6 +149,7 @@ def run_cmd(
     repo: Optional[str] = typer.Option(None, "--repo", "-r", help="GitHub repo (owner/repo) for inline tasks"),
     eval_cmd: Optional[List[str]] = typer.Option(None, "--eval", help="Eval command(s) for inline tasks"),
     crucible_rounds: Optional[int] = typer.Option(None, "--crucible-rounds", help="Number of crucible review rounds"),
+    crucible_model: Optional[str] = typer.Option(None, "--crucible-model", help="Claude model for crucible reviewer (e.g. haiku)"),
     workers: Path = _WORKERS_OPT,
 ) -> None:
     """Run a task — pass a YAML file or an inline task description."""
@@ -169,6 +170,8 @@ def run_cmd(
         task.coder.effort = effort
     if crucible_rounds is not None and task.crucible:
         task.crucible.rounds = crucible_rounds
+    if crucible_model and task.crucible:
+        task.crucible.model = crucible_model
 
     agents_display = ", ".join(task.coder.agents) if task.coder else "—"
     console.print()
@@ -656,6 +659,21 @@ def setup_cmd(
             os.environ["SLACK_DEFAULT_REVIEWERS"] = reviewers_str
             console.print(f"  [green]✓[/green] Slack reviewers saved to [dim].env[/dim]")
 
+        if not os.environ.get("SLACK_FACTORY_CHANNEL_ID"):
+            console.print(
+                "\n  [dim]Paste an existing channel ID to use it, or leave blank to auto-create"
+                " a factory-{username} channel. To find a channel ID: right-click the channel"
+                " → View channel details → scroll to the bottom of the About tab.[/dim]"
+            )
+            channel_id = ask(questionary.text(
+                "Slack channel ID (leave blank to auto-create):",
+                default="",
+            )).strip()
+            if channel_id:
+                _write_env_var("SLACK_FACTORY_CHANNEL_ID", channel_id)
+                os.environ["SLACK_FACTORY_CHANNEL_ID"] = channel_id
+                console.print(f"  [green]✓[/green] Slack channel ID saved to [dim].env[/dim]")
+
     # Optional: set up labels on a repo
     gh_repo_str = ask(questionary.text(
         "GitHub repo to set up factory labels on (owner/repo, leave blank to skip):",
@@ -939,6 +957,7 @@ def poll(
     effort: Optional[str] = typer.Option(None, "--effort", "-e", help="Override effort (low, medium, high, max)"),
     eval_cmd: Optional[List[str]] = typer.Option(None, "--eval", help="Eval command(s) run after each agent iteration"),
     crucible_rounds: Optional[int] = typer.Option(None, "--crucible-rounds", help="Number of crucible review rounds"),
+    crucible_model: Optional[str] = typer.Option(None, "--crucible-model", help="Claude model for crucible reviewer (e.g. haiku)"),
 ) -> None:
     """
     Fetch open GitHub issues labeled 'factory' and run them in parallel.
@@ -968,6 +987,8 @@ def poll(
         task_template.coder.effort = effort
     if crucible_rounds is not None and task_template.crucible:
         task_template.crucible.rounds = crucible_rounds
+    if crucible_model and task_template.crucible:
+        task_template.crucible.model = crucible_model
     gh = GitHubClient(token)
 
     # Default concurrency to the worker's slot count

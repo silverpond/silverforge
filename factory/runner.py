@@ -532,7 +532,8 @@ def _create_run_worktree(client: SSHClient, task: TaskDefinition, run_id: str, w
     # Prevent factory internals (including secrets) from ever being committed
     client.run(
         f"echo '.factory/' >> {worktree_path}/.gitignore && "
-        f"echo '.claude/' >> {worktree_path}/.gitignore",
+        f"echo '.claude/' >> {worktree_path}/.gitignore && "
+        f"echo '.crucible.toml' >> {worktree_path}/.gitignore",
         timeout=10,
     )
     return worktree_path
@@ -561,6 +562,20 @@ def _run_untangle(client: SSHClient, working_dir: str, base_branch: str, head_br
 
 def _run_crucible(client: SSHClient, working_dir: str, base_branch: str, config: "CrucibleConfig") -> str:
     import json as _json
+    if config.model:
+        import shlex as _shlex
+        patch_script = (
+            "import re; "
+            "c = open('.crucible.toml').read(); "
+            "old = '    \"-p\",\\n    \"--output-format\",\\n    \"json\",\\n]\\npersona = \"Security Auditor\"'; "
+            f"new = '    \"-p\",\\n    \"--output-format\",\\n    \"json\",\\n    \"--model\",\\n    \"{config.model}\",\\n]\\npersona = \"Security Auditor\"'; "
+            "open('.crucible.toml', 'w').write(c.replace(old, new))"
+        )
+        client.run(
+            f"cd {working_dir} && rm -f .crucible.toml && crucible config init && "
+            f"python3 -c {_shlex.quote(patch_script)}",
+            timeout=15,
+        )
     cmd = f"cd {working_dir} && crucible review --branch {base_branch} --json"
     result = client.run(cmd, timeout=config.timeout)
     if not result.stdout.strip():

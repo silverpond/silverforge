@@ -530,7 +530,11 @@ def _create_run_worktree(client: SSHClient, task: TaskDefinition, run_id: str, w
     if not result.ok:
         raise RuntimeError(f"git worktree add failed:\n{result.stderr}")
     # Prevent factory internals (including secrets) from ever being committed
-    client.run(f"echo '.factory/' >> {worktree_path}/.gitignore", timeout=10)
+    client.run(
+        f"echo '.factory/' >> {worktree_path}/.gitignore && "
+        f"echo '.claude/' >> {worktree_path}/.gitignore",
+        timeout=10,
+    )
     return worktree_path
 
 

@@ -107,10 +107,10 @@ def _push_and_pr(
     worktree = run.worktree_path
 
     commit_msg = f"factory: fix for issue #{number}" if number else f"factory: {task.name[:60]}"
-    # Exclude .factory/ (contains secrets like slack-env.sh) then commit any remaining changes
+    # Exclude .factory/ and .claude/ (contain secrets and machine-specific config)
     client.run(
         f"git -C {worktree} add -A && "
-        f"git -C {worktree} reset HEAD .factory/ 2>/dev/null || true && "
+        f"git -C {worktree} reset HEAD .factory/ .claude/ 2>/dev/null || true && "
         f"git -C {worktree} diff --cached --quiet || "
         f"git -C {worktree} commit -m {shlex.quote(commit_msg)}",
         timeout=30,

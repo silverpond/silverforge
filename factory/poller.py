@@ -121,8 +121,7 @@ def _push_and_pr(
         timeout=60,
     )
     if not result.ok:
-        typer.echo(f"WARNING: git push failed:\n{result.stderr}")
-        return None
+        raise RuntimeError(f"git push failed: {result.stderr.strip()}")
 
     base_branch = gh.get_default_branch(repo)
     verdict_line = f"\n\n**Evaluator:** {run.evaluator_reason}" if run.evaluator_verdict else ""

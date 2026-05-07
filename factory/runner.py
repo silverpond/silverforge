@@ -595,6 +595,9 @@ def _maybe_open_pr(
         if pr_url:
             _log(run.run_id, f"  PR opened: {pr_url}")
             _slack_post(slack_client, run, f":arrow_heading_up: PR opened: {pr_url}")
+        elif repo:
+            _log(run.run_id, "  WARNING: push succeeded but PR URL was empty")
+            _slack_post(slack_client, run, ":warning: Run passed but PR creation failed (check watch.log)")
     except Exception as exc:
         _log(run.run_id, f"  WARNING: PR/issue update failed: {exc}")
         _slack_post(slack_client, run, f":warning: PR creation failed: {exc}")

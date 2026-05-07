@@ -474,15 +474,15 @@ def runs_clean(
 ) -> None:
     """Remove local run directories for finished runs older than N days (default 7)."""
     import shutil
-    from datetime import timezone
+    from datetime import datetime as dt, timedelta, timezone
 
     runs = store.list_runs()
-    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - __import__("datetime").timedelta(days=days)
+    cutoff = dt.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
 
     to_remove = [
         r for r in runs
         if r.state in (RunState.passed, RunState.failed)
-        and datetime.fromisoformat(r.created_at) < cutoff
+        and dt.fromisoformat(r.created_at) < cutoff
     ]
 
     if not to_remove:
@@ -492,7 +492,7 @@ def runs_clean(
     removed = 0
     for r in to_remove:
         run_dir = store.RUNS_DIR / r.run_id
-        age_days = (datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromisoformat(r.created_at)).days
+        age_days = (dt.now(timezone.utc).replace(tzinfo=None) - dt.fromisoformat(r.created_at)).days
         if dry_run:
             console.print(f"  [dim]would remove[/dim] {r.run_id}  [{r.state}]  {r.task_name[:50]}  [dim]({age_days}d old)[/dim]")
         else:

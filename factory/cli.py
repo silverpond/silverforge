@@ -470,20 +470,24 @@ def cleanup(
 @app.command(name="runs-clean")
 def runs_clean(
     days: int = typer.Option(7, "--days", "-d", help="Remove finished runs older than this many days"),
+    all_finished: bool = typer.Option(False, "--all", help="Remove all finished runs regardless of age"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print what would be removed without removing"),
 ) -> None:
-    """Remove local run directories for finished runs older than N days (default 7)."""
+    """Remove local run directories for finished runs older than N days (default 7). Use --all for everything."""
     import shutil
     from datetime import datetime as dt, timedelta, timezone
 
     runs = store.list_runs()
-    cutoff = dt.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
 
-    to_remove = [
-        r for r in runs
-        if r.state in (RunState.passed, RunState.failed)
-        and dt.fromisoformat(r.created_at) < cutoff
-    ]
+    if all_finished:
+        to_remove = [r for r in runs if r.state in (RunState.passed, RunState.failed)]
+    else:
+        cutoff = dt.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
+        to_remove = [
+            r for r in runs
+            if r.state in (RunState.passed, RunState.failed)
+            and dt.fromisoformat(r.created_at) < cutoff
+        ]
 
     if not to_remove:
         console.print(f"  [dim]No finished runs older than {days} day(s).[/dim]")

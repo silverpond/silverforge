@@ -142,6 +142,7 @@ def launch_task(task: TaskDefinition, workers_path: Path = Path("workers.yaml"))
         run.notes = "Failed to start tmux session"
         store.save_run(run)
         _log(run.run_id, "  ERROR: could not start tmux session")
+        _slack_post(slack_client, run, ":x: Failed to start tmux session on worker")
         return run
 
     _print_commands_panel(run.run_id, run.worktree_path, run.service_port, label=task.name)
@@ -267,6 +268,7 @@ def watch_task(
                     if next_idx < len(agent_commands):
                         next_name = agent_names[next_idx]
                         _log(run_id, f"  rate limit detected on {agent_name} → switching to {next_name}")
+                        _slack_post(slack_client, run, f":warning: Rate limit hit on `{agent_name}` — switching to `{next_name}`")
                         current_agent_idx = next_idx
                         continue
                     else:
@@ -274,13 +276,18 @@ def watch_task(
                         run.notes = f"All agents rate limited: {', '.join(agent_names)}"
                         store.save_run(run)
                         _log(run_id, "  all agents exhausted — giving up")
+                        _slack_post(slack_client, run, f":x: All agents rate limited — giving up")
                         return run
 
                 if agent_status == "timeout":
                     run.state = RunState.failed
                     run.notes = f"Coder timed out after {task.coder.session_timeout}s"
                     store.save_run(run)
+                    _slack_post(slack_client, run, f":warning: Agent timed out after {task.coder.session_timeout}s without completing")
                     return run
+
+                if agent_status == "failed":
+                    _slack_post(slack_client, run, ":warning: Agent exited with an error — checking results")
 
                 run.state = RunState.evaluating
                 store.save_run(run)

@@ -938,6 +938,7 @@ def poll(
     model: Optional[str] = typer.Option(None, "--model", "-m", help="Override model (e.g. sonnet, opus)"),
     effort: Optional[str] = typer.Option(None, "--effort", "-e", help="Override effort (low, medium, high, max)"),
     eval_cmd: Optional[List[str]] = typer.Option(None, "--eval", help="Eval command(s) run after each agent iteration"),
+    crucible_rounds: Optional[int] = typer.Option(None, "--crucible-rounds", help="Number of crucible review rounds"),
 ) -> None:
     """
     Fetch open GitHub issues labeled 'factory' and run them in parallel.
@@ -965,6 +966,8 @@ def poll(
         task_template.coder.model = model
     if effort and task_template.coder:
         task_template.coder.effort = effort
+    if crucible_rounds is not None and task_template.crucible:
+        task_template.crucible.rounds = crucible_rounds
     gh = GitHubClient(token)
 
     # Default concurrency to the worker's slot count

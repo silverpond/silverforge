@@ -101,6 +101,9 @@ class GitHubClient:
 
     # ── Pull Requests ─────────────────────────────────────────────────────────
 
+    def comment_on_pr(self, repo: str, pr_number: int, body: str) -> None:
+        self._request("POST", f"/repos/{repo}/issues/{pr_number}/comments", data={"body": body})
+
     def create_pr(
         self,
         repo: str,

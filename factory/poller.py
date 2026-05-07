@@ -115,9 +115,9 @@ def _push_and_pr(
         timeout=30,
     )
 
-    push_url = f"https://x-access-token:{gh.token}@github.com/{repo}.git"
+    auth_header = shlex.quote(f"http.extraHeader=Authorization: token {gh.token}")
     result = client.run(
-        f"git -C {worktree} push {shlex.quote(push_url)} HEAD:{branch}",
+        f"git -C {worktree} -c {auth_header} push https://github.com/{repo}.git HEAD:{branch}",
         timeout=60,
     )
     if not result.ok:

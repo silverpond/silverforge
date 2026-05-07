@@ -147,6 +147,7 @@ def run_cmd(
     effort: Optional[str] = typer.Option(None, "--effort", "-e", help="Override effort (low, medium, high, max)"),
     repo: Optional[str] = typer.Option(None, "--repo", "-r", help="GitHub repo (owner/repo) for inline tasks"),
     eval_cmd: Optional[List[str]] = typer.Option(None, "--eval", help="Eval command(s) for inline tasks"),
+    crucible_rounds: Optional[int] = typer.Option(None, "--crucible-rounds", help="Number of crucible review rounds"),
     workers: Path = _WORKERS_OPT,
 ) -> None:
     """Run a task — pass a YAML file or an inline task description."""
@@ -165,6 +166,8 @@ def run_cmd(
         task.coder.model = model
     if effort and task.coder:
         task.coder.effort = effort
+    if crucible_rounds is not None and task.crucible:
+        task.crucible.rounds = crucible_rounds
 
     agents_display = ", ".join(task.coder.agents) if task.coder else "—"
     console.print()

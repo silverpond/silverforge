@@ -322,13 +322,21 @@ def watch_task(
                         _log(run_id, "  untangle passed")
 
                     if task.crucible is not None and run.worktree_path:
-                        _log(run_id, "  running crucible review...")
-                        _slack_post(slack_client, run, ":magnifying_glass_tilted_right: Running crucible review...")
-                        crucible_feedback = _run_crucible(client, working_dir, base_branch, task.crucible)
-                        store.save_log(run_id, f"crucible_iter{iteration}.json", crucible_feedback or "")
+                        rounds = task.crucible.rounds
+                        crucible_feedback = None
+                        for rnd in range(1, rounds + 1):
+                            label = f" (round {rnd}/{rounds})" if rounds > 1 else ""
+                            _log(run_id, f"  running crucible review{label}...")
+                            _slack_post(slack_client, run, f":magnifying_glass_tilted_right: Running crucible review{label}...")
+                            crucible_feedback = _run_crucible(client, working_dir, base_branch, task.crucible)
+                            store.save_log(run_id, f"crucible_iter{iteration}_rnd{rnd}.json", crucible_feedback or "")
+                            if crucible_feedback:
+                                _log(run_id, f"  crucible blocked{label}: {crucible_feedback[:120]}...")
+                                _slack_post(slack_client, run, f":x: Crucible found critical issues{label}:\n```{crucible_feedback[:1000]}```")
+                                break
+                            _log(run_id, f"  crucible passed{label}")
+                            _slack_post(slack_client, run, f":white_check_mark: Crucible passed{label}")
                         if crucible_feedback:
-                            _log(run_id, f"  crucible blocked: {crucible_feedback[:120]}...")
-                            _slack_post(slack_client, run, f":x: Crucible found critical issues:\n```{crucible_feedback[:1000]}```")
                             if iteration < task.coder.max_iterations:
                                 prompt = build_feedback_prompt(task.coder.prompt, f"Code review (crucible) found critical issues:\n{crucible_feedback}")
                                 _log(run_id, "  sending crucible feedback to coder")
@@ -338,8 +346,6 @@ def watch_task(
                             run.notes = "Crucible review blocked after max iterations"
                             store.save_run(run)
                             return run
-                        _log(run_id, "  crucible passed")
-                        _slack_post(slack_client, run, ":white_check_mark: Crucible passed")
 
                     if task.evaluator is not None and run.worktree_path:
                         _log(run_id, "  running evaluator agent...")

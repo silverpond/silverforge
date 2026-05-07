@@ -70,6 +70,7 @@ class UntangleConfig(BaseModel):
 class CrucibleConfig(BaseModel):
     block_on: str = "Critical"   # severity level that blocks the run
     timeout: int = 300           # seconds for the review
+    rounds: int = 1              # how many sequential crucible passes required
 
 
 class SlackConfig(BaseModel):

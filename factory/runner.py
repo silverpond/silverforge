@@ -258,14 +258,6 @@ def watch_task(
                 store.save_log(run_id, f"agent_output_iter{iteration}.txt", captured)
                 _log(run_id, f"  agent status={agent_status}")
 
-                if slack_client and run.slack_channel_id:
-                    summary = client.run(
-                        f"cat {working_dir}/.factory/completion.md 2>/dev/null || true",
-                        timeout=10,
-                    ).stdout.strip()
-                    if summary:
-                        _slack_post(slack_client, run, f":robot_face: {summary[:2000]}")
-
                 rate_limited = any(
                     marker.lower() in captured.lower()
                     for marker in task.coder.rate_limit_markers
@@ -426,6 +418,13 @@ def watch_task(
                     store.save_run(run)
                     _log(run_id, f"state=passed  (iteration {iteration})")
                     _post_results(slack_client, run, results, passed=True)
+                    if slack_client and run.slack_channel_id:
+                        summary = client.run(
+                            f"cat {working_dir}/.factory/completion.md 2>/dev/null || true",
+                            timeout=10,
+                        ).stdout.strip()
+                        if summary:
+                            _slack_post(slack_client, run, f":robot_face: {summary[:2000]}")
                     sess.kill_session(client, session_name)
                     if run.slack_thread_ts:
                         sess.unregister_run(client, run.slack_thread_ts)

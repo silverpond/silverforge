@@ -65,6 +65,8 @@ def issue_to_task(issue: Dict, template: TaskDefinition) -> TaskDefinition:
         session_timeout=template.coder.session_timeout if template.coder else 600,
         agents=template.coder.agents if template.coder else ["claude"],
         rate_limit_markers=template.coder.rate_limit_markers if template.coder else [],
+        model=template.coder.model if template.coder else None,
+        effort=template.coder.effort if template.coder else None,
     )
 
     return TaskDefinition(

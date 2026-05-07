@@ -399,6 +399,56 @@ def kill(
     console.print(f"[red]killed[/red] {run_id[:8]} ({r.task_name})")
 
 
+# ── cleanup ───────────────────────────────────────────────────────────────────
+
+@app.command()
+def cleanup(
+    worker: str = typer.Argument("ares", help="Worker name from workers.yaml"),
+    workers_path: Path = _WORKERS_OPT,
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print what would be removed without removing"),
+) -> None:
+    """Remove worktrees on the worker for all finished (passed/failed) runs."""
+    config = load_workers(workers_path)
+    w = config.workers.get(worker)
+    if w is None:
+        typer.echo(f"Worker '{worker}' not in {workers_path}", err=True)
+        raise typer.Exit(1)
+
+    client = SSHClient(host=w.host, user=w.user, port=w.port,
+                       identity_file=w.identity_file, shell_init=w.shell_init)
+
+    runs = store.list_runs()
+    finished = [r for r in runs if r is not None and r.state in (RunState.passed, RunState.failed) and r.worktree_path]
+
+    if not finished:
+        console.print("  [dim]No finished runs with worktrees found.[/dim]")
+        return
+
+    removed = 0
+    for r in finished:
+        worktree = r.worktree_path
+        branch = f"factory/{r.task_id}-{r.run_id}"
+
+        exists = client.run(f"test -d {worktree} && echo yes || echo no", timeout=10)
+        if "yes" not in exists.stdout:
+            continue
+
+        if dry_run:
+            console.print(f"  [dim]would remove[/dim] {worktree}  [dim]({r.run_id[:8]} {r.task_name[:40]})[/dim]")
+            removed += 1
+            continue
+
+        # Remove the worktree, then prune the branch
+        base_path = client.run(f"git -C {worktree} rev-parse --path-format=absolute --git-common-dir 2>/dev/null | sed 's|/.git||'", timeout=10).stdout.strip()
+        client.run(f"git -C {base_path} worktree remove --force {worktree} 2>/dev/null || rm -rf {worktree}", timeout=30)
+        client.run(f"git -C {base_path} branch -D {branch} 2>/dev/null || true", timeout=10)
+        console.print(f"  [green]removed[/green] {worktree}  [dim]({r.run_id[:8]} {r.task_name[:40]})[/dim]")
+        removed += 1
+
+    noun = "worktree(s)" if not dry_run else "worktree(s) would be removed"
+    console.print(f"\n  {removed} {noun}.")
+
+
 # ── logs ──────────────────────────────────────────────────────────────────────
 
 @app.command()

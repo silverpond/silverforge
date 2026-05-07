@@ -17,7 +17,6 @@ from typing import Optional
 import yaml as _yaml
 
 from factory import evaluator, session as sess, store
-from factory.coder import build_feedback_prompt
 from factory.evaluator_agent import parse_verdict, run_evaluator
 from factory.gemini_review import run_gemini_review
 from factory.config import WorkerConfig, load_workers
@@ -204,33 +203,44 @@ def watch_task(
             current_agent_idx = 0
             prompt = original_prompt
 
+            needs_new_session = False  # True only when switching agents (rate limit)
+            feedback_message = ""
+
             for iteration in range(1, task.coder.max_iterations + 1):
                 agent_name = agent_names[current_agent_idx]
                 agent_cmd = agent_commands[current_agent_idx]
 
                 if iteration > 1:
-                    # First iteration session was launched by launch_task; subsequent ones start here
                     _log(run_id, f"state=running  (coder iteration {iteration}/{task.coder.max_iterations}, agent={agent_name}, model={coder_model}, effort={coder_effort})")
                     _slack_post(slack_client, run, f":hammer: Iteration {iteration}/{task.coder.max_iterations} — agent: `{agent_name}` · model: `{coder_model}` · effort: `{coder_effort}`")
-                    sess.setup_factory_dir(client, working_dir)
-                    sess.write_task(client, working_dir, prompt)
-                    if slack_client and run.slack_channel_id and slack_token:
-                        sess.write_agent_hooks(client, working_dir, slack_token, run.slack_channel_id, thread_ts=run.slack_thread_ts)
-                    if run.service_port and task.service:
-                        sess.append_service_context(client, working_dir, run.service_port, task.service.port)
-                    sess.write_runner_script(
-                        client, working_dir,
-                        shell_init=worker.shell_init,
-                        agent_cmd=agent_cmd,
-                        factory_port=run.service_port or None,
-                        model=coder_model if agent_cmd == "claude" else None,
-                        effort=coder_effort if agent_cmd == "claude" else None,
-                    )
-                    if not sess.start_session(client, session_name, working_dir):
-                        run.state = RunState.failed
-                        run.notes = "Failed to start tmux session"
-                        store.save_run(run)
-                        return run
+                    if needs_new_session:
+                        # Agent switched due to rate limit — kill old session, start fresh
+                        sess.kill_session(client, session_name)
+                        if run.slack_thread_ts:
+                            sess.unregister_run(client, run.slack_thread_ts)
+                        sess.setup_factory_dir(client, working_dir)
+                        sess.write_task(client, working_dir, original_prompt)
+                        if slack_client and run.slack_channel_id and slack_token:
+                            sess.write_agent_hooks(client, working_dir, slack_token, run.slack_channel_id, thread_ts=run.slack_thread_ts)
+                        if run.service_port and task.service:
+                            sess.append_service_context(client, working_dir, run.service_port, task.service.port)
+                        sess.write_runner_script(
+                            client, working_dir,
+                            shell_init=worker.shell_init,
+                            agent_cmd=agent_cmd,
+                            factory_port=run.service_port or None,
+                            model=coder_model if agent_cmd == "claude" else None,
+                            effort=coder_effort if agent_cmd == "claude" else None,
+                        )
+                        if not sess.start_session(client, session_name, working_dir):
+                            run.state = RunState.failed
+                            run.notes = "Failed to start tmux session"
+                            store.save_run(run)
+                            return run
+                        needs_new_session = False
+                    else:
+                        # Same agent — paste feedback directly into the live session
+                        sess.send_feedback_to_session(client, session_name, working_dir, feedback_message)
 
                 _log(run_id, f"  session={session_name} running, polling for completion...")
                 agent_status = sess.wait_for_status(
@@ -246,10 +256,6 @@ def watch_task(
                     timeout=10,
                 ).stdout
                 store.save_log(run_id, f"agent_output_iter{iteration}.txt", captured)
-
-                sess.kill_session(client, session_name)
-                if run.slack_thread_ts:
-                    sess.unregister_run(client, run.slack_thread_ts)
                 _log(run_id, f"  agent status={agent_status}")
 
                 if slack_client and run.slack_channel_id:
@@ -271,6 +277,7 @@ def watch_task(
                         _log(run_id, f"  rate limit detected on {agent_name} → switching to {next_name}")
                         _slack_post(slack_client, run, f":warning: Rate limit hit on `{agent_name}` — switching to `{next_name}`")
                         current_agent_idx = next_idx
+                        needs_new_session = True
                         continue
                     else:
                         run.state = RunState.failed
@@ -278,6 +285,9 @@ def watch_task(
                         store.save_run(run)
                         _log(run_id, "  all agents exhausted — giving up")
                         _slack_post(slack_client, run, f":x: All agents rate limited — giving up")
+                        sess.kill_session(client, session_name)
+                        if run.slack_thread_ts:
+                            sess.unregister_run(client, run.slack_thread_ts)
                         return run
 
                 if agent_status == "timeout":
@@ -285,6 +295,9 @@ def watch_task(
                     run.notes = f"Coder timed out after {task.coder.session_timeout}s"
                     store.save_run(run)
                     _slack_post(slack_client, run, f":warning: Agent timed out after {task.coder.session_timeout}s without completing")
+                    sess.kill_session(client, session_name)
+                    if run.slack_thread_ts:
+                        sess.unregister_run(client, run.slack_thread_ts)
                     return run
 
                 if agent_status == "failed":
@@ -312,13 +325,16 @@ def watch_task(
                             store.save_log(run_id, f"untangle_iter{iteration}.json", untangle_feedback)
                             _log(run_id, f"  untangle blocked: {untangle_feedback[:120]}...")
                             if iteration < task.coder.max_iterations:
-                                prompt = build_feedback_prompt(task.coder.prompt, f"Structural analysis (untangle) found issues:\n{untangle_feedback}")
+                                feedback_message = f"Structural analysis (untangle) found issues:\n{untangle_feedback}"
                                 _log(run_id, "  sending untangle feedback to coder")
                                 store.save_run(run)
                                 continue
                             run.state = RunState.failed
                             run.notes = "Untangle structural check failed after max iterations"
                             store.save_run(run)
+                            sess.kill_session(client, session_name)
+                            if run.slack_thread_ts:
+                                sess.unregister_run(client, run.slack_thread_ts)
                             return run
                         _log(run_id, "  untangle passed")
 
@@ -343,13 +359,16 @@ def watch_task(
                             _slack_post(slack_client, run, f":white_check_mark: Crucible passed{label}")
                         if crucible_feedback:
                             if iteration < task.coder.max_iterations:
-                                prompt = build_feedback_prompt(task.coder.prompt, f"Code review (crucible) found critical issues:\n{crucible_feedback}")
+                                feedback_message = f"Code review (crucible) found critical issues:\n{crucible_feedback}"
                                 _log(run_id, "  sending crucible feedback to coder")
                                 store.save_run(run)
                                 continue
                             run.state = RunState.failed
                             run.notes = "Crucible review blocked after max iterations"
                             store.save_run(run)
+                            sess.kill_session(client, session_name)
+                            if run.slack_thread_ts:
+                                sess.unregister_run(client, run.slack_thread_ts)
                             return run
 
                     if task.evaluator is not None and run.worktree_path:
@@ -374,7 +393,7 @@ def watch_task(
                         _log(run_id, f"  evaluator verdict={verdict}: {reason}")
 
                         if verdict == "needs_changes" and iteration < task.coder.max_iterations:
-                            prompt = build_feedback_prompt(task.coder.prompt, reason)
+                            feedback_message = reason
                             _log(run_id, "  evaluator requested changes — sending feedback to coder")
                             store.save_run(run)
                             continue
@@ -407,12 +426,15 @@ def watch_task(
                     store.save_run(run)
                     _log(run_id, f"state=passed  (iteration {iteration})")
                     _post_results(slack_client, run, results, passed=True)
+                    sess.kill_session(client, session_name)
+                    if run.slack_thread_ts:
+                        sess.unregister_run(client, run.slack_thread_ts)
                     _maybe_open_pr(run, task, worker, repo, issue_number, workers_path, slack_client)
                     return run
 
                 if iteration < task.coder.max_iterations:
                     failed_output = "\n".join(r.stdout + r.stderr for r in results if r.exit_code != 0)
-                    prompt = build_feedback_prompt(task.coder.prompt, failed_output)
+                    feedback_message = f"Tests/eval failed:\n{failed_output[:2000]}" if failed_output else "The eval checks did not pass. Please review your changes."
                     _log(run_id, "  eval failed — sending feedback to coder")
 
             run.state = RunState.failed
@@ -420,6 +442,9 @@ def watch_task(
             _log(run_id, f"state=failed  (exhausted {task.coder.max_iterations} iterations)")
             _post_results(slack_client, run, run.eval_results or [], passed=False)
             _maybe_comment_failure(run, repo, issue_number)
+            sess.kill_session(client, session_name)
+            if run.slack_thread_ts:
+                sess.unregister_run(client, run.slack_thread_ts)
             return run
 
         # ── Eval-only (no coder) ─────────────────────────────────────────────

@@ -540,6 +540,36 @@ def ensure_bridge_daemon(client: SSHClient, slack_app_token: str, slack_bot_toke
     return result.ok
 
 
+def send_feedback_to_session(
+    client: SSHClient,
+    session_name: str,
+    working_dir: str,
+    feedback: str,
+) -> bool:
+    """
+    Send review feedback directly to a live Claude session at its ❯ prompt.
+
+    Pastes the feedback text inline so it is visible in the terminal when
+    attached. Resets .factory/status so wait_for_status can poll again.
+    """
+    client.run(f"rm -f {working_dir}/.factory/status", timeout=5)
+
+    message = (
+        f"{feedback}\n\n"
+        f"Please fix all of the issues above. "
+        f"When you have completely finished, run: echo done > .factory/status"
+    )
+
+    tmp = f"/tmp/factory-feedback-{session_name}"
+    encoded = base64.b64encode(message.encode()).decode()
+    client.run(f"echo '{encoded}' | base64 -d > {tmp}", timeout=5)
+    client.run(f"tmux load-buffer {tmp} 2>/dev/null || true", timeout=5)
+    client.run(f"tmux paste-buffer -t {session_name} -p 2>/dev/null || true", timeout=5)
+    client.run(f"tmux send-keys -t {session_name} Enter", timeout=5)
+    client.run(f"rm -f {tmp}", timeout=5)
+    return True
+
+
 def kill_session(client: SSHClient, session_name: str) -> None:
     """Kill the tmux session."""
     client.run(f"tmux kill-session -t {session_name} 2>/dev/null; true")

@@ -563,12 +563,11 @@ def _create_run_worktree(client: SSHClient, task: TaskDefinition, run_id: str, w
     )
     if not result.ok:
         raise RuntimeError(f"git worktree add failed:\n{result.stderr}")
-    # Prevent factory internals (including secrets) from ever being committed
+    # Prevent factory internals from ever being committed — use .git/info/exclude
+    # so we don't modify the repo's .gitignore (avoids trailing-newline concat bugs)
     client.run(
-        f"echo '.factory/' >> {worktree_path}/.gitignore && "
-        f"echo '.claude/' >> {worktree_path}/.gitignore && "
-        f"echo '.crucible.toml' >> {worktree_path}/.gitignore && "
-        f"echo '.crucible/' >> {worktree_path}/.gitignore",
+        f"printf '.factory/\\n.claude/\\n.crucible.toml\\n.crucible/\\n'"
+        f" >> {worktree_path}/.git/info/exclude",
         timeout=10,
     )
     return worktree_path

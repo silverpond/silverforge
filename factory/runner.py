@@ -119,8 +119,9 @@ def launch_task(task: TaskDefinition, workers_path: Path = Path("workers.yaml"))
     agent_cmd = agent_commands[0]
     agent_name = agent_names[0]
 
-    _log(run.run_id, f"state=running  (coder iteration 1/{task.coder.max_iterations}, agent={agent_name}, model={coder_model}, effort={coder_effort})")
-    _slack_post(slack_client, run, f":hammer: Iteration 1/{task.coder.max_iterations} — agent: `{agent_name}` · model: `{coder_model}` · effort: `{coder_effort}`")
+    _launch_max_iter = task.crucible.rounds + 1 if task.crucible else task.coder.max_iterations
+    _log(run.run_id, f"state=running  (coder iteration 1/{_launch_max_iter}, agent={agent_name}, model={coder_model}, effort={coder_effort})")
+    _slack_post(slack_client, run, f":hammer: Iteration 1/{_launch_max_iter} — agent: `{agent_name}` · model: `{coder_model}` · effort: `{coder_effort}`")
 
     sess.setup_factory_dir(client, working_dir)
     sess.write_task(client, working_dir, prompt)
@@ -206,14 +207,17 @@ def watch_task(
             needs_new_session = False  # True only when switching agents (rate limit)
             feedback_message = ""
             crucible_rounds_used = 0  # tracks how many crucible feedback cycles have been used
+            max_iterations = (
+                task.crucible.rounds + 1 if task.crucible else task.coder.max_iterations
+            )
 
-            for iteration in range(1, task.coder.max_iterations + 1):
+            for iteration in range(1, max_iterations + 1):
                 agent_name = agent_names[current_agent_idx]
                 agent_cmd = agent_commands[current_agent_idx]
 
                 if iteration > 1:
-                    _log(run_id, f"state=running  (coder iteration {iteration}/{task.coder.max_iterations}, agent={agent_name}, model={coder_model}, effort={coder_effort})")
-                    _slack_post(slack_client, run, f":hammer: Iteration {iteration}/{task.coder.max_iterations} — agent: `{agent_name}` · model: `{coder_model}` · effort: `{coder_effort}`")
+                    _log(run_id, f"state=running  (coder iteration {iteration}/{max_iterations}, agent={agent_name}, model={coder_model}, effort={coder_effort})")
+                    _slack_post(slack_client, run, f":hammer: Iteration {iteration}/{max_iterations} — agent: `{agent_name}` · model: `{coder_model}` · effort: `{coder_effort}`")
                     if needs_new_session:
                         # Agent switched due to rate limit — kill old session, start fresh
                         sess.kill_session(client, session_name)
@@ -317,7 +321,7 @@ def watch_task(
                         if untangle_feedback:
                             store.save_log(run_id, f"untangle_iter{iteration}.json", untangle_feedback)
                             _log(run_id, f"  untangle blocked: {untangle_feedback[:120]}...")
-                            if iteration < task.coder.max_iterations:
+                            if iteration < max_iterations:
                                 feedback_message = f"Structural analysis (untangle) found issues:\n{untangle_feedback}"
                                 _log(run_id, "  sending untangle feedback to coder")
                                 store.save_run(run)
@@ -437,14 +441,14 @@ def watch_task(
                     _maybe_open_pr(run, task, worker, repo, issue_number, workers_path, slack_client)
                     return run
 
-                if iteration < task.coder.max_iterations:
+                if iteration < max_iterations:
                     failed_output = "\n".join(r.stdout + r.stderr for r in results if r.exit_code != 0)
                     feedback_message = f"Tests/eval failed:\n{failed_output[:2000]}" if failed_output else "The eval checks did not pass. Please review your changes."
                     _log(run_id, "  eval failed — sending feedback to coder")
 
             run.state = RunState.failed
             store.save_run(run)
-            _log(run_id, f"state=failed  (exhausted {task.coder.max_iterations} iterations)")
+            _log(run_id, f"state=failed  (exhausted {max_iterations} iterations)")
             _post_results(slack_client, run, run.eval_results or [], passed=False)
             _maybe_comment_failure(run, repo, issue_number)
             sess.kill_session(client, session_name)

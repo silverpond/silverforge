@@ -341,7 +341,7 @@ def watch_task(
                         commit_msg = _shlex.quote(f"factory: agent changes (iter {iteration})")
                         client.run(
                             f"git -C {working_dir} add -A && "
-                            f"git -C {working_dir} reset HEAD .factory/ .claude/ .crucible/ 2>/dev/null || true && "
+                            f"git -C {working_dir} reset HEAD -- .factory/ .claude/ .crucible/ 2>/dev/null || true && "
                             f"git -C {working_dir} diff --cached --quiet || "
                             f"git -C {working_dir} commit -m {commit_msg}",
                             timeout=30,
@@ -568,10 +568,12 @@ def _create_run_worktree(client: SSHClient, task: TaskDefinition, run_id: str, w
     if not result.ok:
         raise RuntimeError(f"git worktree add failed:\n{result.stderr}")
     # Prevent factory internals from ever being committed — use .git/info/exclude
-    # so we don't modify the repo's .gitignore (avoids trailing-newline concat bugs)
+    # so we don't modify the repo's .gitignore (avoids trailing-newline concat bugs).
+    # git worktrees have a .git FILE (not dir), so resolve the real git dir first.
     client.run(
-        f"printf '.factory/\\n.claude/\\n.crucible.toml\\n.crucible/\\n'"
-        f" >> {worktree_path}/.git/info/exclude",
+        f"GIT_DIR=$(git -C {worktree_path} rev-parse --git-dir) && "
+        f"mkdir -p $GIT_DIR/info && "
+        f"printf '.factory/\\n.claude/\\n.crucible.toml\\n.crucible/\\n' >> $GIT_DIR/info/exclude",
         timeout=10,
     )
     return worktree_path

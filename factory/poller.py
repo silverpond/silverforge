@@ -12,6 +12,7 @@ For each open issue labeled "factory":
 """
 from __future__ import annotations
 
+import shlex
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -64,6 +65,8 @@ def issue_to_task(issue: Dict, template: TaskDefinition) -> TaskDefinition:
         session_timeout=template.coder.session_timeout if template.coder else 600,
         agents=template.coder.agents if template.coder else ["claude"],
         rate_limit_markers=template.coder.rate_limit_markers if template.coder else [],
+        model=template.coder.model if template.coder else None,
+        effort=template.coder.effort if template.coder else None,
     )
 
     return TaskDefinition(
@@ -105,29 +108,30 @@ def _push_and_pr(
 
     worktree = run.worktree_path
 
-    # Commit any uncommitted changes Claude left behind
+    commit_msg = f"factory: fix for issue #{number}" if number else f"factory: {task.name[:60]}"
+    # Exclude .factory/ and .claude/ (contain secrets and machine-specific config)
     client.run(
         f"git -C {worktree} add -A && "
+        f"git -C {worktree} reset HEAD -- .factory/ .claude/ .crucible/ 2>/dev/null || true && "
         f"git -C {worktree} diff --cached --quiet || "
-        f"git -C {worktree} commit -m 'factory: fix for issue #{number}'",
+        f"git -C {worktree} commit -m {shlex.quote(commit_msg)}",
         timeout=30,
     )
 
-    push_url = f"https://github.com/{repo}.git"
+    push_url = f"https://x-access-token:{gh.token}@github.com/{repo}.git"
     result = client.run(
-        f"git -C {worktree} push {push_url} HEAD:{branch}",
+        f"git -c credential.helper= -C {worktree} push {shlex.quote(push_url)} HEAD:{branch}",
         timeout=60,
     )
     if not result.ok:
-        typer.echo(f"[issue-{number}] WARNING: git push failed:\n{result.stderr}")
-        return
+        raise RuntimeError(f"git push failed: {result.stderr.strip()}")
 
-    base_branch = task.repo.branch if task.repo else "master"
+    base_branch = gh.get_default_branch(repo)
     verdict_line = f"\n\n**Evaluator:** {run.evaluator_reason}" if run.evaluator_verdict else ""
     service_line = f"\n\n**Preview:** http://{worker.host}:{run.service_port}" if run.service_port else ""
     pr_body = (
-        f"Fixes #{number}\n\n"
-        f"Automated fix by Silverpond Factory (run `{run.run_id}`).{verdict_line}{service_line}"
+        f"{'Fixes #' + str(number) + chr(10) + chr(10) if number else ''}"
+        f"Automated implementation by Silverpond Factory (run `{run.run_id}`).{verdict_line}{service_line}"
     )
     try:
         pr = gh.create_pr(
@@ -137,11 +141,19 @@ def _push_and_pr(
             head=branch,
             base=base_branch,
         )
-        _plog(number, f"PR opened: {pr['html_url']}", style="green")
-        return pr["html_url"]
+        if number:
+            _plog(number, f"PR opened: {pr['html_url']}", style="green")
     except RuntimeError as exc:
-        _plog(number, f"WARNING: could not open PR: {exc}", style="yellow")
-    return None
+        typer.echo(f"WARNING: could not open PR: {exc}")
+        return None
+
+    if run.gemini_summary:
+        try:
+            gh.comment_on_pr(repo, pr["number"], f"## Changes\n\n{run.gemini_summary}")
+        except Exception as exc:
+            typer.echo(f"WARNING: could not post gemini summary to PR: {exc}")
+
+    return pr["html_url"]
 
 
 def _issue_overrides(issue: Dict) -> Tuple[Optional[str], Optional[str]]:

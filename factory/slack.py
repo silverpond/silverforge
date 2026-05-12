@@ -28,7 +28,7 @@ def get_cached_channel_id() -> Optional[str]:
 def _cache_channel_id(channel_id: str) -> None:
     """Persist the factory channel ID to .env so future runs skip channel lookup."""
     os.environ["SLACK_FACTORY_CHANNEL_ID"] = channel_id
-    env_path = Path(__file__).parent.parent / ".env"
+    env_path = Path.cwd() / ".env"
     if env_path.exists():
         content = env_path.read_text()
         if "SLACK_FACTORY_CHANNEL_ID" not in content:

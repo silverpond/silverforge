@@ -69,7 +69,15 @@ class UntangleConfig(BaseModel):
 
 class CrucibleConfig(BaseModel):
     block_on: str = "Critical"   # severity level that blocks the run
-    timeout: int = 300           # seconds for the review
+    timeout: int = 600           # seconds for the review
+    rounds: int = 2              # max crucible feedback cycles before giving up (skips 2nd if 1st passes)
+    model: Optional[str] = None  # claude model for crucible's reviewer (e.g. "claude-haiku-4-5-20251001")
+
+
+class GeminiReviewConfig(BaseModel):
+    timeout: int = 120              # seconds for the review call
+    model: Optional[str] = None    # gemini model alias; None = gemini default
+    gemini_cmd: str = "gemini"     # command name / path on the worker
 
 
 class SlackConfig(BaseModel):
@@ -87,10 +95,11 @@ class TaskDefinition(BaseModel):
     repo: Optional[RepoConfig] = None    # omit for tasks that don't need a repo
     agent: Optional[AgentConfig] = None  # omit until AoE is wired up
     coder: Optional[CoderConfig] = None        # omit for eval-only tasks
-    evaluator: Optional[EvaluatorConfig] = None  # omit to skip code review
-    untangle: Optional[UntangleConfig] = None  # omit to skip structural check
-    crucible: Optional[CrucibleConfig] = None  # omit to skip multi-agent review
-    slack: Optional[SlackConfig] = None        # omit to skip Slack integration
+    evaluator: Optional[EvaluatorConfig] = None       # omit to skip code review
+    gemini_review: Optional[GeminiReviewConfig] = None  # omit to skip Gemini PR summary
+    untangle: Optional[UntangleConfig] = None          # omit to skip structural check
+    crucible: Optional[CrucibleConfig] = None          # omit to skip multi-agent review
+    slack: Optional[SlackConfig] = None                # omit to skip Slack integration
     service: Optional[ServiceConfig] = None  # omit for tasks that don't need a port
     eval: EvalConfig
 
@@ -116,6 +125,8 @@ class Run(BaseModel):
     issue_number: Optional[int] = None   # GitHub issue number if spawned by poller
     evaluator_verdict: str = ""          # approved / needs_changes
     evaluator_reason: str = ""
+    pr_url: str = ""                       # GitHub PR URL once opened
+    gemini_summary: str = ""             # Gemini PR summary (informational)
     slack_channel_id: str = ""           # Slack channel ID for this run
     slack_thread_ts: str = ""            # thread_ts of the run's root Slack message
     service_port: Optional[int] = None  # allocated port for this run, if task.service is set

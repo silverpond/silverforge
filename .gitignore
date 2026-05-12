@@ -13,3 +13,5 @@ build/
 runs/
 !runs/.gitkeep
 
+.factory/
+.claude/

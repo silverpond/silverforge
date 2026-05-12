@@ -17,10 +17,10 @@ from typing import Optional
 import yaml as _yaml
 
 from factory import evaluator, session as sess, store
-from factory.coder import build_feedback_prompt
 from factory.evaluator_agent import parse_verdict, run_evaluator
+from factory.gemini_review import run_gemini_review
 from factory.config import WorkerConfig, load_workers
-from factory.models import Run, RunState, TaskDefinition, UntangleConfig, CrucibleConfig
+from factory.models import Run, RunState, TaskDefinition, UntangleConfig, CrucibleConfig, GeminiReviewConfig
 from factory.slots import teardown_port
 from factory.slack import SlackClient, get_token as get_slack_token, get_cached_channel_id
 from factory.ssh import SSHClient
@@ -119,8 +119,9 @@ def launch_task(task: TaskDefinition, workers_path: Path = Path("workers.yaml"))
     agent_cmd = agent_commands[0]
     agent_name = agent_names[0]
 
-    _log(run.run_id, f"state=running  (coder iteration 1/{task.coder.max_iterations}, agent={agent_name}, model={coder_model}, effort={coder_effort})")
-    _slack_post(slack_client, run, f":hammer: Iteration 1/{task.coder.max_iterations} — agent: `{agent_name}` · model: `{coder_model}` · effort: `{coder_effort}`")
+    _launch_max_iter = task.crucible.rounds + 1 if task.crucible else task.coder.max_iterations
+    _log(run.run_id, f"state=running  (coder iteration 1/{_launch_max_iter}, agent={agent_name}, model={coder_model}, effort={coder_effort})")
+    _slack_post(slack_client, run, f":hammer: Iteration 1/{_launch_max_iter} — agent: `{agent_name}` · model: `{coder_model}` · effort: `{coder_effort}`")
 
     sess.setup_factory_dir(client, working_dir)
     sess.write_task(client, working_dir, prompt)
@@ -142,6 +143,7 @@ def launch_task(task: TaskDefinition, workers_path: Path = Path("workers.yaml"))
         run.notes = "Failed to start tmux session"
         store.save_run(run)
         _log(run.run_id, "  ERROR: could not start tmux session")
+        _slack_post(slack_client, run, ":x: Failed to start tmux session on worker")
         return run
 
     _print_commands_panel(run.run_id, run.worktree_path, run.service_port, label=task.name)
@@ -202,33 +204,48 @@ def watch_task(
             current_agent_idx = 0
             prompt = original_prompt
 
-            for iteration in range(1, task.coder.max_iterations + 1):
+            needs_new_session = False  # True only when switching agents (rate limit)
+            feedback_message = ""
+            crucible_rounds_used = 0  # tracks how many crucible feedback cycles have been used
+            max_iterations = (
+                task.crucible.rounds + 1 if task.crucible else task.coder.max_iterations
+            )
+
+            for iteration in range(1, max_iterations + 1):
                 agent_name = agent_names[current_agent_idx]
                 agent_cmd = agent_commands[current_agent_idx]
 
                 if iteration > 1:
-                    # First iteration session was launched by launch_task; subsequent ones start here
-                    _log(run_id, f"state=running  (coder iteration {iteration}/{task.coder.max_iterations}, agent={agent_name}, model={coder_model}, effort={coder_effort})")
-                    _slack_post(slack_client, run, f":hammer: Iteration {iteration}/{task.coder.max_iterations} — agent: `{agent_name}` · model: `{coder_model}` · effort: `{coder_effort}`")
-                    sess.setup_factory_dir(client, working_dir)
-                    sess.write_task(client, working_dir, prompt)
-                    if slack_client and run.slack_channel_id and slack_token:
-                        sess.write_agent_hooks(client, working_dir, slack_token, run.slack_channel_id, thread_ts=run.slack_thread_ts)
-                    if run.service_port and task.service:
-                        sess.append_service_context(client, working_dir, run.service_port, task.service.port)
-                    sess.write_runner_script(
-                        client, working_dir,
-                        shell_init=worker.shell_init,
-                        agent_cmd=agent_cmd,
-                        factory_port=run.service_port or None,
-                        model=coder_model if agent_cmd == "claude" else None,
-                        effort=coder_effort if agent_cmd == "claude" else None,
-                    )
-                    if not sess.start_session(client, session_name, working_dir):
-                        run.state = RunState.failed
-                        run.notes = "Failed to start tmux session"
-                        store.save_run(run)
-                        return run
+                    _log(run_id, f"state=running  (coder iteration {iteration}/{max_iterations}, agent={agent_name}, model={coder_model}, effort={coder_effort})")
+                    _slack_post(slack_client, run, f":hammer: Iteration {iteration}/{max_iterations} — agent: `{agent_name}` · model: `{coder_model}` · effort: `{coder_effort}`")
+                    if needs_new_session:
+                        # Agent switched due to rate limit — kill old session, start fresh
+                        sess.kill_session(client, session_name)
+                        if run.slack_thread_ts:
+                            sess.unregister_run(client, run.slack_thread_ts)
+                        sess.setup_factory_dir(client, working_dir)
+                        sess.write_task(client, working_dir, original_prompt)
+                        if slack_client and run.slack_channel_id and slack_token:
+                            sess.write_agent_hooks(client, working_dir, slack_token, run.slack_channel_id, thread_ts=run.slack_thread_ts)
+                        if run.service_port and task.service:
+                            sess.append_service_context(client, working_dir, run.service_port, task.service.port)
+                        sess.write_runner_script(
+                            client, working_dir,
+                            shell_init=worker.shell_init,
+                            agent_cmd=agent_cmd,
+                            factory_port=run.service_port or None,
+                            model=coder_model if agent_cmd == "claude" else None,
+                            effort=coder_effort if agent_cmd == "claude" else None,
+                        )
+                        if not sess.start_session(client, session_name, working_dir):
+                            run.state = RunState.failed
+                            run.notes = "Failed to start tmux session"
+                            store.save_run(run)
+                            return run
+                        needs_new_session = False
+                    else:
+                        # Same agent — paste feedback directly into the live session
+                        sess.send_feedback_to_session(client, session_name, working_dir, feedback_message)
 
                 _log(run_id, f"  session={session_name} running, polling for completion...")
                 agent_status = sess.wait_for_status(
@@ -244,19 +261,7 @@ def watch_task(
                     timeout=10,
                 ).stdout
                 store.save_log(run_id, f"agent_output_iter{iteration}.txt", captured)
-
-                sess.kill_session(client, session_name)
-                if run.slack_thread_ts:
-                    sess.unregister_run(client, run.slack_thread_ts)
                 _log(run_id, f"  agent status={agent_status}")
-
-                if slack_client and run.slack_channel_id:
-                    summary = client.run(
-                        f"cat {working_dir}/.factory/completion.md 2>/dev/null || true",
-                        timeout=10,
-                    ).stdout.strip()
-                    if summary:
-                        _slack_post(slack_client, run, f":robot_face: {summary[:2000]}")
 
                 rate_limited = any(
                     marker.lower() in captured.lower()
@@ -267,20 +272,33 @@ def watch_task(
                     if next_idx < len(agent_commands):
                         next_name = agent_names[next_idx]
                         _log(run_id, f"  rate limit detected on {agent_name} → switching to {next_name}")
+                        _slack_post(slack_client, run, f":warning: Rate limit hit on `{agent_name}` — switching to `{next_name}`")
                         current_agent_idx = next_idx
+                        needs_new_session = True
                         continue
                     else:
                         run.state = RunState.failed
                         run.notes = f"All agents rate limited: {', '.join(agent_names)}"
                         store.save_run(run)
                         _log(run_id, "  all agents exhausted — giving up")
+                        _slack_post(slack_client, run, f":x: All agents rate limited — giving up")
+                        sess.kill_session(client, session_name)
+                        if run.slack_thread_ts:
+                            sess.unregister_run(client, run.slack_thread_ts)
                         return run
 
                 if agent_status == "timeout":
                     run.state = RunState.failed
                     run.notes = f"Coder timed out after {task.coder.session_timeout}s"
                     store.save_run(run)
+                    _slack_post(slack_client, run, f":warning: Agent timed out after {task.coder.session_timeout}s without completing")
+                    sess.kill_session(client, session_name)
+                    if run.slack_thread_ts:
+                        sess.unregister_run(client, run.slack_thread_ts)
                     return run
+
+                if agent_status == "failed":
+                    _slack_post(slack_client, run, ":warning: Agent exited with an error — checking results")
 
                 run.state = RunState.evaluating
                 store.save_run(run)
@@ -303,33 +321,54 @@ def watch_task(
                         if untangle_feedback:
                             store.save_log(run_id, f"untangle_iter{iteration}.json", untangle_feedback)
                             _log(run_id, f"  untangle blocked: {untangle_feedback[:120]}...")
-                            if iteration < task.coder.max_iterations:
-                                prompt = build_feedback_prompt(task.coder.prompt, f"Structural analysis (untangle) found issues:\n{untangle_feedback}")
+                            if iteration < max_iterations:
+                                feedback_message = f"Structural analysis (untangle) found issues:\n{untangle_feedback}"
                                 _log(run_id, "  sending untangle feedback to coder")
                                 store.save_run(run)
                                 continue
                             run.state = RunState.failed
                             run.notes = "Untangle structural check failed after max iterations"
                             store.save_run(run)
+                            sess.kill_session(client, session_name)
+                            if run.slack_thread_ts:
+                                sess.unregister_run(client, run.slack_thread_ts)
                             return run
                         _log(run_id, "  untangle passed")
 
                     if task.crucible is not None and run.worktree_path:
-                        _log(run_id, "  running crucible review...")
-                        _slack_post(slack_client, run, ":magnifying_glass_tilted_right: Running crucible review...")
-                        crucible_feedback = _run_crucible(client, working_dir, base_branch, task.crucible)
+                        # Commit any uncommitted agent changes so crucible can see the diff
+                        import shlex as _shlex
+                        commit_msg = _shlex.quote(f"factory: agent changes (iter {iteration})")
+                        client.run(
+                            f"git -C {working_dir} add -A && "
+                            f"git -C {working_dir} reset HEAD -- .factory/ .claude/ .crucible/ 2>/dev/null || true && "
+                            f"git -C {working_dir} diff --cached --quiet || "
+                            f"git -C {working_dir} commit -m {commit_msg}",
+                            timeout=30,
+                        )
+                        _log(run_id, f"  running crucible review...")
+                        _slack_post(slack_client, run, f":magnifying_glass_tilted_right: Running crucible review...")
+                        crucible_feedback, crucible_errors, crucible_debug = _run_crucible(client, working_dir, base_branch, task.crucible)
                         store.save_log(run_id, f"crucible_iter{iteration}.json", crucible_feedback or "")
+                        if crucible_errors:
+                            store.save_log(run_id, f"crucible_iter{iteration}.stderr.txt", crucible_errors)
+                        if crucible_debug:
+                            store.save_log(run_id, f"crucible_iter{iteration}.debug.log", crucible_debug)
                         if crucible_feedback:
-                            _log(run_id, f"  crucible blocked: {crucible_feedback[:120]}...")
-                            _slack_post(slack_client, run, f":x: Crucible found critical issues:\n```{crucible_feedback[:1000]}```")
-                            if iteration < task.coder.max_iterations:
-                                prompt = build_feedback_prompt(task.coder.prompt, f"Code review (crucible) found critical issues:\n{crucible_feedback}")
+                            crucible_rounds_used += 1
+                            _log(run_id, f"  crucible blocked ({crucible_rounds_used}/{task.crucible.rounds} rounds used): {crucible_feedback[:120]}...")
+                            _slack_post(slack_client, run, f":x: Crucible found critical issues ({crucible_rounds_used}/{task.crucible.rounds} rounds used):\n```{crucible_feedback[:1000]}```")
+                            if crucible_rounds_used < task.crucible.rounds:
+                                feedback_message = f"Code review (crucible) found critical issues:\n{crucible_feedback}"
                                 _log(run_id, "  sending crucible feedback to coder")
                                 store.save_run(run)
                                 continue
                             run.state = RunState.failed
-                            run.notes = "Crucible review blocked after max iterations"
+                            run.notes = f"Crucible review blocked after {task.crucible.rounds} rounds"
                             store.save_run(run)
+                            sess.kill_session(client, session_name)
+                            if run.slack_thread_ts:
+                                sess.unregister_run(client, run.slack_thread_ts)
                             return run
                         _log(run_id, "  crucible passed")
                         _slack_post(slack_client, run, ":white_check_mark: Crucible passed")
@@ -356,28 +395,65 @@ def watch_task(
                         _log(run_id, f"  evaluator verdict={verdict}: {reason}")
 
                         if verdict == "needs_changes" and iteration < task.coder.max_iterations:
-                            prompt = build_feedback_prompt(task.coder.prompt, reason)
+                            feedback_message = reason
                             _log(run_id, "  evaluator requested changes — sending feedback to coder")
                             store.save_run(run)
                             continue
+
+                    if task.gemini_review is not None and run.worktree_path:
+                        _log(run_id, "  running gemini PR summary...")
+                        _slack_post(slack_client, run, ":sparkles: Generating Gemini PR summary...")
+                        try:
+                            summary = run_gemini_review(
+                                client,
+                                worktree_path=working_dir,
+                                task_description=task.coder.prompt,
+                                timeout=task.gemini_review.timeout,
+                                base_branch=task.repo.branch if task.repo else "main",
+                                model=task.gemini_review.model,
+                                gemini_cmd=task.gemini_review.gemini_cmd,
+                            )
+                            if summary:
+                                run.gemini_summary = summary
+                                store.save_log(run_id, f"gemini_review_iter{iteration}.txt", summary)
+                                _log(run_id, f"  gemini summary: {summary[:200]}")
+                                _slack_post(slack_client, run, f":memo: *PR Summary (Gemini):*\n{summary[:2000]}")
+                            else:
+                                _log(run_id, "  gemini summary: (empty response)")
+                        except Exception as exc:
+                            _log(run_id, f"  WARNING: Gemini review failed: {exc}")
+                        store.save_run(run)
 
                     run.state = RunState.passed
                     store.save_run(run)
                     _log(run_id, f"state=passed  (iteration {iteration})")
                     _post_results(slack_client, run, results, passed=True)
-                    _maybe_open_pr(run, task, worker, repo, issue_number)
+                    if slack_client and run.slack_channel_id:
+                        summary = client.run(
+                            f"cat {working_dir}/.factory/completion.md 2>/dev/null || true",
+                            timeout=10,
+                        ).stdout.strip()
+                        if summary:
+                            _slack_post(slack_client, run, f":robot_face: {summary[:2000]}")
+                    sess.kill_session(client, session_name)
+                    if run.slack_thread_ts:
+                        sess.unregister_run(client, run.slack_thread_ts)
+                    _maybe_open_pr(run, task, worker, repo, issue_number, workers_path, slack_client)
                     return run
 
-                if iteration < task.coder.max_iterations:
+                if iteration < max_iterations:
                     failed_output = "\n".join(r.stdout + r.stderr for r in results if r.exit_code != 0)
-                    prompt = build_feedback_prompt(task.coder.prompt, failed_output)
+                    feedback_message = f"Tests/eval failed:\n{failed_output[:2000]}" if failed_output else "The eval checks did not pass. Please review your changes."
                     _log(run_id, "  eval failed — sending feedback to coder")
 
             run.state = RunState.failed
             store.save_run(run)
-            _log(run_id, f"state=failed  (exhausted {task.coder.max_iterations} iterations)")
+            _log(run_id, f"state=failed  (exhausted {max_iterations} iterations)")
             _post_results(slack_client, run, run.eval_results or [], passed=False)
             _maybe_comment_failure(run, repo, issue_number)
+            sess.kill_session(client, session_name)
+            if run.slack_thread_ts:
+                sess.unregister_run(client, run.slack_thread_ts)
             return run
 
         # ── Eval-only (no coder) ─────────────────────────────────────────────
@@ -491,6 +567,15 @@ def _create_run_worktree(client: SSHClient, task: TaskDefinition, run_id: str, w
     )
     if not result.ok:
         raise RuntimeError(f"git worktree add failed:\n{result.stderr}")
+    # Prevent factory internals from ever being committed — use .git/info/exclude
+    # so we don't modify the repo's .gitignore (avoids trailing-newline concat bugs).
+    # git worktrees have a .git FILE (not dir), so resolve the real git dir first.
+    client.run(
+        f"GIT_DIR=$(git -C {worktree_path} rev-parse --git-dir) && "
+        f"mkdir -p $GIT_DIR/info && "
+        f"printf '.factory/\\n.claude/\\n.crucible.toml\\n.crucible/\\n' >> $GIT_DIR/info/exclude",
+        timeout=10,
+    )
     return worktree_path
 
 
@@ -515,24 +600,50 @@ def _run_untangle(client: SSHClient, working_dir: str, base_branch: str, head_br
     return "" if result.exit_code == 0 else (result.stdout or result.stderr)
 
 
-def _run_crucible(client: SSHClient, working_dir: str, base_branch: str, config: "CrucibleConfig") -> str:
+def _run_crucible(client: SSHClient, working_dir: str, base_branch: str, config: "CrucibleConfig") -> tuple:
     import json as _json
-    cmd = f"cd {working_dir} && crucible review --branch {base_branch} --json"
+    if config.model:
+        import shlex as _shlex
+        patch_script = (
+            "c = open('.crucible.toml').read(); "
+            "c = c.replace("
+            "'agents = [\\n    \"claude-code\",\\n    \"codex\",\\n    \"gemini\",\\n    \"open-code\",\\n]', "
+            "'agents = [\"claude-code\"]'"
+            "); "
+            f"c = c.replace('max_rounds = 2', 'max_rounds = {config.rounds}'); "
+            "c = c.replace('\\n[gate]\\nenabled = true', '\\n[gate]\\nenabled = false'); "
+            "old = '    \"-p\",\\n    \"--output-format\",\\n    \"json\",\\n]\\npersona = \"Security Auditor\"'; "
+            f"new = '    \"-p\",\\n    \"--output-format\",\\n    \"json\",\\n    \"--model\",\\n    \"{config.model}\",\\n]\\npersona = \"Security Auditor\"'; "
+            "open('.crucible.toml', 'w').write(c.replace(old, new))"
+        )
+        client.run(
+            f"cd {working_dir} && rm -f .crucible.toml && crucible config init && "
+            f"python3 -c {_shlex.quote(patch_script)}",
+            timeout=15,
+        )
+    cmd = f"cd {working_dir} && crucible review --branch {base_branch} --json --debug"
     result = client.run(cmd, timeout=config.timeout)
+    errors = result.stderr or ""
+    debug_log = client.run(
+        f"ls -t {working_dir}/.crucible/runs/*/debug.log 2>/dev/null | head -1 | xargs cat 2>/dev/null || true",
+        timeout=10,
+    ).stdout
+    if "timed out" in errors.lower():
+        return "[Error] Crucible review timed out — could not complete analysis", errors, debug_log
     if not result.stdout.strip():
-        return ""
+        return "", errors, debug_log
     try:
         data = _json.loads(result.stdout)
     except Exception:
-        return ""
+        return "", errors, debug_log
     if data.get("verdict", "Pass") in ("Pass", "Warn"):
-        return ""
+        return "", errors, debug_log
     critical = [
         f"[{f['severity']}] {f['file']}:{f.get('line_start','')} {f['title']}: {f['description']}"
         for f in data.get("findings", [])
         if f.get("severity") == "Critical"
     ]
-    return "\n".join(critical) if critical else ""
+    return ("\n".join(critical) if critical else ""), errors, debug_log
 
 
 def _slack_post(slack_client, run: "Run", text: str) -> None:
@@ -557,24 +668,45 @@ def _post_results(slack_client, run: "Run", results: list, passed: bool) -> None
     _slack_post(slack_client, run, "\n".join(lines))
 
 
-def _maybe_open_pr(run: "Run", task: TaskDefinition, worker: "WorkerConfig", repo: str | None, issue_number: int | None) -> None:
-    if not repo or not issue_number:
+def _maybe_open_pr(
+    run: "Run",
+    task: TaskDefinition,
+    worker: "WorkerConfig",
+    repo: str | None,
+    issue_number: int | None,
+    workers_path: Path = Path("workers.yaml"),
+    slack_client=None,
+) -> None:
+    if not repo:
         return
     from factory.github import GitHubClient, get_token
     from factory.poller import _push_and_pr, _branch_name
     try:
         gh = GitHubClient(get_token())
-        issue = {"number": issue_number, "title": task.name.replace(f"Issue #{issue_number}: ", "")}
-        pr_url = _push_and_pr(gh, repo, run, task, issue, Path("workers.yaml"))
-        verdict_line = f"\n\n**Evaluator:** {run.evaluator_reason}" if run.evaluator_verdict else ""
-        comment = (f"✅ Factory run **passed** (run `{run.run_id}`){verdict_line}\n\n"
-                   f"Branch: `{_branch_name(task.id, run.run_id)}`")
-        gh.comment_on_issue(repo, issue_number, comment)
-        gh.close_issue(repo, issue_number)
-        gh.remove_label(repo, issue_number, "factory:running")
-        gh.remove_label(repo, issue_number, "factory")
+        if issue_number:
+            issue = {"number": issue_number, "title": task.name.replace(f"Issue #{issue_number}: ", "")}
+        else:
+            issue = {"number": 0, "title": task.name}
+        pr_url = _push_and_pr(gh, repo, run, task, issue, workers_path)
+        if issue_number:
+            verdict_line = f"\n\n**Evaluator:** {run.evaluator_reason}" if run.evaluator_verdict else ""
+            comment = (f"✅ Factory run **passed** (run `{run.run_id}`){verdict_line}\n\n"
+                       f"Branch: `{_branch_name(task.id, run.run_id)}`")
+            gh.comment_on_issue(repo, issue_number, comment)
+            gh.close_issue(repo, issue_number)
+            gh.remove_label(repo, issue_number, "factory:running")
+            gh.remove_label(repo, issue_number, "factory")
+        if pr_url:
+            run.pr_url = pr_url
+            store.save_run(run)
+            _log(run.run_id, f"  PR opened: {pr_url}")
+            _slack_post(slack_client, run, f":arrow_heading_up: PR opened: {pr_url}")
+        elif repo:
+            _log(run.run_id, "  WARNING: push succeeded but PR URL was empty")
+            _slack_post(slack_client, run, ":warning: Run passed but PR creation failed (check watch.log)")
     except Exception as exc:
         _log(run.run_id, f"  WARNING: PR/issue update failed: {exc}")
+        _slack_post(slack_client, run, f":warning: PR creation failed: {exc}")
 
 
 def _maybe_comment_failure(run: "Run", repo: str | None, issue_number: int | None) -> None:

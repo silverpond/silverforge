@@ -21,7 +21,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-_env_file = Path(__file__).parent.parent / ".env"
+_env_file = Path.cwd() / ".env"
 if _env_file.exists():
     for _line in _env_file.read_text().splitlines():
         _line = _line.strip()
@@ -108,7 +108,7 @@ def _build_inline_task(
     eval_commands: List[str],
     workers_path: Path,
 ) -> "TaskDefinition":
-    from factory.models import CoderConfig, CrucibleConfig, EvalConfig, RepoConfig, SlackConfig, TaskDefinition
+    from factory.models import CoderConfig, CrucibleConfig, EvalConfig, GeminiReviewConfig, RepoConfig, SlackConfig, TaskDefinition
 
     config = load_workers(workers_path)
     worker_name = next(iter(config.workers))
@@ -132,6 +132,7 @@ def _build_inline_task(
         repo=RepoConfig(path=repo_path, branch="main", url=f"git@github.com:{gh_repo}.git"),
         coder=CoderConfig(prompt=prompt, max_iterations=3, session_timeout=600, agents=["claude"]),
         crucible=CrucibleConfig(block_on="Critical", timeout=300),
+        gemini_review=GeminiReviewConfig(),
         slack=SlackConfig(reviewers=[r for r in os.environ.get("SLACK_DEFAULT_REVIEWERS", "").split(",") if r.strip()]),
         eval=EvalConfig(commands=eval_commands, working_dir=repo_path, timeout=120),
     )
@@ -147,6 +148,8 @@ def run_cmd(
     effort: Optional[str] = typer.Option(None, "--effort", "-e", help="Override effort (low, medium, high, max)"),
     repo: Optional[str] = typer.Option(None, "--repo", "-r", help="GitHub repo (owner/repo) for inline tasks"),
     eval_cmd: Optional[List[str]] = typer.Option(None, "--eval", help="Eval command(s) for inline tasks"),
+    crucible_rounds: Optional[int] = typer.Option(None, "--crucible-rounds", help="Number of crucible review rounds"),
+    crucible_model: Optional[str] = typer.Option(None, "--crucible-model", help="Claude model for crucible reviewer (e.g. haiku)"),
     workers: Path = _WORKERS_OPT,
 ) -> None:
     """Run a task — pass a YAML file or an inline task description."""
@@ -165,6 +168,10 @@ def run_cmd(
         task.coder.model = model
     if effort and task.coder:
         task.coder.effort = effort
+    if crucible_rounds is not None and task.crucible:
+        task.crucible.rounds = crucible_rounds
+    if crucible_model and task.crucible:
+        task.crucible.model = crucible_model
 
     agents_display = ", ".join(task.coder.agents) if task.coder else "—"
     console.print()
@@ -181,7 +188,8 @@ def run_cmd(
         console.print()
         raise typer.Exit(1)
 
-    spawn_watcher(run, workers.resolve())
+    gh_repo = _parse_gh_repo(task.repo.url) if task.repo and task.repo.url else None
+    spawn_watcher(run, workers.resolve(), repo=gh_repo)
 
 
 # ── status ───────────────────────────────────────────────────────────────────
@@ -203,7 +211,8 @@ def status(
     table.add_column("Task")
     table.add_column("Worker",  style="dim")
     table.add_column("State",   no_wrap=True)
-    table.add_column("Created", style="dim", no_wrap=True)
+    table.add_column("PR",      style="blue",  no_wrap=True)
+    table.add_column("Created", style="dim",   no_wrap=True)
 
     for r in runs:
         color = _STATE_STYLE.get(r.state, "white")
@@ -212,6 +221,7 @@ def status(
             r.task_name,
             r.worker,
             f"[{color}]{r.state}[/{color}]",
+            r.pr_url or "",
             r.created_at[:19],
         )
 
@@ -220,6 +230,8 @@ def status(
     # If a single run was requested, show eval detail too
     if run_id and runs:
         r = runs[0]
+        if r.pr_url:
+            console.print(f"\n  PR: [blue]{r.pr_url}[/blue]")
         if r.eval_results:
             typer.echo("\nEval results:")
             for er in r.eval_results:
@@ -395,6 +407,114 @@ def kill(
     console.print(f"[red]killed[/red] {run_id[:8]} ({r.task_name})")
 
 
+# ── cleanup ───────────────────────────────────────────────────────────────────
+
+@app.command()
+def cleanup(
+    worker: str = typer.Argument("ares", help="Worker name from workers.yaml"),
+    workers_path: Path = _WORKERS_OPT,
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print what would be removed without removing"),
+) -> None:
+    """Remove all factory worktrees on the worker that have no active tmux session."""
+    config = load_workers(workers_path)
+    w = config.workers.get(worker)
+    if w is None:
+        typer.echo(f"Worker '{worker}' not in {workers_path}", err=True)
+        raise typer.Exit(1)
+
+    client = SSHClient(host=w.host, user=w.user, port=w.port,
+                       identity_file=w.identity_file, shell_init=w.shell_init)
+
+    # List all worktree directories on the worker
+    worktree_base = w.default_worktree_base
+    listing = client.run(f"ls {worktree_base} 2>/dev/null", timeout=10)
+    dirs = [d.strip() for d in listing.stdout.splitlines() if d.strip()]
+
+    if not dirs:
+        console.print("  [dim]No worktrees found.[/dim]")
+        return
+
+    # Find active tmux sessions so we don't remove live worktrees
+    sessions_out = client.run("tmux ls -F '#{session_name}' 2>/dev/null || true", timeout=10)
+    active_sessions = set(sessions_out.stdout.splitlines())
+
+    removed = 0
+    for d in dirs:
+        # Extract run_id from the last segment (e.g. task-name-abc12345 → abc12345)
+        run_id = d.rsplit("-", 1)[-1] if "-" in d else d
+        session = f"factory-{run_id}"
+        if session in active_sessions:
+            console.print(f"  [dim]skipping[/dim] {d}  [yellow](active)[/yellow]")
+            continue
+
+        worktree = f"{worktree_base}/{d}"
+        if dry_run:
+            console.print(f"  [dim]would remove[/dim] {worktree}")
+            removed += 1
+            continue
+
+        # Find the base repo for this worktree so we can prune via git
+        base_path = client.run(
+            f"git -C {worktree} rev-parse --path-format=absolute --git-common-dir 2>/dev/null | sed 's|/\\.git.*||'",
+            timeout=10,
+        ).stdout.strip()
+
+        if base_path:
+            client.run(f"git -C {base_path} worktree remove --force {worktree} 2>/dev/null || rm -rf {worktree}", timeout=30)
+            client.run(f"git -C {base_path} branch -D factory/{d} 2>/dev/null || true", timeout=10)
+        else:
+            client.run(f"rm -rf {worktree}", timeout=30)
+
+        console.print(f"  [green]removed[/green] {worktree}")
+        removed += 1
+
+    noun = "worktree(s) would be removed" if dry_run else "worktree(s) removed"
+    console.print(f"\n  {removed} {noun}.")
+
+
+# ── runs-clean ────────────────────────────────────────────────────────────────
+
+@app.command(name="runs-clean")
+def runs_clean(
+    days: int = typer.Option(7, "--days", "-d", help="Remove finished runs older than this many days"),
+    all_finished: bool = typer.Option(False, "--all", help="Remove all finished runs regardless of age"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print what would be removed without removing"),
+) -> None:
+    """Remove local run directories for finished runs older than N days (default 7). Use --all for everything."""
+    import shutil
+    from datetime import datetime as dt, timedelta, timezone
+
+    runs = store.list_runs()
+
+    if all_finished:
+        to_remove = [r for r in runs if r.state in (RunState.passed, RunState.failed)]
+    else:
+        cutoff = dt.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
+        to_remove = [
+            r for r in runs
+            if r.state in (RunState.passed, RunState.failed)
+            and dt.fromisoformat(r.created_at) < cutoff
+        ]
+
+    if not to_remove:
+        console.print(f"  [dim]No finished runs older than {days} day(s).[/dim]")
+        return
+
+    removed = 0
+    for r in to_remove:
+        run_dir = store.RUNS_DIR / r.run_id
+        age_days = (dt.now(timezone.utc).replace(tzinfo=None) - dt.fromisoformat(r.created_at)).days
+        if dry_run:
+            console.print(f"  [dim]would remove[/dim] {r.run_id}  [{r.state}]  {r.task_name[:50]}  [dim]({age_days}d old)[/dim]")
+        else:
+            shutil.rmtree(run_dir, ignore_errors=True)
+            console.print(f"  [green]removed[/green] {r.run_id}  [dim]{r.task_name[:50]}  ({age_days}d old)[/dim]")
+        removed += 1
+
+    noun = "run(s) would be removed" if dry_run else "run(s) removed"
+    console.print(f"\n  {removed} {noun}.")
+
+
 # ── logs ──────────────────────────────────────────────────────────────────────
 
 @app.command()
@@ -538,6 +658,21 @@ def setup_cmd(
             _write_env_var("SLACK_DEFAULT_REVIEWERS", reviewers_str)
             os.environ["SLACK_DEFAULT_REVIEWERS"] = reviewers_str
             console.print(f"  [green]✓[/green] Slack reviewers saved to [dim].env[/dim]")
+
+        if not os.environ.get("SLACK_FACTORY_CHANNEL_ID"):
+            console.print(
+                "\n  [dim]Paste an existing channel ID to use it, or leave blank to auto-create"
+                " a factory-{username} channel. To find a channel ID: right-click the channel"
+                " → View channel details → scroll to the bottom of the About tab.[/dim]"
+            )
+            channel_id = ask(questionary.text(
+                "Slack channel ID (leave blank to auto-create):",
+                default="",
+            )).strip()
+            if channel_id:
+                _write_env_var("SLACK_FACTORY_CHANNEL_ID", channel_id)
+                os.environ["SLACK_FACTORY_CHANNEL_ID"] = channel_id
+                console.print(f"  [green]✓[/green] Slack channel ID saved to [dim].env[/dim]")
 
     # Optional: set up labels on a repo
     gh_repo_str = ask(questionary.text(
@@ -821,6 +956,8 @@ def poll(
     model: Optional[str] = typer.Option(None, "--model", "-m", help="Override model (e.g. sonnet, opus)"),
     effort: Optional[str] = typer.Option(None, "--effort", "-e", help="Override effort (low, medium, high, max)"),
     eval_cmd: Optional[List[str]] = typer.Option(None, "--eval", help="Eval command(s) run after each agent iteration"),
+    crucible_rounds: Optional[int] = typer.Option(None, "--crucible-rounds", help="Number of crucible review rounds"),
+    crucible_model: Optional[str] = typer.Option(None, "--crucible-model", help="Claude model for crucible reviewer (e.g. haiku)"),
 ) -> None:
     """
     Fetch open GitHub issues labeled 'factory' and run them in parallel.
@@ -848,6 +985,10 @@ def poll(
         task_template.coder.model = model
     if effort and task_template.coder:
         task_template.coder.effort = effort
+    if crucible_rounds is not None and task_template.crucible:
+        task_template.crucible.rounds = crucible_rounds
+    if crucible_model and task_template.crucible:
+        task_template.crucible.model = crucible_model
     gh = GitHubClient(token)
 
     # Default concurrency to the worker's slot count

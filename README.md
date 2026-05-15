@@ -1,4 +1,4 @@
-# Silverpond Factory
+# Silverforge
 
 An automated software factory that runs Claude AI agents on a remote worker machine to implement tasks, reviews the code with Crucible, and opens pull requests — all from a single command.
 
@@ -41,7 +41,7 @@ Before you start, ask your admin to set up:
 
 ```bash
 git clone https://github.com/silverpond/silverforge
-cd silverpond-factory
+cd silverforge
 pip install -e .
 ```
 

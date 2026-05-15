@@ -281,29 +281,6 @@ def watch_task(
                 store.save_log(run_id, f"agent_output_iter{iteration}.txt", captured)
                 _log(run_id, f"  agent status={agent_status}")
 
-                rate_limited = any(
-                    marker.lower() in captured.lower()
-                    for marker in task.coder.rate_limit_markers
-                )
-                if rate_limited:
-                    next_idx = current_agent_idx + 1
-                    if next_idx < len(agent_commands):
-                        next_name = agent_names[next_idx]
-                        _log(run_id, f"  rate limit detected on {agent_name} → switching to {next_name}")
-                        _slack_post(slack_client, run, f":warning: Rate limit hit on `{agent_name}` — switching to `{next_name}`")
-                        current_agent_idx = next_idx
-                        needs_new_session = True
-                        continue
-                    else:
-                        run.state = RunState.failed
-                        run.notes = f"All agents rate limited: {', '.join(agent_names)}"
-                        store.save_run(run)
-                        _log(run_id, "  all agents exhausted — giving up")
-                        _slack_post(slack_client, run, f":x: All agents rate limited — giving up")
-                        sess.kill_session(client, session_name)
-                        if run.slack_thread_ts:
-                            sess.unregister_run(client, run.slack_thread_ts)
-                        return run
 
                 if agent_status == "timeout":
                     run.state = RunState.failed

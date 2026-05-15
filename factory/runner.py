@@ -330,7 +330,7 @@ def watch_task(
                             return run
                         _log(run_id, "  untangle passed")
 
-                    if task.crucible is not None and run.worktree_path:
+                    if task.crucible is not None and task.crucible.rounds > 0 and run.worktree_path:
                         # Commit any uncommitted agent changes so crucible can see the diff
                         import shlex as _shlex
                         commit_msg = _shlex.quote(f"factory: agent changes (iter {iteration})")

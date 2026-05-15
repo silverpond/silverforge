@@ -21,6 +21,7 @@ from factory.evaluator_agent import parse_verdict, run_evaluator
 from factory.gemini_review import run_gemini_review
 from factory.config import WorkerConfig, load_workers
 from factory.models import Run, RunState, TaskDefinition, UntangleConfig, CrucibleConfig, GeminiReviewConfig
+from factory.repo_inspector import get_or_create_repo_context, inject_repo_context
 from factory.slots import teardown_port
 from factory.slack import SlackClient, get_token as get_slack_token, get_cached_channel_id
 from factory.ssh import SSHClient
@@ -115,6 +116,16 @@ def launch_task(task: TaskDefinition, workers_path: Path = Path("workers.yaml"))
     # ── Launch first agent session ───────────────────────────────────────────
     session_name = sess.session_name_for_run(run.run_id)
     prompt = _prepend_constitution(task.coder.prompt)
+
+    # Inject cached repo context so the agent doesn't analyse the repo from scratch
+    if task.repo is not None:
+        _log(run.run_id, "  fetching repo context (cached or generating)...")
+        repo_context = get_or_create_repo_context(
+            client, task.repo.path, shell_init=worker.shell_init
+        )
+        if repo_context:
+            prompt = inject_repo_context(prompt, repo_context)
+            _log(run.run_id, f"  repo context injected ({len(repo_context)} chars)")
     agent_commands = [worker.agents.get(name, name) for name in agent_names]
     agent_cmd = agent_commands[0]
     agent_name = agent_names[0]
@@ -197,6 +208,13 @@ def watch_task(
         # ── Coder → eval loop ────────────────────────────────────────────────
         if task.coder is not None:
             original_prompt = _prepend_constitution(task.coder.prompt)
+            # Inject cached repo context (fast cat on subsequent runs)
+            if task.repo is not None:
+                repo_context = get_or_create_repo_context(
+                    client, task.repo.path, shell_init=worker.shell_init
+                )
+                if repo_context:
+                    original_prompt = inject_repo_context(original_prompt, repo_context)
             coder_model = task.coder.model or worker.model
             coder_effort = task.coder.effort or worker.effort
             agent_names = task.coder.agents or ["claude"]

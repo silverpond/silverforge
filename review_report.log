@@ -1,49 +1,67 @@
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:10:24.567 +10:00] [progress] startup:references started Scanning related references
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:10:24.568 +10:00] [progress] startup:history started Collecting recent history
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:10:24.568 +10:00] [progress] startup:docs started Loading docs context
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.958 +10:00] [progress] startup:references completed count=0 duration=0.0s Reference scan complete
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.959 +10:00] [progress] startup:history completed count=15 duration=0.0s History collection complete
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.959 +10:00] [progress] startup:docs completed count=1 duration=0.0s Docs collection complete
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.959 +10:00] [progress] startup:prechecks started Running prechecks
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.959 +10:00] [progress] startup:prechecks completed count=2 duration=0.1s Prechecks complete
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.959 +10:00] [progress] run:header reviewers=claude-code,codex max_rounds=2 changed_files=1 changed_lines=2 convergence_enabled=true context_enabled=true
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.959 +10:00] [progress] phase:start analyzer
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.959 +10:00] [progress] analyzer:start
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.959 +10:00] [agent-chat] -> claude-code index db52d8e..0d966d3 100644 worker=worker_name,
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.959 +10:00] [analysis]
+[run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:26:21.757 +10:00] [progress] startup:references started Scanning related references
+[run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:26:21.757 +10:00] [progress] startup:history started Collecting recent history
+[run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:26:21.757 +10:00] [progress] startup:docs started Loading docs context
+[run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:29:21.709 +10:00] [progress] startup:references completed count=0 duration=0.4s Reference scan complete
+[run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:29:21.710 +10:00] [progress] startup:history completed count=18 duration=0.4s History collection complete
+[run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:29:21.710 +10:00] [progress] startup:docs completed count=1 duration=0.4s Docs collection complete
+[run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:29:21.710 +10:00] [progress] startup:prechecks started Running prechecks
+[run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:29:21.710 +10:00] [progress] startup:prechecks completed count=2 duration=0.4s Prechecks complete
+[run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:29:21.710 +10:00] [progress] run:header reviewers=claude-code max_rounds=1 changed_files=2 changed_lines=13 convergence_enabled=false context_enabled=true
+[run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:29:21.710 +10:00] [progress] phase:start analyzer
+[run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:29:21.710 +10:00] [progress] analyzer:start
+[run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:29:21.711 +10:00] [agent-chat] -> claude-code index 8ff151b..0ec28ea 100644 # Override model and effort (haiku + low is cheapest)
+[run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:29:21.711 +10:00] [analysis]
 ## Local Diff Analysis
 
-Increases the Crucible timeout from 300s (5 minutes) to 600s (10 minutes) for inline tasks built via the CLI. This aligns the Crucible phase timeout with the existing coder `session_timeout` of 600s, likely addressing timeouts observed during the Crucible analysis step in the pipeline.
+**Agent Fallback Feature Addition**: Extended the CLI to support multiple agents with fallback mechanism. The `run` and `poll` commands now accept multiple `--agent` flags (e.g., `--agent claude --agent codex`) to enable automatic fallback when the primary agent hits rate limits. This leverages existing multi-agent support in the runner that detects `rate_limit_markers` and switches to the next agent in the list. Changes are backward compatible and well-documented with examples in README.
 
 ### Suggested Review Focus
-- Timeout consistency: Verify that 600s is appropriate for Crucible and won't cause the overall pipeline to hang excessively on failures. Check if other CrucibleConfig instantiations (e.g., in task YAML files) should also be updated for consistency.
+- Typer Multi-Value Option Parsing: Parameter type changed from `Optional[str]` to `Optional[List[str]]`. Must verify Typer correctly accumulates multiple `--agent` flags into a list rather than overwriting
+- None Handling in Agent Assignment: The guard `if agent and task.coder:` protects against None, but confirm this is the intended behavior and that empty/None lists don't break downstream code
+- Consistency Between run() and poll(): Both commands now support agents, but poll() applies to `task_template.coder.agents`. Verify this propagates correctly to per-issue task instances created during polling
+- Documentation Accuracy: README examples show `--agent claude --agent codex` syntax. Confirm this matches Typer's multi-flag behavior and works end-to-end
+- Agent Fallback Activation: The runner already has fallback logic via `rate_limit_markers`. Verify the agent list flows through TaskDefinition → CoderConfig → runner without mutation
 
 ### Trade-offs
-- Longer timeout means slower failure detection when Crucible is genuinely stuck or unresponsive
-- Aligns Crucible timeout with coder session_timeout (600s), reducing premature timeout failures at the cost of longer worst-case wait times
+- CLI parameter type changed from scalar to list — potential breakage if any tool/script passes agents as positional args rather than options
+- Backward compatibility depends on Typer's multi-value option behavior — single `--agent X` should still work but may need testing
+- Documentation now lists agent fallback as a feature, implying rate limit detection is reliable — any false negatives will disappoint users
 
 ### Affected Modules
-- factory/cli.py
+- `factory/cli.py` — `run_cmd()` and `poll()` CLI handlers
+- `README.md` — user-facing documentation and examples
+- `factory/runner.py` — existing multi-agent + rate limit fallback logic (unchanged, reused)
+- `factory/models.py` — `CoderConfig.agents` field (unchanged, already supported `List[str]`)
 
 ### Call Chain
-- CLI _build_inline_task() -> CrucibleConfig(timeout=600) -> runner.run_task() -> crucible phase execution
+- `run_cmd(task, --agent claude --agent codex)` → construct TaskDefinition → set `task.coder.agents = [claude, codex]` → `runner.run_task(task)` → agent 1 executes → if `rate_limit_markers` detected → agent 2 executes
+- `poll(--agent claude --agent codex)` → build task_template → set `task_template.coder.agents = [claude, codex]` → per-issue loop → `run_task(task)` with agents list → fallback on rate limit
 
 ### Design Patterns
-- Hardcoded configuration defaults — consider extracting timeout constants or making them CLI-configurable
+- **Chain of Responsibility**: agents tried in declaration order; first to succeed (or last to attempt) wins
+- **Graceful Degradation**: rate limit on primary agent → transparent switch to secondary without user intervention
+- **Configuration Propagation**: CLI option → TaskDefinition → CoderConfig → runner execution
+- **Template-Based Polling**: single agent config applied to all spawned tasks (poll pattern)
 
 ### Reviewer Checklist
-- Confirm Crucible timeouts in task YAML files and other code paths are consistent with this change
-- Verify no upstream or downstream timeouts conflict with 600s (e.g., SSH keepalive, tmux session limits)
-- Check if the timeout should be a CLI flag rather than a hardcoded default
+- ✓ Typer multi-value option test: run `factory run 'test' --agent a --agent b --agent c` and confirm agents list contains all three
+- ✓ Backward compat test: run `factory run 'test' --agent solo` and confirm it works without error
+- ✓ None/empty handling: trace code path when agent parameter is omitted; verify `list(None)` doesn't break or add safeguard
+- ✓ Poll propagation: verify agents from `--agent X --agent Y` reach **every** task spawned by `poll()`, not just the template
+- ✓ rate_limit_markers activation: confirm runner actually switches agents (check logs/runner.py logic hasn't regressed)
+- ✓ Documentation correctness: run both example commands from README and verify they execute without CLI parsing errors
+- ✓ Help text clarity: verify `--help` output for `run` and `poll` clearly explains multi-agent syntax and fallback semantics
+- ✓ Edge case: what happens if `--agent` is used with a task YAML that already defines agents? (config precedence)
 
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.959 +10:00] [system-context]
+[run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:29:21.711 +10:00] [system-context]
 ### System Context
-- Changed files: 1
+- Changed files: 2
 - Reference snippets: 0
-- History commits: 15
+- History commits: 18
 - Docs snippets: 1
 - Deterministic prechecks: 2
 - Affected files:
+  - README.md
   - factory/cli.py
 - Precheck results:
   - untangle-analyze-report [Fail] error: unexpected argument '.' found
@@ -57,246 +75,428 @@ Usage: untangle <COMMAND>
 
 For more information, try '--help'.
 
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.959 +10:00] [progress] analyzer:done
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.959 +10:00] [progress] phase:done analyzer
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.959 +10:00] [progress] phase:start agent-preflight
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.959 +10:00] [progress] phase:done agent-preflight
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.960 +10:00] [progress] phase:start round-1
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.960 +10:00] [progress] round:1 start (agents: claude-code,codex)
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.960 +10:00] [progress] round:1 status [... claude-code | ... codex]
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.960 +10:00] [progress] round:1 status [RUN claude-code | ... codex]
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.960 +10:00] [progress] agent:start round=1 id=claude-code
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.960 +10:00] [progress] round:1 status [RUN claude-code | RUN codex]
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.960 +10:00] [progress] agent:start round=1 id=codex
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.960 +10:00] [agent-chat] -> claude-code index db52d8e..0d966d3 100644 worker=worker_name,
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.960 +10:00] [agent-review] round=1 id=claude-code 1 findings (0 Critical, 0 Warning, 1 Info) | The diff is a single-line change bumping the Crucible timeout from 300s to 600s in the CLI's inline task builder. The model default (`CrucibleConfig.timeout`) was already updated to 600 in models.py (line 72), so this change simply brings cli.py in sync. The explicit `timeout=600` in the CLI is now redundant with the model default but is otherwise correct and harmless. No correctness, security, or invariant issues found.
+[run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:29:21.711 +10:00] [progress] analyzer:done
+[run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:29:21.711 +10:00] [progress] phase:done analyzer
+[run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:29:21.711 +10:00] [progress] phase:start agent-preflight
+[run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:29:21.711 +10:00] [progress] phase:done agent-preflight
+[run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:29:21.711 +10:00] [progress] phase:start round-1
+[run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:29:21.711 +10:00] [progress] round:1 start (agents: claude-code)
+[run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:29:21.712 +10:00] [progress] round:1 status [... claude-code]
+[run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:29:21.712 +10:00] [progress] round:1 status [RUN claude-code]
+[run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:29:21.712 +10:00] [progress] agent:start round=1 id=claude-code
+[run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:29:21.712 +10:00] [agent-chat] -> claude-code index 8ff151b..0ec28ea 100644 # Override model and effort (haiku + low is cheapest)
+[run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:29:21.712 +10:00] [agent-review] round=1 id=claude-code 4 findings (0 Critical, 0 Warning, 4 Info) | The agent fallback feature changes parameter types from scalar to list to support multiple agent fallbacks (e.g., `--agent claude --agent codex`). The implementation is fundamentally sound: agents flow correctly through TaskDefinition → CoderConfig → runner, and fallback logic on rate limits is already implemented in runner.py. CLI parameter types changed from `Optional[str]` to `Optional[List[str]]` following existing patterns (eval_cmd uses same pattern). Three minor issues identified: (1) redundant `list()` wrapper when assigning agents—inconsistent with model/effort patterns; (2) reliance on Typer >= 0.12 multi-flag accumulation, which is satisfied by pyproject.toml but hasn't been end-to-end tested per review checklist; (3) no validation of agent names, though runner.py uses defensive .get() fallback. No security or correctness issues found; CLI overrides YAML as expected.
 [agent-review] details:
 Narrative:
-The diff is a single-line change bumping the Crucible timeout from 300s to 600s in the CLI's inline task builder. The model default (`CrucibleConfig.timeout`) was already updated to 600 in models.py (line 72), so this change simply brings cli.py in sync. The explicit `timeout=600` in the CLI is now redundant with the model default but is otherwise correct and harmless. No correctness, security, or invariant issues found.
+The agent fallback feature changes parameter types from scalar to list to support multiple agent fallbacks (e.g., `--agent claude --agent codex`). The implementation is fundamentally sound: agents flow correctly through TaskDefinition → CoderConfig → runner, and fallback logic on rate limits is already implemented in runner.py. CLI parameter types changed from `Optional[str]` to `Optional[List[str]]` following existing patterns (eval_cmd uses same pattern). Three minor issues identified: (1) redundant `list()` wrapper when assigning agents—inconsistent with model/effort patterns; (2) reliance on Typer >= 0.12 multi-flag accumulation, which is satisfied by pyproject.toml but hasn't been end-to-end tested per review checklist; (3) no validation of agent names, though runner.py uses defensive .get() fallback. No security or correctness issues found; CLI overrides YAML as expected.
 
 Findings:
-- [Info] factory/cli.py:134 Consider omitting the explicit timeout=600 so the model default is the single source of truth, or extract a named constant shared by both.
-  description: CrucibleConfig in models.py already defines `timeout: int = 600` as the default (models.py:72). The explicit `timeout=600` in _build_inline_task is now redundant. If the default ever changes in the model, this call-site will silently override it, creating a maintenance hazard where two locations must be updated in lockstep.
+- [Info] factory/cli.py:166 Remove redundant list() call: change `task.coder.agents = list(agent)` to `task.coder.agents = agent`
+  description: The agent parameter is already Optional[List[str]] from Typer (line 146), so wrapping it in list() again creates an unnecessary copy. This is inconsistent with how model and effort parameters are handled—they are assigned directly without wrappers (lines 168-170).
+- [Info] factory/cli.py:146 Verify Typer multi-flag accumulation works: test `factory run 'task' --agent claude --agent codex` and confirm agents list receives both values. Pattern is stable in Typer 0.12+, but runtime verification needed.
+  description: The agent parameter type changed from Optional[str] to Optional[List[str]], relying on Typer >= 0.12's multi-flag accumulation feature. While pyproject.toml specifies typer[all]>=0.12 and this pattern is already used for eval_cmd (line 150), the feature has not been end-to-end tested per the review checklist ("Typer multi-value option test: run `factory run 'test' --agent a --agent b --agent c` and confirm agents list contains all three").
+- [Info] factory/cli.py:146 Consider updating help text to reference workers.yaml or document valid agent names and failure behavior
+  description: The help text for the agent parameter ("Agent(s) to use in order (e.g. --agent claude --agent codex for codex fallback)") does not clarify that agent names are validated against worker.agents dictionary (defined in workers.yaml). Users providing invalid agent names will only encounter errors at runtime when the runner tries to execute the command.
+- [Info] factory/cli.py:956 Consider reordering poll() parameters to match run_cmd() parameter order for consistency: agent should appear earlier, closer to model/effort/crucible parameters
+  description: In run_cmd() (line 146), the agent parameter appears second in the parameter list, after task_or_file. In poll() (line 956), the agent parameter appears fourth, after repo, template, workers, and max_concurrency. While not a functional issue, inconsistent ordering reduces discoverability and makes the CLI feel less polished.
 
-[agent-review]   [INFO] factory/cli.py:134 Consider omitting the explicit timeout=600 so the model default is the single source of truth, or extract a named constant shared by both.
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.960 +10:00] [progress] round:1 status [OK claude-code (21.3s) | RUN codex]
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.960 +10:00] [progress] agent:done round=1 id=claude-code
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.960 +10:00] [agent-chat] -> codex index db52d8e..0d966d3 100644 worker=worker_name,
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.960 +10:00] [agent-chat] <- codex The timeout increase itself is safe, but the change introduces/retains configuration inconsistency across task-entry paths and keeps a duplicated magic default in code. No security
+[agent-review]   [INFO] factory/cli.py:166 Remove redundant list() call: change `task.coder.agents = list(agent)` to `task.coder.agents = agent`
+[agent-review]   [INFO] factory/cli.py:146 Verify Typer multi-flag accumulation works: test `factory run 'task' --agent claude --agent codex` and confirm agents list receives both values. Pattern is stable in Typer 0.12+, but runtime verification needed.
+[agent-review]   [INFO] factory/cli.py:146 Consider updating help text to reference workers.yaml or document valid agent names and failure behavior
+[run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:29:21.712 +10:00] [progress] round:1 status [OK claude-code (139.5s)]
+[run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:29:21.713 +10:00] [progress] agent:done round=1 id=claude-code
+[run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:29:21.713 +10:00] [progress] round:1 done
+[run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:29:21.713 +10:00] [progress] round:1/1 complete
+[run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:29:21.713 +10:00] [progress] phase:done round-1
+[run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:29:21.713 +10:00] [agent-chat] -> claude-code Normalize these findings into canonical issues (merge duplicates): [{"agent":"claude-code","severity":"Info","confidence":"High","file":"factory/cli.py","span":{"start":166,"end":1
 …
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.961 +10:00] [agent-review] round=1 id=codex 2 findings (0 Critical, 1 Warning, 1 Info) | The timeout increase itself is safe, but the change introduces/retains configuration inconsistency across task-entry paths and keeps a duplicated magic default in code. No security or performance regressions were found in the modified line alone, but architecture/API consistency can be improved.
-[agent-review] details:
-Narrative:
-The timeout increase itself is safe, but the change introduces/retains configuration inconsistency across task-entry paths and keeps a duplicated magic default in code. No security or performance regressions were found in the modified line alone, but architecture/API consistency can be improved.
-
-Findings:
-- [Warning] factory/cli.py:134 Align Crucible timeout defaults across inline builder and task templates (or document intentional divergence).
-  description: Inline tasks now hardcode Crucible timeout to 600s, while checked-in YAML templates still explicitly set 300s. This creates API inconsistency: `factory run <inline prompt>` and `factory poll` without `--template` use 600s, but template-driven runs can still use 300s. The same feature behaves differently depending on task source, which is hard to reason about operationally.
-- [Info] factory/cli.py:134 Remove duplicated literal timeout or centralize it in a shared constant/default path.
-  description: The inline task builder hardcodes `timeout=600` even though `CrucibleConfig` already defines a default of 600. Keeping duplicated literals in multiple places increases maintenance overhead and can silently drift when defaults evolve.
-
-[agent-review]   [WARNING] factory/cli.py:134 Align Crucible timeout defaults across inline builder and task templates (or document intentional divergence).
-[agent-review]   [INFO] factory/cli.py:134 Remove duplicated literal timeout or centralize it in a shared constant/default path.
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.961 +10:00] [progress] round:1 status [OK claude-code (21.3s) | OK codex (57.3s)]
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.961 +10:00] [progress] agent:done round=1 id=codex
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.961 +10:00] [progress] round:1 done
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.961 +10:00] [agent-chat] -> claude-code Findings so far: [{"agent":"codex","severity":"Warning","confidence":"High","file":"factory/cli.py","span":{"start":134,"end":134},"message":"Align Crucible timeout defaults across
-…
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.961 +10:00] [progress] convergence round=1 verdict=CONVERGED rationale=Both agents agree on a single warning-level finding: the Crucible timeout default was updated to 600s in the inline builder but YAML templates still use 300s, creating an inconsistency. The diff itself is correct and intentional (raising the inline default). The suggested fix (update YAML templates or parameterize the timeout) is reasonable maintainability advice but not a blocking defect. No security, correctness, or high-severity issues exist. No unresolved disagreements between reviewers.
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.961 +10:00] [progress] round:1/2 complete
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.961 +10:00] [progress] phase:done round-1
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.961 +10:00] [agent-chat] -> claude-code Normalize these findings into canonical issues (merge duplicates): [{"agent":"codex","severity":"Warning","confidence":"High","file":"factory/cli.py","span":{"start":134,"end":134}
-…
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.961 +10:00] [progress] phase:start finalize
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.961 +10:00] [agent-chat] -> claude-code Findings: [{"agent":"codex","severity":"Warning","confidence":"High","file":"factory/cli.py","span":{"start":134,"end":134},"message":"Align Crucible timeout defaults across inline
-…
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.962 +10:00] [progress] autofix:ready
-[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.962 +10:00] [run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.962 +10:00] [progress] phase:done finalize
-[run:17e55912-ba97-4764-89ea-118341b51b2f]
-[2026-05-15 14:12:14.962 +10:00] [report]
+[run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:29:21.713 +10:00] [progress] phase:start finalize
+[run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:29:21.713 +10:00] [run:8c918791-8510-437a-b326-0d0932e35048] [2026-05-15 15:29:21.713 +10:00] [progress] phase:done finalize
+[run:8c918791-8510-437a-b326-0d0932e35048]
+[2026-05-15 15:29:21.714 +10:00] [report]
 {
   "agent_failures": [],
-  "analysis_markdown": "## Local Diff Analysis\n\nIncreases the Crucible timeout from 300s (5 minutes) to 600s (10 minutes) for inline tasks built via the CLI. This aligns the Crucible phase timeout with the existing coder `session_timeout` of 600s, likely addressing timeouts observed during the Crucible analysis step in the pipeline.\n\n### Suggested Review Focus\n- Timeout consistency: Verify that 600s is appropriate for Crucible and won't cause the overall pipeline to hang excessively on failures. Check if other CrucibleConfig instantiations (e.g., in task YAML files) should also be updated for consistency.\n\n### Trade-offs\n- Longer timeout means slower failure detection when Crucible is genuinely stuck or unresponsive\n- Aligns Crucible timeout with coder session_timeout (600s), reducing premature timeout failures at the cost of longer worst-case wait times\n\n### Affected Modules\n- factory/cli.py\n\n### Call Chain\n- CLI _build_inline_task() -> CrucibleConfig(timeout=600) -> runner.run_task() -> crucible phase execution\n\n### Design Patterns\n- Hardcoded configuration defaults — consider extracting timeout constants or making them CLI-configurable\n\n### Reviewer Checklist\n- Confirm Crucible timeouts in task YAML files and other code paths are consistent with this change\n- Verify no upstream or downstream timeouts conflict with 600s (e.g., SSH keepalive, tmux session limits)\n- Check if the timeout should be a CLI flag rather than a hardcoded default\n",
-  "auto_fix": {
-    "explanation": "The diff in factory/cli.py already updated the inline-task Crucible timeout from 300s to 600s, but the two checked-in YAML task templates (tasks/todo.yaml:31 and tasks/rails-sample.yaml:25) still hardcode 300s. This means template-driven runs (`factory poll --template`) and inline runs (`factory run \"...\"`) would use different Crucible timeouts for the same logical default, creating an operational inconsistency. The fix updates both YAML templates to 600s to match the inline builder, ensuring a single consistent default across all task sources.",
-    "unified_diff": "--- a/tasks/todo.yaml\n+++ b/tasks/todo.yaml\n@@ -29,7 +29,7 @@\n crucible:\n   block_on: Critical\n-  timeout: 300\n+  timeout: 600\n \n slack:\n   reviewers: []   # add Slack user IDs here, e.g. [\"U12345678\"]\n--- a/tasks/rails-sample.yaml\n+++ b/tasks/rails-sample.yaml\n@@ -23,7 +23,7 @@\n crucible:\n   block_on: Critical\n-  timeout: 300\n+  timeout: 600\n \n slack: {}\n"
-  },
+  "analysis_markdown": "## Local Diff Analysis\n\n**Agent Fallback Feature Addition**: Extended the CLI to support multiple agents with fallback mechanism. The `run` and `poll` commands now accept multiple `--agent` flags (e.g., `--agent claude --agent codex`) to enable automatic fallback when the primary agent hits rate limits. This leverages existing multi-agent support in the runner that detects `rate_limit_markers` and switches to the next agent in the list. Changes are backward compatible and well-documented with examples in README.\n\n### Suggested Review Focus\n- Typer Multi-Value Option Parsing: Parameter type changed from `Optional[str]` to `Optional[List[str]]`. Must verify Typer correctly accumulates multiple `--agent` flags into a list rather than overwriting\n- None Handling in Agent Assignment: The guard `if agent and task.coder:` protects against None, but confirm this is the intended behavior and that empty/None lists don't break downstream code\n- Consistency Between run() and poll(): Both commands now support agents, but poll() applies to `task_template.coder.agents`. Verify this propagates correctly to per-issue task instances created during polling\n- Documentation Accuracy: README examples show `--agent claude --agent codex` syntax. Confirm this matches Typer's multi-flag behavior and works end-to-end\n- Agent Fallback Activation: The runner already has fallback logic via `rate_limit_markers`. Verify the agent list flows through TaskDefinition → CoderConfig → runner without mutation\n\n### Trade-offs\n- CLI parameter type changed from scalar to list — potential breakage if any tool/script passes agents as positional args rather than options\n- Backward compatibility depends on Typer's multi-value option behavior — single `--agent X` should still work but may need testing\n- Documentation now lists agent fallback as a feature, implying rate limit detection is reliable — any false negatives will disappoint users\n\n### Affected Modules\n- `factory/cli.py` — `run_cmd()` and `poll()` CLI handlers\n- `README.md` — user-facing documentation and examples\n- `factory/runner.py` — existing multi-agent + rate limit fallback logic (unchanged, reused)\n- `factory/models.py` — `CoderConfig.agents` field (unchanged, already supported `List[str]`)\n\n### Call Chain\n- `run_cmd(task, --agent claude --agent codex)` → construct TaskDefinition → set `task.coder.agents = [claude, codex]` → `runner.run_task(task)` → agent 1 executes → if `rate_limit_markers` detected → agent 2 executes\n- `poll(--agent claude --agent codex)` → build task_template → set `task_template.coder.agents = [claude, codex]` → per-issue loop → `run_task(task)` with agents list → fallback on rate limit\n\n### Design Patterns\n- **Chain of Responsibility**: agents tried in declaration order; first to succeed (or last to attempt) wins\n- **Graceful Degradation**: rate limit on primary agent → transparent switch to secondary without user intervention\n- **Configuration Propagation**: CLI option → TaskDefinition → CoderConfig → runner execution\n- **Template-Based Polling**: single agent config applied to all spawned tasks (poll pattern)\n\n### Reviewer Checklist\n- ✓ Typer multi-value option test: run `factory run 'test' --agent a --agent b --agent c` and confirm agents list contains all three\n- ✓ Backward compat test: run `factory run 'test' --agent solo` and confirm it works without error\n- ✓ None/empty handling: trace code path when agent parameter is omitted; verify `list(None)` doesn't break or add safeguard\n- ✓ Poll propagation: verify agents from `--agent X --agent Y` reach **every** task spawned by `poll()`, not just the template\n- ✓ rate_limit_markers activation: confirm runner actually switches agents (check logs/runner.py logic hasn't regressed)\n- ✓ Documentation correctness: run both example commands from README and verify they execute without CLI parsing errors\n- ✓ Help text clarity: verify `--help` output for `run` and `poll` clearly explains multi-agent syntax and fallback semantics\n- ✓ Edge case: what happens if `--agent` is used with a task YAML that already defines agents? (config precedence)\n",
+  "auto_fix": null,
   "consensus": [
     {
-      "agreed_count": 2,
+      "agreed_count": 1,
       "file": "factory/cli.py",
       "reached_quorum": true,
-      "severity": "Warning",
+      "severity": "Info",
       "span": {
-        "end": 134,
-        "start": 134
+        "end": 956,
+        "start": 956
       },
-      "total_agents": 2
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/cli.py",
+      "reached_quorum": true,
+      "severity": "Info",
+      "span": {
+        "end": 166,
+        "start": 166
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/cli.py",
+      "reached_quorum": true,
+      "severity": "Info",
+      "span": {
+        "end": 146,
+        "start": 146
+      },
+      "total_agents": 1
     }
   ],
   "final_action_plan": {
-    "prioritized_steps": [
-      "[Warning] Crucible timeout behavior is inconsistent between inline and YAML-based tasks (factory/cli.py:134)",
-      "[Warning] Crucible timeout inconsistent between inline builder (600s) and YAML templates (300s) (factory/cli.py:134)"
-    ],
-    "quick_wins": []
+    "prioritized_steps": [],
+    "quick_wins": [
+      "[Info] Type parameter change requires Typer multi-flag support (factory/cli.py:146)",
+      "[Info] Typer multi-flag accumulation requires end-to-end testing (factory/cli.py:146)",
+      "[Info] Redundant list() wrapper around agent parameter (factory/cli.py:166)",
+      "[Info] Inconsistent parameter ordering between run() and poll() (factory/cli.py:956)",
+      "[Info] Inconsistent parameter ordering between run() and poll() functions (factory/cli.py:956)"
+    ]
   },
-  "final_analysis_markdown": "## Final Analysis\n\n- Issues: 2 (Critical: 0, Warning: 2, Info: 0)\n- Agent failures: 0\n\n### Top Issues\n- [Warning] Crucible timeout behavior is inconsistent between inline and YAML-based tasks `factory/cli.py:134`\n- [Warning] Crucible timeout inconsistent between inline builder (600s) and YAML templates (300s) `factory/cli.py:134`\n\n### Action Plan\n- [Warning] Crucible timeout behavior is inconsistent between inline and YAML-based tasks (factory/cli.py:134)\n- [Warning] Crucible timeout inconsistent between inline builder (600s) and YAML templates (300s) (factory/cli.py:134)\n",
+  "final_analysis_markdown": "## Final Analysis\n\n- Issues: 5 (Critical: 0, Warning: 0, Info: 5)\n- Agent failures: 0\n\n### Top Issues\n- [Info] Type parameter change requires Typer multi-flag support `factory/cli.py:146`\n- [Info] Typer multi-flag accumulation requires end-to-end testing `factory/cli.py:146`\n- [Info] Redundant list() wrapper around agent parameter `factory/cli.py:166`\n- [Info] Inconsistent parameter ordering between run() and poll() `factory/cli.py:956`\n- [Info] Inconsistent parameter ordering between run() and poll() functions `factory/cli.py:956`\n\n### Action Plan\n- No blocking actions.\n",
   "findings": [
     {
-      "agent": "codex",
-      "category": "maintainability",
+      "agent": "claude-code",
+      "category": "style",
       "confidence": "High",
-      "description": "Inline tasks now hardcode Crucible timeout to 600s, while checked-in YAML templates still explicitly set 300s. This creates API inconsistency: `factory run <inline prompt>` and `factory poll` without `--template` use 600s, but template-driven runs can still use 300s. The same feature behaves differently depending on task source, which is hard to reason about operationally.",
+      "description": "The agent parameter is already Optional[List[str]] from Typer (line 146), so wrapping it in list() again creates an unnecessary copy. This is inconsistent with how model and effort parameters are handled—they are assigned directly without wrappers (lines 168-170).",
       "evidence": [
         {
-          "location": "factory/cli.py:134",
-          "quote": "crucible=CrucibleConfig(block_on=\"Critical\", timeout=600),"
+          "location": "factory/cli.py:146",
+          "quote": "agent: Optional[List[str]] = typer.Option(None, \"--agent\", \"-a\", help=\"Agent(s) to use in order (e.g. --agent claude --agent codex for codex fallback)\"),"
         },
         {
-          "location": "tasks/todo.yaml:31",
-          "quote": "timeout: 300"
+          "location": "factory/cli.py:165-170",
+          "quote": "if agent and task.coder:\n    task.coder.agents = list(agent)\nif model and task.coder:\n    task.coder.model = model\nif effort and task.coder:\n    task.coder.effort = effort"
         },
         {
-          "location": "tasks/rails-sample.yaml:25",
-          "quote": "timeout: 300"
+          "location": "factory/models.py:45",
+          "quote": "agents: List[str] = Field(default_factory=lambda: [\"claude\"])  # agents to try in order"
         }
       ],
       "file": "factory/cli.py",
-      "message": "Align Crucible timeout defaults across inline builder and task templates (or document intentional divergence).",
+      "message": "Remove redundant list() call: change `task.coder.agents = list(agent)` to `task.coder.agents = agent`",
       "raised_by": [
-        "claude-code",
-        "codex"
+        "claude-code"
       ],
       "round": 1,
-      "severity": "Warning",
+      "severity": "Info",
       "span": {
-        "end": 134,
-        "start": 134
+        "end": 166,
+        "start": 166
       },
-      "suggested_fix": "Standardize on one source of truth: either update YAML templates to 600, or expose timeout as a CLI/template parameter with clear precedence and docs.",
-      "title": "Crucible timeout behavior is inconsistent between inline and YAML-based tasks"
+      "suggested_fix": "Replace `task.coder.agents = list(agent)` with `task.coder.agents = agent` on line 166 (and similarly line 986 in poll function)",
+      "title": "Redundant list() wrapper around agent parameter"
+    },
+    {
+      "agent": "claude-code",
+      "category": "correctness",
+      "confidence": "Medium",
+      "description": "The agent parameter type changed from Optional[str] to Optional[List[str]], relying on Typer >= 0.12's multi-flag accumulation feature. While pyproject.toml specifies typer[all]>=0.12 and this pattern is already used for eval_cmd (line 150), the feature has not been end-to-end tested per the review checklist (\"Typer multi-value option test: run `factory run 'test' --agent a --agent b --agent c` and confirm agents list contains all three\").",
+      "evidence": [
+        {
+          "location": "factory/cli.py:146",
+          "quote": "agent: Optional[List[str]] = typer.Option(None, \"--agent\", \"-a\","
+        },
+        {
+          "location": "pyproject.toml",
+          "quote": "\"typer[all]>=0.12\","
+        },
+        {
+          "location": "factory/cli.py:150",
+          "quote": "eval_cmd: Optional[List[str]] = typer.Option(None, \"--eval\", help=\"Eval command(s) for inline tasks\"),"
+        }
+      ],
+      "file": "factory/cli.py",
+      "message": "Verify Typer multi-flag accumulation works: test `factory run 'task' --agent claude --agent codex` and confirm agents list receives both values. Pattern is stable in Typer 0.12+, but runtime verification needed.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Info",
+      "span": {
+        "end": 146,
+        "start": 146
+      },
+      "suggested_fix": "Execute end-to-end test: `factory run 'Echo hello' --repo owner/test-repo --agent claude --agent codex` and inspect run logs or debug output to confirm both agents are present in task.coder.agents before runner.py processes them",
+      "title": "Type parameter change requires Typer multi-flag support"
+    },
+    {
+      "agent": "claude-code",
+      "category": "maintainability",
+      "confidence": "Low",
+      "description": "In run_cmd() (line 146), the agent parameter appears second in the parameter list, after task_or_file. In poll() (line 956), the agent parameter appears fourth, after repo, template, workers, and max_concurrency. While not a functional issue, inconsistent ordering reduces discoverability and makes the CLI feel less polished.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:144-154",
+          "quote": "def run_cmd(\n    task_or_file: str = typer.Argument(...),\n    agent: Optional[List[str]] = typer.Option(...),\n    model: Optional[str] = typer.Option(...),"
+        },
+        {
+          "location": "factory/cli.py:951-962",
+          "quote": "def poll(\n    repo: str = typer.Argument(...),\n    template: Optional[Path] = typer.Option(...),\n    workers: Path = _WORKERS_OPT,\n    max_concurrency: Optional[int] = typer.Option(...),\n    agent: Optional[List[str]] = typer.Option(...),"
+        }
+      ],
+      "file": "factory/cli.py",
+      "message": "Consider reordering poll() parameters to match run_cmd() parameter order for consistency: agent should appear earlier, closer to model/effort/crucible parameters",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Info",
+      "span": {
+        "end": 956,
+        "start": 956
+      },
+      "suggested_fix": "Reorder poll() parameters to place agent, model, effort, and crucible options in the same relative position as run_cmd for consistency",
+      "title": "Inconsistent parameter ordering between run() and poll()"
     }
   ],
   "issues": [
     {
-      "category": "maintainability",
-      "description": "Inline tasks now hardcode Crucible timeout to 600s, while checked-in YAML templates still explicitly set 300s. This creates API inconsistency: `factory run <inline prompt>` and `factory poll` without `--template` use 600s, but template-driven runs can still use 300s. The same feature behaves differently depending on task source, which is hard to reason about operationally.",
+      "category": "correctness",
+      "description": "The agent parameter type changed from Optional[str] to Optional[List[str]], relying on Typer >= 0.12's multi-flag accumulation feature. While pyproject.toml specifies typer[all]>=0.12 and this pattern is already used for eval_cmd (line 150), the feature has not been end-to-end tested per the review checklist (\"Typer multi-value option test: run `factory run 'test' --agent a --agent b --agent c` and confirm agents list contains all three\").",
       "evidence": [
         {
-          "location": "factory/cli.py:134",
-          "quote": "crucible=CrucibleConfig(block_on=\"Critical\", timeout=600),"
+          "location": "factory/cli.py:146",
+          "quote": "agent: Optional[List[str]] = typer.Option(None, \"--agent\", \"-a\","
         },
         {
-          "location": "tasks/todo.yaml:31",
-          "quote": "timeout: 300"
+          "location": "pyproject.toml",
+          "quote": "\"typer[all]>=0.12\","
         },
         {
-          "location": "tasks/rails-sample.yaml:25",
-          "quote": "timeout: 300"
+          "location": "factory/cli.py:150",
+          "quote": "eval_cmd: Optional[List[str]] = typer.Option(None, \"--eval\", help=\"Eval command(s) for inline tasks\"),"
         }
       ],
       "file": "factory/cli.py",
-      "line_end": 134,
-      "line_start": 134,
+      "line_end": 146,
+      "line_start": 146,
       "raised_by": [
-        "codex"
+        "claude-code"
       ],
-      "severity": "Warning",
-      "suggested_fix": "Standardize on one source of truth: either update YAML templates to 600, or expose timeout as a CLI/template parameter with clear precedence and docs.",
-      "title": "Crucible timeout behavior is inconsistent between inline and YAML-based tasks"
+      "severity": "Info",
+      "suggested_fix": "Execute end-to-end test: `factory run 'Echo hello' --repo owner/test-repo --agent claude --agent codex` and inspect run logs or debug output to confirm both agents are present in task.coder.agents before runner.py processes them",
+      "title": "Type parameter change requires Typer multi-flag support"
+    },
+    {
+      "category": "correctness",
+      "description": "The agent parameter type changed from Optional[str] to Optional[List[str]], relying on Typer >= 0.12's multi-flag accumulation feature. While pyproject.toml specifies typer[all]>=0.12 and this pattern is already used for eval_cmd (line 150), the feature has not been end-to-end tested to confirm that `--agent claude --agent codex` accumulates both values into the agents list before runner.py processes them.",
+      "evidence": [],
+      "file": "factory/cli.py",
+      "line_end": 146,
+      "line_start": 146,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Info",
+      "suggested_fix": "Execute end-to-end test: run `factory run 'Echo hello' --repo owner/test-repo --agent claude --agent codex` and inspect run logs or debug output to confirm task.coder.agents contains both agents before the runner processes them.",
+      "title": "Typer multi-flag accumulation requires end-to-end testing"
+    },
+    {
+      "category": "style",
+      "description": "The agent parameter is already Optional[List[str]] from Typer (line 146), so wrapping it in list() again creates an unnecessary copy. This is inconsistent with how model and effort parameters are handled—they are assigned directly without wrappers (lines 168-170).",
+      "evidence": [
+        {
+          "location": "factory/cli.py:146",
+          "quote": "agent: Optional[List[str]] = typer.Option(None, \"--agent\", \"-a\", help=\"Agent(s) to use in order (e.g. --agent claude --agent codex for codex fallback)\"),"
+        },
+        {
+          "location": "factory/cli.py:165-170",
+          "quote": "if agent and task.coder:\n    task.coder.agents = list(agent)\nif model and task.coder:\n    task.coder.model = model\nif effort and task.coder:\n    task.coder.effort = effort"
+        },
+        {
+          "location": "factory/models.py:45",
+          "quote": "agents: List[str] = Field(default_factory=lambda: [\"claude\"])  # agents to try in order"
+        }
+      ],
+      "file": "factory/cli.py",
+      "line_end": 166,
+      "line_start": 166,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Info",
+      "suggested_fix": "Replace `task.coder.agents = list(agent)` with `task.coder.agents = agent` on line 166 (and similarly line 986 in poll function)",
+      "title": "Redundant list() wrapper around agent parameter"
     },
     {
       "category": "maintainability",
-      "description": "Inline tasks hardcode the Crucible timeout to 600s in factory/cli.py:134, while checked-in YAML templates (tasks/todo.yaml:31, tasks/rails-sample.yaml:25) still explicitly set 300s. This means `factory run <inline prompt>` uses 600s but template-driven runs use 300s, causing the same feature to behave differently depending on task source. This is hard to reason about operationally and may surprise users.",
+      "description": "In run_cmd() (line 146), the agent parameter appears second in the parameter list, after task_or_file. In poll() (line 956), the agent parameter appears fourth, after repo, template, workers, and max_concurrency. While not a functional issue, inconsistent ordering reduces discoverability and makes the CLI feel less polished.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:144-154",
+          "quote": "def run_cmd(\n    task_or_file: str = typer.Argument(...),\n    agent: Optional[List[str]] = typer.Option(...),\n    model: Optional[str] = typer.Option(...),"
+        },
+        {
+          "location": "factory/cli.py:951-962",
+          "quote": "def poll(\n    repo: str = typer.Argument(...),\n    template: Optional[Path] = typer.Option(...),\n    workers: Path = _WORKERS_OPT,\n    max_concurrency: Optional[int] = typer.Option(...),\n    agent: Optional[List[str]] = typer.Option(...),"
+        }
+      ],
+      "file": "factory/cli.py",
+      "line_end": 956,
+      "line_start": 956,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Info",
+      "suggested_fix": "Reorder poll() parameters to place agent, model, effort, and crucible options in the same relative position as run_cmd for consistency",
+      "title": "Inconsistent parameter ordering between run() and poll()"
+    },
+    {
+      "category": "maintainability",
+      "description": "In run_cmd() (line 146), the agent parameter appears early in the parameter list. In poll() (line 956), the agent parameter appears later after repo, template, workers, and max_concurrency. While not a functional issue, inconsistent ordering reduces discoverability and makes the CLI feel less polished.",
       "evidence": [],
       "file": "factory/cli.py",
-      "line_end": 134,
-      "line_start": 134,
+      "line_end": 956,
+      "line_start": 956,
       "raised_by": [
-        "claude-code",
-        "codex"
+        "claude-code"
       ],
-      "severity": "Warning",
-      "suggested_fix": "Standardize on a single default: either update the YAML templates to use timeout 600s to match the new inline default, or extract the timeout into a shared constant / CLI parameter with clear precedence (CLI flag > template value > global default) and document the resolution order.",
-      "title": "Crucible timeout inconsistent between inline builder (600s) and YAML templates (300s)"
+      "severity": "Info",
+      "suggested_fix": "Reorder poll() parameters to place agent, model, effort, and crucible options in the same relative position as in run_cmd() for consistency.",
+      "title": "Inconsistent parameter ordering between run() and poll() functions"
     }
   ],
-  "pr_comment_markdown": "## Crucible Review Summary\n\n- Issues: 2\n- Critical: 0, Warning: 2\n\n### Top Actions\n- [Warning] Crucible timeout behavior is inconsistent between inline and YAML-based tasks (factory/cli.py:134)\n- [Warning] Crucible timeout inconsistent between inline builder (600s) and YAML templates (300s) (factory/cli.py:134)\n\n### Notable Issues\n- **Crucible timeout behavior is inconsistent between inline and YAML-based tasks** `factory/cli.py:134`: Inline tasks now hardcode Crucible timeout to 600s, while checked-in YAML templates still explicitly set 300s. This creates API inconsistency: `factory run <inline prompt>` and `factory poll` without `--template` use 600s, but template-driven runs can still use 300s. The same feature behaves differently depending on task source, which is hard to reason about operationally.\n- **Crucible timeout inconsistent between inline builder (600s) and YAML templates (300s)** `factory/cli.py:134`: Inline tasks hardcode the Crucible timeout to 600s in factory/cli.py:134, while checked-in YAML templates (tasks/todo.yaml:31, tasks/rails-sample.yaml:25) still explicitly set 300s. This means `factory run <inline prompt>` uses 600s but template-driven runs use 300s, causing the same feature to behave differently depending on task source. This is hard to reason about operationally and may surprise users.\n",
+  "pr_comment_markdown": "## Crucible Review Summary\n\n- Issues: 5\n- Critical: 0, Warning: 0\n\n### Top Actions\n- No blocking actions.\n\n### Notable Issues\n- **Type parameter change requires Typer multi-flag support** `factory/cli.py:146`: The agent parameter type changed from Optional[str] to Optional[List[str]], relying on Typer >= 0.12's multi-flag accumulation feature. While pyproject.toml specifies typer[all]>=0.12 and this pattern is already used for eval_cmd (line 150), the feature has not been end-to-end tested per the review checklist (\"Typer multi-value option test: run `factory run 'test' --agent a --agent b --agent c` and confirm agents list contains all three\").\n- **Typer multi-flag accumulation requires end-to-end testing** `factory/cli.py:146`: The agent parameter type changed from Optional[str] to Optional[List[str]], relying on Typer >= 0.12's multi-flag accumulation feature. While pyproject.toml specifies typer[all]>=0.12 and this pattern is already used for eval_cmd (line 150), the feature has not been end-to-end tested to confirm that `--agent claude --agent codex` accumulates both values into the agents list before runner.py processes them.\n- **Redundant list() wrapper around agent parameter** `factory/cli.py:166`: The agent parameter is already Optional[List[str]] from Typer (line 146), so wrapping it in list() again creates an unnecessary copy. This is inconsistent with how model and effort parameters are handled—they are assigned directly without wrappers (lines 168-170).\n- **Inconsistent parameter ordering between run() and poll()** `factory/cli.py:956`: In run_cmd() (line 146), the agent parameter appears second in the parameter list, after task_or_file. In poll() (line 956), the agent parameter appears fourth, after repo, template, workers, and max_concurrency. While not a functional issue, inconsistent ordering reduces discoverability and makes the CLI feel less polished.\n- **Inconsistent parameter ordering between run() and poll() functions** `factory/cli.py:956`: In run_cmd() (line 146), the agent parameter appears early in the parameter list. In poll() (line 956), the agent parameter appears later after repo, template, workers, and max_concurrency. While not a functional issue, inconsistent ordering reduces discoverability and makes the CLI feel less polished.\n",
   "pr_review_draft": {
     "inline_comments": [
       {
-        "body": "**Crucible timeout behavior is inconsistent between inline and YAML-based tasks**\n\nInline tasks now hardcode Crucible timeout to 600s, while checked-in YAML templates still explicitly set 300s. This creates API inconsistency: `factory run <inline prompt>` and `factory poll` without `--template` use 600s, but template-driven runs can still use 300s. The same feature behaves differently depending on task source, which is hard to reason about operationally.\n\nRaised by: codex\n\nSuggested fix: Standardize on one source of truth: either update YAML templates to 600, or expose timeout as a CLI/template parameter with clear precedence and docs.",
-        "category": "maintainability",
-        "description": "Inline tasks now hardcode Crucible timeout to 600s, while checked-in YAML templates still explicitly set 300s. This creates API inconsistency: `factory run <inline prompt>` and `factory poll` without `--template` use 600s, but template-driven runs can still use 300s. The same feature behaves differently depending on task source, which is hard to reason about operationally.",
-        "line": 134,
+        "body": "**Type parameter change requires Typer multi-flag support**\n\nThe agent parameter type changed from Optional[str] to Optional[List[str]], relying on Typer >= 0.12's multi-flag accumulation feature. While pyproject.toml specifies typer[all]>=0.12 and this pattern is already used for eval_cmd (line 150), the feature has not been end-to-end tested per the review checklist (\"Typer multi-value option test: run `factory run 'test' --agent a --agent b --agent c` and confirm agents list contains all three\").\n\nRaised by: claude-code\n\nSuggested fix: Execute end-to-end test: `factory run 'Echo hello' --repo owner/test-repo --agent claude --agent codex` and inspect run logs or debug output to confirm both agents are present in task.coder.agents before runner.py processes them",
+        "category": "correctness",
+        "description": "The agent parameter type changed from Optional[str] to Optional[List[str]], relying on Typer >= 0.12's multi-flag accumulation feature. While pyproject.toml specifies typer[all]>=0.12 and this pattern is already used for eval_cmd (line 150), the feature has not been end-to-end tested per the review checklist (\"Typer multi-value option test: run `factory run 'test' --agent a --agent b --agent c` and confirm agents list contains all three\").",
+        "line": 146,
         "mapping_note": null,
         "mapping_status": "Inline",
         "path": "factory/cli.py",
-        "severity": "Warning",
+        "severity": "Info",
         "side": "Right",
         "source_agents": [
-          "codex"
+          "claude-code"
         ],
         "start_line": null,
         "start_side": null,
-        "title": "Crucible timeout behavior is inconsistent between inline and YAML-based tasks"
+        "title": "Type parameter change requires Typer multi-flag support"
       },
       {
-        "body": "**Crucible timeout inconsistent between inline builder (600s) and YAML templates (300s)**\n\nInline tasks hardcode the Crucible timeout to 600s in factory/cli.py:134, while checked-in YAML templates (tasks/todo.yaml:31, tasks/rails-sample.yaml:25) still explicitly set 300s. This means `factory run <inline prompt>` uses 600s but template-driven runs use 300s, causing the same feature to behave differently depending on task source. This is hard to reason about operationally and may surprise users.\n\nRaised by: claude-code, codex\n\nSuggested fix: Standardize on a single default: either update the YAML templates to use timeout 600s to match the new inline default, or extract the timeout into a shared constant / CLI parameter with clear precedence (CLI flag > template value > global default) and document the resolution order.",
-        "category": "maintainability",
-        "description": "Inline tasks hardcode the Crucible timeout to 600s in factory/cli.py:134, while checked-in YAML templates (tasks/todo.yaml:31, tasks/rails-sample.yaml:25) still explicitly set 300s. This means `factory run <inline prompt>` uses 600s but template-driven runs use 300s, causing the same feature to behave differently depending on task source. This is hard to reason about operationally and may surprise users.",
-        "line": 134,
+        "body": "**Typer multi-flag accumulation requires end-to-end testing**\n\nThe agent parameter type changed from Optional[str] to Optional[List[str]], relying on Typer >= 0.12's multi-flag accumulation feature. While pyproject.toml specifies typer[all]>=0.12 and this pattern is already used for eval_cmd (line 150), the feature has not been end-to-end tested to confirm that `--agent claude --agent codex` accumulates both values into the agents list before runner.py processes them.\n\nRaised by: claude-code\n\nSuggested fix: Execute end-to-end test: run `factory run 'Echo hello' --repo owner/test-repo --agent claude --agent codex` and inspect run logs or debug output to confirm task.coder.agents contains both agents before the runner processes them.",
+        "category": "correctness",
+        "description": "The agent parameter type changed from Optional[str] to Optional[List[str]], relying on Typer >= 0.12's multi-flag accumulation feature. While pyproject.toml specifies typer[all]>=0.12 and this pattern is already used for eval_cmd (line 150), the feature has not been end-to-end tested to confirm that `--agent claude --agent codex` accumulates both values into the agents list before runner.py processes them.",
+        "line": 146,
         "mapping_note": null,
         "mapping_status": "Inline",
         "path": "factory/cli.py",
-        "severity": "Warning",
+        "severity": "Info",
         "side": "Right",
         "source_agents": [
-          "claude-code",
-          "codex"
+          "claude-code"
         ],
         "start_line": null,
         "start_side": null,
-        "title": "Crucible timeout inconsistent between inline builder (600s) and YAML templates (300s)"
+        "title": "Typer multi-flag accumulation requires end-to-end testing"
+      },
+      {
+        "body": "**Redundant list() wrapper around agent parameter**\n\nThe agent parameter is already Optional[List[str]] from Typer (line 146), so wrapping it in list() again creates an unnecessary copy. This is inconsistent with how model and effort parameters are handled—they are assigned directly without wrappers (lines 168-170).\n\nRaised by: claude-code\n\nSuggested fix: Replace `task.coder.agents = list(agent)` with `task.coder.agents = agent` on line 166 (and similarly line 986 in poll function)",
+        "category": "style",
+        "description": "The agent parameter is already Optional[List[str]] from Typer (line 146), so wrapping it in list() again creates an unnecessary copy. This is inconsistent with how model and effort parameters are handled—they are assigned directly without wrappers (lines 168-170).",
+        "line": 166,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/cli.py",
+        "severity": "Info",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "Redundant list() wrapper around agent parameter"
+      },
+      {
+        "body": "**Inconsistent parameter ordering between run() and poll()**\n\nIn run_cmd() (line 146), the agent parameter appears second in the parameter list, after task_or_file. In poll() (line 956), the agent parameter appears fourth, after repo, template, workers, and max_concurrency. While not a functional issue, inconsistent ordering reduces discoverability and makes the CLI feel less polished.\n\nRaised by: claude-code\n\nSuggested fix: Reorder poll() parameters to place agent, model, effort, and crucible options in the same relative position as run_cmd for consistency",
+        "category": "maintainability",
+        "description": "In run_cmd() (line 146), the agent parameter appears second in the parameter list, after task_or_file. In poll() (line 956), the agent parameter appears fourth, after repo, template, workers, and max_concurrency. While not a functional issue, inconsistent ordering reduces discoverability and makes the CLI feel less polished.",
+        "line": 956,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/cli.py",
+        "severity": "Info",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "Inconsistent parameter ordering between run() and poll()"
+      },
+      {
+        "body": "**Inconsistent parameter ordering between run() and poll() functions**\n\nIn run_cmd() (line 146), the agent parameter appears early in the parameter list. In poll() (line 956), the agent parameter appears later after repo, template, workers, and max_concurrency. While not a functional issue, inconsistent ordering reduces discoverability and makes the CLI feel less polished.\n\nRaised by: claude-code\n\nSuggested fix: Reorder poll() parameters to place agent, model, effort, and crucible options in the same relative position as in run_cmd() for consistency.",
+        "category": "maintainability",
+        "description": "In run_cmd() (line 146), the agent parameter appears early in the parameter list. In poll() (line 956), the agent parameter appears later after repo, template, workers, and max_concurrency. While not a functional issue, inconsistent ordering reduces discoverability and makes the CLI feel less polished.",
+        "line": 956,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/cli.py",
+        "severity": "Info",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "Inconsistent parameter ordering between run() and poll() functions"
       }
     ],
     "overview_comment": {
-      "body": "## Crucible Review Summary\n\n- Issues: 2\n- Critical: 0, Warning: 2\n\n### Top Actions\n- [Warning] Crucible timeout behavior is inconsistent between inline and YAML-based tasks (factory/cli.py:134)\n- [Warning] Crucible timeout inconsistent between inline builder (600s) and YAML templates (300s) (factory/cli.py:134)\n\n### Notable Issues\n- **Crucible timeout behavior is inconsistent between inline and YAML-based tasks** `factory/cli.py:134`: Inline tasks now hardcode Crucible timeout to 600s, while checked-in YAML templates still explicitly set 300s. This creates API inconsistency: `factory run <inline prompt>` and `factory poll` without `--template` use 600s, but template-driven runs can still use 300s. The same feature behaves differently depending on task source, which is hard to reason about operationally.\n- **Crucible timeout inconsistent between inline builder (600s) and YAML templates (300s)** `factory/cli.py:134`: Inline tasks hardcode the Crucible timeout to 600s in factory/cli.py:134, while checked-in YAML templates (tasks/todo.yaml:31, tasks/rails-sample.yaml:25) still explicitly set 300s. This means `factory run <inline prompt>` uses 600s but template-driven runs use 300s, causing the same feature to behave differently depending on task source. This is hard to reason about operationally and may surprise users.\n"
+      "body": "## Crucible Review Summary\n\n- Issues: 5\n- Critical: 0, Warning: 0\n\n### Top Actions\n- No blocking actions.\n\n### Notable Issues\n- **Type parameter change requires Typer multi-flag support** `factory/cli.py:146`: The agent parameter type changed from Optional[str] to Optional[List[str]], relying on Typer >= 0.12's multi-flag accumulation feature. While pyproject.toml specifies typer[all]>=0.12 and this pattern is already used for eval_cmd (line 150), the feature has not been end-to-end tested per the review checklist (\"Typer multi-value option test: run `factory run 'test' --agent a --agent b --agent c` and confirm agents list contains all three\").\n- **Typer multi-flag accumulation requires end-to-end testing** `factory/cli.py:146`: The agent parameter type changed from Optional[str] to Optional[List[str]], relying on Typer >= 0.12's multi-flag accumulation feature. While pyproject.toml specifies typer[all]>=0.12 and this pattern is already used for eval_cmd (line 150), the feature has not been end-to-end tested to confirm that `--agent claude --agent codex` accumulates both values into the agents list before runner.py processes them.\n- **Redundant list() wrapper around agent parameter** `factory/cli.py:166`: The agent parameter is already Optional[List[str]] from Typer (line 146), so wrapping it in list() again creates an unnecessary copy. This is inconsistent with how model and effort parameters are handled—they are assigned directly without wrappers (lines 168-170).\n- **Inconsistent parameter ordering between run() and poll()** `factory/cli.py:956`: In run_cmd() (line 146), the agent parameter appears second in the parameter list, after task_or_file. In poll() (line 956), the agent parameter appears fourth, after repo, template, workers, and max_concurrency. While not a functional issue, inconsistent ordering reduces discoverability and makes the CLI feel less polished.\n- **Inconsistent parameter ordering between run() and poll() functions** `factory/cli.py:956`: In run_cmd() (line 146), the agent parameter appears early in the parameter list. In poll() (line 956), the agent parameter appears later after repo, template, workers, and max_concurrency. While not a functional issue, inconsistent ordering reduces discoverability and makes the CLI feel less polished.\n"
     },
     "overview_only_comments": []
   },
-  "run_id": "17e55912-ba97-4764-89ea-118341b51b2f",
-  "session_id": "17e55912-ba97-4764-89ea-118341b51b2f",
-  "system_context_markdown": "### System Context\n- Changed files: 1\n- Reference snippets: 0\n- History commits: 15\n- Docs snippets: 1\n- Deterministic prechecks: 2\n- Affected files:\n  - factory/cli.py\n- Precheck results:\n  - untangle-analyze-report [Fail] error: unexpected argument '.' found\n\nUsage: untangle analyze [OPTIONS] <PATH>\n\nFor more information, try '--help'.\n  - untangle-quality-report [Fail] error: unrecognized subcommand 'quality'\n\nUsage: untangle <COMMAND>\n\nFor more information, try '--help'.\n",
-  "verdict": "Warn"
+  "run_id": "8c918791-8510-437a-b326-0d0932e35048",
+  "session_id": "8c918791-8510-437a-b326-0d0932e35048",
+  "system_context_markdown": "### System Context\n- Changed files: 2\n- Reference snippets: 0\n- History commits: 18\n- Docs snippets: 1\n- Deterministic prechecks: 2\n- Affected files:\n  - README.md\n  - factory/cli.py\n- Precheck results:\n  - untangle-analyze-report [Fail] error: unexpected argument '.' found\n\nUsage: untangle analyze [OPTIONS] <PATH>\n\nFor more information, try '--help'.\n  - untangle-quality-report [Fail] error: unrecognized subcommand 'quality'\n\nUsage: untangle <COMMAND>\n\nFor more information, try '--help'.\n",
+  "verdict": "Pass"
 }
-[run:17e55912-ba97-4764-89ea-118341b51b2f]
-[2026-05-15 14:12:14.962 +10:00] [final-analysis]
+[run:8c918791-8510-437a-b326-0d0932e35048]
+[2026-05-15 15:29:21.714 +10:00] [final-analysis]
 ## Final Analysis
 
-- Issues: 2 (Critical: 0, Warning: 2, Info: 0)
+- Issues: 5 (Critical: 0, Warning: 0, Info: 5)
 - Agent failures: 0
 
 ### Top Issues
-- [Warning] Crucible timeout behavior is inconsistent between inline and YAML-based tasks `factory/cli.py:134`
-- [Warning] Crucible timeout inconsistent between inline builder (600s) and YAML templates (300s) `factory/cli.py:134`
+- [Info] Type parameter change requires Typer multi-flag support `factory/cli.py:146`
+- [Info] Typer multi-flag accumulation requires end-to-end testing `factory/cli.py:146`
+- [Info] Redundant list() wrapper around agent parameter `factory/cli.py:166`
+- [Info] Inconsistent parameter ordering between run() and poll() `factory/cli.py:956`
+- [Info] Inconsistent parameter ordering between run() and poll() functions `factory/cli.py:956`
 
 ### Action Plan
-- [Warning] Crucible timeout behavior is inconsistent between inline and YAML-based tasks (factory/cli.py:134)
-- [Warning] Crucible timeout inconsistent between inline builder (600s) and YAML templates (300s) (factory/cli.py:134)
+- No blocking actions.
 
-[2026-05-15 14:12:14.962 +10:00] [pr-comment]
+[2026-05-15 15:29:21.715 +10:00] [pr-comment]
 ## Crucible Review Summary
 
-- Issues: 2
-- Critical: 0, Warning: 2
+- Issues: 5
+- Critical: 0, Warning: 0
 
 ### Top Actions
-- [Warning] Crucible timeout behavior is inconsistent between inline and YAML-based tasks (factory/cli.py:134)
-- [Warning] Crucible timeout inconsistent between inline builder (600s) and YAML templates (300s) (factory/cli.py:134)
+- No blocking actions.
 
 ### Notable Issues
-- **Crucible timeout behavior is inconsistent between inline and YAML-based tasks** `factory/cli.py:134`: Inline tasks now hardcode Crucible timeout to 600s, while checked-in YAML templates still explicitly set 300s. This creates API inconsistency: `factory run <inline prompt>` and `factory poll` without `--template` use 600s, but template-driven runs can still use 300s. The same feature behaves differently depending on task source, which is hard to reason about operationally.
-- **Crucible timeout inconsistent between inline builder (600s) and YAML templates (300s)** `factory/cli.py:134`: Inline tasks hardcode the Crucible timeout to 600s in factory/cli.py:134, while checked-in YAML templates (tasks/todo.yaml:31, tasks/rails-sample.yaml:25) still explicitly set 300s. This means `factory run <inline prompt>` uses 600s but template-driven runs use 300s, causing the same feature to behave differently depending on task source. This is hard to reason about operationally and may surprise users.
+- **Type parameter change requires Typer multi-flag support** `factory/cli.py:146`: The agent parameter type changed from Optional[str] to Optional[List[str]], relying on Typer >= 0.12's multi-flag accumulation feature. While pyproject.toml specifies typer[all]>=0.12 and this pattern is already used for eval_cmd (line 150), the feature has not been end-to-end tested per the review checklist ("Typer multi-value option test: run `factory run 'test' --agent a --agent b --agent c` and confirm agents list contains all three").
+- **Typer multi-flag accumulation requires end-to-end testing** `factory/cli.py:146`: The agent parameter type changed from Optional[str] to Optional[List[str]], relying on Typer >= 0.12's multi-flag accumulation feature. While pyproject.toml specifies typer[all]>=0.12 and this pattern is already used for eval_cmd (line 150), the feature has not been end-to-end tested to confirm that `--agent claude --agent codex` accumulates both values into the agents list before runner.py processes them.
+- **Redundant list() wrapper around agent parameter** `factory/cli.py:166`: The agent parameter is already Optional[List[str]] from Typer (line 146), so wrapping it in list() again creates an unnecessary copy. This is inconsistent with how model and effort parameters are handled—they are assigned directly without wrappers (lines 168-170).
+- **Inconsistent parameter ordering between run() and poll()** `factory/cli.py:956`: In run_cmd() (line 146), the agent parameter appears second in the parameter list, after task_or_file. In poll() (line 956), the agent parameter appears fourth, after repo, template, workers, and max_concurrency. While not a functional issue, inconsistent ordering reduces discoverability and makes the CLI feel less polished.
+- **Inconsistent parameter ordering between run() and poll() functions** `factory/cli.py:956`: In run_cmd() (line 146), the agent parameter appears early in the parameter list. In poll() (line 956), the agent parameter appears later after repo, template, workers, and max_concurrency. While not a functional issue, inconsistent ordering reduces discoverability and makes the CLI feel less polished.
 

@@ -207,6 +207,7 @@ def watch_task(
             needs_new_session = False  # True only when switching agents (rate limit)
             feedback_message = ""
             crucible_rounds_used = 0  # tracks how many crucible feedback cycles have been used
+            crucible_base: str | None = None  # updated to HEAD after each round to limit diff size
             max_iterations = (
                 task.crucible.rounds + 1 if task.crucible else task.coder.max_iterations
             )
@@ -348,7 +349,12 @@ def watch_task(
                         )
                         _log(run_id, f"  running crucible review...")
                         _slack_post(slack_client, run, f":magnifying_glass_tilted_right: Running crucible review...")
-                        crucible_feedback, crucible_errors, crucible_debug = _run_crucible(client, working_dir, base_branch, task.crucible)
+                        effective_crucible_base = crucible_base or base_branch
+                        crucible_feedback, crucible_errors, crucible_debug = _run_crucible(client, working_dir, effective_crucible_base, task.crucible)
+                        # Advance the base to current HEAD so the next round only reviews incremental changes
+                        _head = client.run(f"git -C {working_dir} rev-parse HEAD", timeout=10).stdout.strip()
+                        if _head:
+                            crucible_base = _head
                         store.save_log(run_id, f"crucible_iter{iteration}.json", crucible_feedback or "")
                         if crucible_errors:
                             store.save_log(run_id, f"crucible_iter{iteration}.stderr.txt", crucible_errors)

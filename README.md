@@ -40,7 +40,7 @@ Before you start, ask your admin to set up:
 ### 1. Install
 
 ```bash
-git clone https://github.com/silverpond/silverpond-factory
+git clone https://github.com/silverpond/silverforge
 cd silverpond-factory
 pip install -e .
 ```

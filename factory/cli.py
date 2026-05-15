@@ -143,7 +143,7 @@ def _build_inline_task(
 @app.command(name="run")
 def run_cmd(
     task_or_file: str = typer.Argument(..., help="Task YAML file, or inline task description"),
-    agent: Optional[str] = typer.Option(None, "--agent", "-a", help="Override agent (e.g. claude, codex)"),
+    agent: Optional[List[str]] = typer.Option(None, "--agent", "-a", help="Agent(s) to use in order (e.g. --agent claude --agent codex for codex fallback)"),
     model: Optional[str] = typer.Option(None, "--model", "-m", help="Override model (e.g. sonnet, opus)"),
     effort: Optional[str] = typer.Option(None, "--effort", "-e", help="Override effort (low, medium, high, max)"),
     repo: Optional[str] = typer.Option(None, "--repo", "-r", help="GitHub repo (owner/repo) for inline tasks"),
@@ -163,7 +163,7 @@ def run_cmd(
         task = _build_inline_task(task_or_file, repo=repo, eval_commands=list(eval_cmd or []), workers_path=workers)
 
     if agent and task.coder:
-        task.coder.agents = [agent]
+        task.coder.agents = list(agent)
     if model and task.coder:
         task.coder.model = model
     if effort and task.coder:
@@ -953,6 +953,7 @@ def poll(
     template: Optional[Path] = typer.Option(None, "--template", "-t", help="Task YAML template (optional — inferred from repo if omitted)"),
     workers: Path = _WORKERS_OPT,
     max_concurrency: Optional[int] = typer.Option(None, "--max-concurrency", "-c", help="Max parallel runs (default: worker slot count)"),
+    agent: Optional[List[str]] = typer.Option(None, "--agent", "-a", help="Agent(s) to use in order (e.g. --agent claude --agent codex for codex fallback)"),
     model: Optional[str] = typer.Option(None, "--model", "-m", help="Override model (e.g. sonnet, opus)"),
     effort: Optional[str] = typer.Option(None, "--effort", "-e", help="Override effort (low, medium, high, max)"),
     eval_cmd: Optional[List[str]] = typer.Option(None, "--eval", help="Eval command(s) run after each agent iteration"),
@@ -981,6 +982,8 @@ def poll(
     else:
         task_template = _build_inline_task("", repo=repo, eval_commands=list(eval_cmd or []), workers_path=workers)
 
+    if agent and task_template.coder:
+        task_template.coder.agents = list(agent)
     if model and task_template.coder:
         task_template.coder.model = model
     if effort and task_template.coder:

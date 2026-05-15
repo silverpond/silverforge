@@ -1,0 +1,302 @@
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:10:24.567 +10:00] [progress] startup:references started Scanning related references
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:10:24.568 +10:00] [progress] startup:history started Collecting recent history
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:10:24.568 +10:00] [progress] startup:docs started Loading docs context
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.958 +10:00] [progress] startup:references completed count=0 duration=0.0s Reference scan complete
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.959 +10:00] [progress] startup:history completed count=15 duration=0.0s History collection complete
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.959 +10:00] [progress] startup:docs completed count=1 duration=0.0s Docs collection complete
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.959 +10:00] [progress] startup:prechecks started Running prechecks
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.959 +10:00] [progress] startup:prechecks completed count=2 duration=0.1s Prechecks complete
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.959 +10:00] [progress] run:header reviewers=claude-code,codex max_rounds=2 changed_files=1 changed_lines=2 convergence_enabled=true context_enabled=true
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.959 +10:00] [progress] phase:start analyzer
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.959 +10:00] [progress] analyzer:start
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.959 +10:00] [agent-chat] -> claude-code index db52d8e..0d966d3 100644 worker=worker_name,
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.959 +10:00] [analysis]
+## Local Diff Analysis
+
+Increases the Crucible timeout from 300s (5 minutes) to 600s (10 minutes) for inline tasks built via the CLI. This aligns the Crucible phase timeout with the existing coder `session_timeout` of 600s, likely addressing timeouts observed during the Crucible analysis step in the pipeline.
+
+### Suggested Review Focus
+- Timeout consistency: Verify that 600s is appropriate for Crucible and won't cause the overall pipeline to hang excessively on failures. Check if other CrucibleConfig instantiations (e.g., in task YAML files) should also be updated for consistency.
+
+### Trade-offs
+- Longer timeout means slower failure detection when Crucible is genuinely stuck or unresponsive
+- Aligns Crucible timeout with coder session_timeout (600s), reducing premature timeout failures at the cost of longer worst-case wait times
+
+### Affected Modules
+- factory/cli.py
+
+### Call Chain
+- CLI _build_inline_task() -> CrucibleConfig(timeout=600) -> runner.run_task() -> crucible phase execution
+
+### Design Patterns
+- Hardcoded configuration defaults — consider extracting timeout constants or making them CLI-configurable
+
+### Reviewer Checklist
+- Confirm Crucible timeouts in task YAML files and other code paths are consistent with this change
+- Verify no upstream or downstream timeouts conflict with 600s (e.g., SSH keepalive, tmux session limits)
+- Check if the timeout should be a CLI flag rather than a hardcoded default
+
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.959 +10:00] [system-context]
+### System Context
+- Changed files: 1
+- Reference snippets: 0
+- History commits: 15
+- Docs snippets: 1
+- Deterministic prechecks: 2
+- Affected files:
+  - factory/cli.py
+- Precheck results:
+  - untangle-analyze-report [Fail] error: unexpected argument '.' found
+
+Usage: untangle analyze [OPTIONS] <PATH>
+
+For more information, try '--help'.
+  - untangle-quality-report [Fail] error: unrecognized subcommand 'quality'
+
+Usage: untangle <COMMAND>
+
+For more information, try '--help'.
+
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.959 +10:00] [progress] analyzer:done
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.959 +10:00] [progress] phase:done analyzer
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.959 +10:00] [progress] phase:start agent-preflight
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.959 +10:00] [progress] phase:done agent-preflight
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.960 +10:00] [progress] phase:start round-1
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.960 +10:00] [progress] round:1 start (agents: claude-code,codex)
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.960 +10:00] [progress] round:1 status [... claude-code | ... codex]
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.960 +10:00] [progress] round:1 status [RUN claude-code | ... codex]
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.960 +10:00] [progress] agent:start round=1 id=claude-code
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.960 +10:00] [progress] round:1 status [RUN claude-code | RUN codex]
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.960 +10:00] [progress] agent:start round=1 id=codex
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.960 +10:00] [agent-chat] -> claude-code index db52d8e..0d966d3 100644 worker=worker_name,
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.960 +10:00] [agent-review] round=1 id=claude-code 1 findings (0 Critical, 0 Warning, 1 Info) | The diff is a single-line change bumping the Crucible timeout from 300s to 600s in the CLI's inline task builder. The model default (`CrucibleConfig.timeout`) was already updated to 600 in models.py (line 72), so this change simply brings cli.py in sync. The explicit `timeout=600` in the CLI is now redundant with the model default but is otherwise correct and harmless. No correctness, security, or invariant issues found.
+[agent-review] details:
+Narrative:
+The diff is a single-line change bumping the Crucible timeout from 300s to 600s in the CLI's inline task builder. The model default (`CrucibleConfig.timeout`) was already updated to 600 in models.py (line 72), so this change simply brings cli.py in sync. The explicit `timeout=600` in the CLI is now redundant with the model default but is otherwise correct and harmless. No correctness, security, or invariant issues found.
+
+Findings:
+- [Info] factory/cli.py:134 Consider omitting the explicit timeout=600 so the model default is the single source of truth, or extract a named constant shared by both.
+  description: CrucibleConfig in models.py already defines `timeout: int = 600` as the default (models.py:72). The explicit `timeout=600` in _build_inline_task is now redundant. If the default ever changes in the model, this call-site will silently override it, creating a maintenance hazard where two locations must be updated in lockstep.
+
+[agent-review]   [INFO] factory/cli.py:134 Consider omitting the explicit timeout=600 so the model default is the single source of truth, or extract a named constant shared by both.
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.960 +10:00] [progress] round:1 status [OK claude-code (21.3s) | RUN codex]
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.960 +10:00] [progress] agent:done round=1 id=claude-code
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.960 +10:00] [agent-chat] -> codex index db52d8e..0d966d3 100644 worker=worker_name,
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.960 +10:00] [agent-chat] <- codex The timeout increase itself is safe, but the change introduces/retains configuration inconsistency across task-entry paths and keeps a duplicated magic default in code. No security
+…
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.961 +10:00] [agent-review] round=1 id=codex 2 findings (0 Critical, 1 Warning, 1 Info) | The timeout increase itself is safe, but the change introduces/retains configuration inconsistency across task-entry paths and keeps a duplicated magic default in code. No security or performance regressions were found in the modified line alone, but architecture/API consistency can be improved.
+[agent-review] details:
+Narrative:
+The timeout increase itself is safe, but the change introduces/retains configuration inconsistency across task-entry paths and keeps a duplicated magic default in code. No security or performance regressions were found in the modified line alone, but architecture/API consistency can be improved.
+
+Findings:
+- [Warning] factory/cli.py:134 Align Crucible timeout defaults across inline builder and task templates (or document intentional divergence).
+  description: Inline tasks now hardcode Crucible timeout to 600s, while checked-in YAML templates still explicitly set 300s. This creates API inconsistency: `factory run <inline prompt>` and `factory poll` without `--template` use 600s, but template-driven runs can still use 300s. The same feature behaves differently depending on task source, which is hard to reason about operationally.
+- [Info] factory/cli.py:134 Remove duplicated literal timeout or centralize it in a shared constant/default path.
+  description: The inline task builder hardcodes `timeout=600` even though `CrucibleConfig` already defines a default of 600. Keeping duplicated literals in multiple places increases maintenance overhead and can silently drift when defaults evolve.
+
+[agent-review]   [WARNING] factory/cli.py:134 Align Crucible timeout defaults across inline builder and task templates (or document intentional divergence).
+[agent-review]   [INFO] factory/cli.py:134 Remove duplicated literal timeout or centralize it in a shared constant/default path.
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.961 +10:00] [progress] round:1 status [OK claude-code (21.3s) | OK codex (57.3s)]
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.961 +10:00] [progress] agent:done round=1 id=codex
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.961 +10:00] [progress] round:1 done
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.961 +10:00] [agent-chat] -> claude-code Findings so far: [{"agent":"codex","severity":"Warning","confidence":"High","file":"factory/cli.py","span":{"start":134,"end":134},"message":"Align Crucible timeout defaults across
+…
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.961 +10:00] [progress] convergence round=1 verdict=CONVERGED rationale=Both agents agree on a single warning-level finding: the Crucible timeout default was updated to 600s in the inline builder but YAML templates still use 300s, creating an inconsistency. The diff itself is correct and intentional (raising the inline default). The suggested fix (update YAML templates or parameterize the timeout) is reasonable maintainability advice but not a blocking defect. No security, correctness, or high-severity issues exist. No unresolved disagreements between reviewers.
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.961 +10:00] [progress] round:1/2 complete
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.961 +10:00] [progress] phase:done round-1
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.961 +10:00] [agent-chat] -> claude-code Normalize these findings into canonical issues (merge duplicates): [{"agent":"codex","severity":"Warning","confidence":"High","file":"factory/cli.py","span":{"start":134,"end":134}
+…
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.961 +10:00] [progress] phase:start finalize
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.961 +10:00] [agent-chat] -> claude-code Findings: [{"agent":"codex","severity":"Warning","confidence":"High","file":"factory/cli.py","span":{"start":134,"end":134},"message":"Align Crucible timeout defaults across inline
+…
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.962 +10:00] [progress] autofix:ready
+[run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.962 +10:00] [run:17e55912-ba97-4764-89ea-118341b51b2f] [2026-05-15 14:12:14.962 +10:00] [progress] phase:done finalize
+[run:17e55912-ba97-4764-89ea-118341b51b2f]
+[2026-05-15 14:12:14.962 +10:00] [report]
+{
+  "agent_failures": [],
+  "analysis_markdown": "## Local Diff Analysis\n\nIncreases the Crucible timeout from 300s (5 minutes) to 600s (10 minutes) for inline tasks built via the CLI. This aligns the Crucible phase timeout with the existing coder `session_timeout` of 600s, likely addressing timeouts observed during the Crucible analysis step in the pipeline.\n\n### Suggested Review Focus\n- Timeout consistency: Verify that 600s is appropriate for Crucible and won't cause the overall pipeline to hang excessively on failures. Check if other CrucibleConfig instantiations (e.g., in task YAML files) should also be updated for consistency.\n\n### Trade-offs\n- Longer timeout means slower failure detection when Crucible is genuinely stuck or unresponsive\n- Aligns Crucible timeout with coder session_timeout (600s), reducing premature timeout failures at the cost of longer worst-case wait times\n\n### Affected Modules\n- factory/cli.py\n\n### Call Chain\n- CLI _build_inline_task() -> CrucibleConfig(timeout=600) -> runner.run_task() -> crucible phase execution\n\n### Design Patterns\n- Hardcoded configuration defaults — consider extracting timeout constants or making them CLI-configurable\n\n### Reviewer Checklist\n- Confirm Crucible timeouts in task YAML files and other code paths are consistent with this change\n- Verify no upstream or downstream timeouts conflict with 600s (e.g., SSH keepalive, tmux session limits)\n- Check if the timeout should be a CLI flag rather than a hardcoded default\n",
+  "auto_fix": {
+    "explanation": "The diff in factory/cli.py already updated the inline-task Crucible timeout from 300s to 600s, but the two checked-in YAML task templates (tasks/todo.yaml:31 and tasks/rails-sample.yaml:25) still hardcode 300s. This means template-driven runs (`factory poll --template`) and inline runs (`factory run \"...\"`) would use different Crucible timeouts for the same logical default, creating an operational inconsistency. The fix updates both YAML templates to 600s to match the inline builder, ensuring a single consistent default across all task sources.",
+    "unified_diff": "--- a/tasks/todo.yaml\n+++ b/tasks/todo.yaml\n@@ -29,7 +29,7 @@\n crucible:\n   block_on: Critical\n-  timeout: 300\n+  timeout: 600\n \n slack:\n   reviewers: []   # add Slack user IDs here, e.g. [\"U12345678\"]\n--- a/tasks/rails-sample.yaml\n+++ b/tasks/rails-sample.yaml\n@@ -23,7 +23,7 @@\n crucible:\n   block_on: Critical\n-  timeout: 300\n+  timeout: 600\n \n slack: {}\n"
+  },
+  "consensus": [
+    {
+      "agreed_count": 2,
+      "file": "factory/cli.py",
+      "reached_quorum": true,
+      "severity": "Warning",
+      "span": {
+        "end": 134,
+        "start": 134
+      },
+      "total_agents": 2
+    }
+  ],
+  "final_action_plan": {
+    "prioritized_steps": [
+      "[Warning] Crucible timeout behavior is inconsistent between inline and YAML-based tasks (factory/cli.py:134)",
+      "[Warning] Crucible timeout inconsistent between inline builder (600s) and YAML templates (300s) (factory/cli.py:134)"
+    ],
+    "quick_wins": []
+  },
+  "final_analysis_markdown": "## Final Analysis\n\n- Issues: 2 (Critical: 0, Warning: 2, Info: 0)\n- Agent failures: 0\n\n### Top Issues\n- [Warning] Crucible timeout behavior is inconsistent between inline and YAML-based tasks `factory/cli.py:134`\n- [Warning] Crucible timeout inconsistent between inline builder (600s) and YAML templates (300s) `factory/cli.py:134`\n\n### Action Plan\n- [Warning] Crucible timeout behavior is inconsistent between inline and YAML-based tasks (factory/cli.py:134)\n- [Warning] Crucible timeout inconsistent between inline builder (600s) and YAML templates (300s) (factory/cli.py:134)\n",
+  "findings": [
+    {
+      "agent": "codex",
+      "category": "maintainability",
+      "confidence": "High",
+      "description": "Inline tasks now hardcode Crucible timeout to 600s, while checked-in YAML templates still explicitly set 300s. This creates API inconsistency: `factory run <inline prompt>` and `factory poll` without `--template` use 600s, but template-driven runs can still use 300s. The same feature behaves differently depending on task source, which is hard to reason about operationally.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:134",
+          "quote": "crucible=CrucibleConfig(block_on=\"Critical\", timeout=600),"
+        },
+        {
+          "location": "tasks/todo.yaml:31",
+          "quote": "timeout: 300"
+        },
+        {
+          "location": "tasks/rails-sample.yaml:25",
+          "quote": "timeout: 300"
+        }
+      ],
+      "file": "factory/cli.py",
+      "message": "Align Crucible timeout defaults across inline builder and task templates (or document intentional divergence).",
+      "raised_by": [
+        "claude-code",
+        "codex"
+      ],
+      "round": 1,
+      "severity": "Warning",
+      "span": {
+        "end": 134,
+        "start": 134
+      },
+      "suggested_fix": "Standardize on one source of truth: either update YAML templates to 600, or expose timeout as a CLI/template parameter with clear precedence and docs.",
+      "title": "Crucible timeout behavior is inconsistent between inline and YAML-based tasks"
+    }
+  ],
+  "issues": [
+    {
+      "category": "maintainability",
+      "description": "Inline tasks now hardcode Crucible timeout to 600s, while checked-in YAML templates still explicitly set 300s. This creates API inconsistency: `factory run <inline prompt>` and `factory poll` without `--template` use 600s, but template-driven runs can still use 300s. The same feature behaves differently depending on task source, which is hard to reason about operationally.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:134",
+          "quote": "crucible=CrucibleConfig(block_on=\"Critical\", timeout=600),"
+        },
+        {
+          "location": "tasks/todo.yaml:31",
+          "quote": "timeout: 300"
+        },
+        {
+          "location": "tasks/rails-sample.yaml:25",
+          "quote": "timeout: 300"
+        }
+      ],
+      "file": "factory/cli.py",
+      "line_end": 134,
+      "line_start": 134,
+      "raised_by": [
+        "codex"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "Standardize on one source of truth: either update YAML templates to 600, or expose timeout as a CLI/template parameter with clear precedence and docs.",
+      "title": "Crucible timeout behavior is inconsistent between inline and YAML-based tasks"
+    },
+    {
+      "category": "maintainability",
+      "description": "Inline tasks hardcode the Crucible timeout to 600s in factory/cli.py:134, while checked-in YAML templates (tasks/todo.yaml:31, tasks/rails-sample.yaml:25) still explicitly set 300s. This means `factory run <inline prompt>` uses 600s but template-driven runs use 300s, causing the same feature to behave differently depending on task source. This is hard to reason about operationally and may surprise users.",
+      "evidence": [],
+      "file": "factory/cli.py",
+      "line_end": 134,
+      "line_start": 134,
+      "raised_by": [
+        "claude-code",
+        "codex"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "Standardize on a single default: either update the YAML templates to use timeout 600s to match the new inline default, or extract the timeout into a shared constant / CLI parameter with clear precedence (CLI flag > template value > global default) and document the resolution order.",
+      "title": "Crucible timeout inconsistent between inline builder (600s) and YAML templates (300s)"
+    }
+  ],
+  "pr_comment_markdown": "## Crucible Review Summary\n\n- Issues: 2\n- Critical: 0, Warning: 2\n\n### Top Actions\n- [Warning] Crucible timeout behavior is inconsistent between inline and YAML-based tasks (factory/cli.py:134)\n- [Warning] Crucible timeout inconsistent between inline builder (600s) and YAML templates (300s) (factory/cli.py:134)\n\n### Notable Issues\n- **Crucible timeout behavior is inconsistent between inline and YAML-based tasks** `factory/cli.py:134`: Inline tasks now hardcode Crucible timeout to 600s, while checked-in YAML templates still explicitly set 300s. This creates API inconsistency: `factory run <inline prompt>` and `factory poll` without `--template` use 600s, but template-driven runs can still use 300s. The same feature behaves differently depending on task source, which is hard to reason about operationally.\n- **Crucible timeout inconsistent between inline builder (600s) and YAML templates (300s)** `factory/cli.py:134`: Inline tasks hardcode the Crucible timeout to 600s in factory/cli.py:134, while checked-in YAML templates (tasks/todo.yaml:31, tasks/rails-sample.yaml:25) still explicitly set 300s. This means `factory run <inline prompt>` uses 600s but template-driven runs use 300s, causing the same feature to behave differently depending on task source. This is hard to reason about operationally and may surprise users.\n",
+  "pr_review_draft": {
+    "inline_comments": [
+      {
+        "body": "**Crucible timeout behavior is inconsistent between inline and YAML-based tasks**\n\nInline tasks now hardcode Crucible timeout to 600s, while checked-in YAML templates still explicitly set 300s. This creates API inconsistency: `factory run <inline prompt>` and `factory poll` without `--template` use 600s, but template-driven runs can still use 300s. The same feature behaves differently depending on task source, which is hard to reason about operationally.\n\nRaised by: codex\n\nSuggested fix: Standardize on one source of truth: either update YAML templates to 600, or expose timeout as a CLI/template parameter with clear precedence and docs.",
+        "category": "maintainability",
+        "description": "Inline tasks now hardcode Crucible timeout to 600s, while checked-in YAML templates still explicitly set 300s. This creates API inconsistency: `factory run <inline prompt>` and `factory poll` without `--template` use 600s, but template-driven runs can still use 300s. The same feature behaves differently depending on task source, which is hard to reason about operationally.",
+        "line": 134,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/cli.py",
+        "severity": "Warning",
+        "side": "Right",
+        "source_agents": [
+          "codex"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "Crucible timeout behavior is inconsistent between inline and YAML-based tasks"
+      },
+      {
+        "body": "**Crucible timeout inconsistent between inline builder (600s) and YAML templates (300s)**\n\nInline tasks hardcode the Crucible timeout to 600s in factory/cli.py:134, while checked-in YAML templates (tasks/todo.yaml:31, tasks/rails-sample.yaml:25) still explicitly set 300s. This means `factory run <inline prompt>` uses 600s but template-driven runs use 300s, causing the same feature to behave differently depending on task source. This is hard to reason about operationally and may surprise users.\n\nRaised by: claude-code, codex\n\nSuggested fix: Standardize on a single default: either update the YAML templates to use timeout 600s to match the new inline default, or extract the timeout into a shared constant / CLI parameter with clear precedence (CLI flag > template value > global default) and document the resolution order.",
+        "category": "maintainability",
+        "description": "Inline tasks hardcode the Crucible timeout to 600s in factory/cli.py:134, while checked-in YAML templates (tasks/todo.yaml:31, tasks/rails-sample.yaml:25) still explicitly set 300s. This means `factory run <inline prompt>` uses 600s but template-driven runs use 300s, causing the same feature to behave differently depending on task source. This is hard to reason about operationally and may surprise users.",
+        "line": 134,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/cli.py",
+        "severity": "Warning",
+        "side": "Right",
+        "source_agents": [
+          "claude-code",
+          "codex"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "Crucible timeout inconsistent between inline builder (600s) and YAML templates (300s)"
+      }
+    ],
+    "overview_comment": {
+      "body": "## Crucible Review Summary\n\n- Issues: 2\n- Critical: 0, Warning: 2\n\n### Top Actions\n- [Warning] Crucible timeout behavior is inconsistent between inline and YAML-based tasks (factory/cli.py:134)\n- [Warning] Crucible timeout inconsistent between inline builder (600s) and YAML templates (300s) (factory/cli.py:134)\n\n### Notable Issues\n- **Crucible timeout behavior is inconsistent between inline and YAML-based tasks** `factory/cli.py:134`: Inline tasks now hardcode Crucible timeout to 600s, while checked-in YAML templates still explicitly set 300s. This creates API inconsistency: `factory run <inline prompt>` and `factory poll` without `--template` use 600s, but template-driven runs can still use 300s. The same feature behaves differently depending on task source, which is hard to reason about operationally.\n- **Crucible timeout inconsistent between inline builder (600s) and YAML templates (300s)** `factory/cli.py:134`: Inline tasks hardcode the Crucible timeout to 600s in factory/cli.py:134, while checked-in YAML templates (tasks/todo.yaml:31, tasks/rails-sample.yaml:25) still explicitly set 300s. This means `factory run <inline prompt>` uses 600s but template-driven runs use 300s, causing the same feature to behave differently depending on task source. This is hard to reason about operationally and may surprise users.\n"
+    },
+    "overview_only_comments": []
+  },
+  "run_id": "17e55912-ba97-4764-89ea-118341b51b2f",
+  "session_id": "17e55912-ba97-4764-89ea-118341b51b2f",
+  "system_context_markdown": "### System Context\n- Changed files: 1\n- Reference snippets: 0\n- History commits: 15\n- Docs snippets: 1\n- Deterministic prechecks: 2\n- Affected files:\n  - factory/cli.py\n- Precheck results:\n  - untangle-analyze-report [Fail] error: unexpected argument '.' found\n\nUsage: untangle analyze [OPTIONS] <PATH>\n\nFor more information, try '--help'.\n  - untangle-quality-report [Fail] error: unrecognized subcommand 'quality'\n\nUsage: untangle <COMMAND>\n\nFor more information, try '--help'.\n",
+  "verdict": "Warn"
+}
+[run:17e55912-ba97-4764-89ea-118341b51b2f]
+[2026-05-15 14:12:14.962 +10:00] [final-analysis]
+## Final Analysis
+
+- Issues: 2 (Critical: 0, Warning: 2, Info: 0)
+- Agent failures: 0
+
+### Top Issues
+- [Warning] Crucible timeout behavior is inconsistent between inline and YAML-based tasks `factory/cli.py:134`
+- [Warning] Crucible timeout inconsistent between inline builder (600s) and YAML templates (300s) `factory/cli.py:134`
+
+### Action Plan
+- [Warning] Crucible timeout behavior is inconsistent between inline and YAML-based tasks (factory/cli.py:134)
+- [Warning] Crucible timeout inconsistent between inline builder (600s) and YAML templates (300s) (factory/cli.py:134)
+
+[2026-05-15 14:12:14.962 +10:00] [pr-comment]
+## Crucible Review Summary
+
+- Issues: 2
+- Critical: 0, Warning: 2
+
+### Top Actions
+- [Warning] Crucible timeout behavior is inconsistent between inline and YAML-based tasks (factory/cli.py:134)
+- [Warning] Crucible timeout inconsistent between inline builder (600s) and YAML templates (300s) (factory/cli.py:134)
+
+### Notable Issues
+- **Crucible timeout behavior is inconsistent between inline and YAML-based tasks** `factory/cli.py:134`: Inline tasks now hardcode Crucible timeout to 600s, while checked-in YAML templates still explicitly set 300s. This creates API inconsistency: `factory run <inline prompt>` and `factory poll` without `--template` use 600s, but template-driven runs can still use 300s. The same feature behaves differently depending on task source, which is hard to reason about operationally.
+- **Crucible timeout inconsistent between inline builder (600s) and YAML templates (300s)** `factory/cli.py:134`: Inline tasks hardcode the Crucible timeout to 600s in factory/cli.py:134, while checked-in YAML templates (tasks/todo.yaml:31, tasks/rails-sample.yaml:25) still explicitly set 300s. This means `factory run <inline prompt>` uses 600s but template-driven runs use 300s, causing the same feature to behave differently depending on task source. This is hard to reason about operationally and may surprise users.
+

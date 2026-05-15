@@ -17,7 +17,7 @@ from typing import Optional
 import yaml as _yaml
 
 from factory import evaluator, session as sess, store
-from factory.evaluator_agent import parse_verdict, run_evaluator
+from factory.evaluator_agent import parse_verdict, run_evaluator, run_crucible_evaluator, parse_crucible_verdict
 from factory.gemini_review import run_gemini_review
 from factory.config import WorkerConfig, load_workers
 from factory.models import Run, RunState, TaskDefinition, UntangleConfig, CrucibleConfig, GeminiReviewConfig
@@ -363,8 +363,46 @@ def watch_task(
                                 _log(run_id, "  sending crucible feedback to coder")
                                 store.save_run(run)
                                 continue
+                            _log(run_id, "  crucible exhausted rounds — running evaluator to decide on PR...")
+                            _slack_post(slack_client, run, ":thinking_face: Crucible exhausted all rounds — running evaluator to decide whether to open PR...")
+                            completion_summary = client.run(
+                                f"cat {working_dir}/.factory/completion.md 2>/dev/null || true",
+                                timeout=10,
+                            ).stdout.strip()
+                            eval_model = (task.evaluator.model or worker.model) if task.evaluator else worker.model
+                            eval_effort = (task.evaluator.effort or "low") if task.evaluator else "low"
+                            eval_timeout = task.evaluator.timeout if task.evaluator else 120
+                            ev_result = run_crucible_evaluator(
+                                client,
+                                worktree_path=working_dir,
+                                task_description=task.coder.prompt,
+                                crucible_feedback=crucible_feedback,
+                                completion_summary=completion_summary,
+                                timeout=eval_timeout,
+                                model=eval_model,
+                                effort=eval_effort,
+                            )
+                            store.save_log(run_id, f"crucible_evaluator_iter{iteration}.stdout", ev_result.stdout)
+                            crucible_verdict, crucible_reason = parse_crucible_verdict(ev_result.stdout)
+                            run.evaluator_verdict = crucible_verdict
+                            run.evaluator_reason = crucible_reason
+                            _log(run_id, f"  crucible evaluator verdict={crucible_verdict}: {crucible_reason}")
+                            _slack_post(slack_client, run, f":robot_face: Crucible evaluator: *{crucible_verdict}* — {crucible_reason}")
+
+                            if crucible_verdict == "open_pr":
+                                run.state = RunState.passed
+                                run.notes = f"Crucible found issues but evaluator approved PR: {crucible_reason}"
+                                store.save_run(run)
+                                _log(run_id, f"state=passed  (crucible evaluator approved PR opening)")
+                                _post_results(slack_client, run, results, passed=True)
+                                sess.kill_session(client, session_name)
+                                if run.slack_thread_ts:
+                                    sess.unregister_run(client, run.slack_thread_ts)
+                                _maybe_open_pr(run, task, worker, repo, issue_number, workers_path, slack_client)
+                                return run
+
                             run.state = RunState.failed
-                            run.notes = f"Crucible review blocked after {task.crucible.rounds} rounds"
+                            run.notes = f"Crucible review blocked after {task.crucible.rounds} rounds: {crucible_reason}"
                             store.save_run(run)
                             sess.kill_session(client, session_name)
                             if run.slack_thread_ts:

@@ -1,0 +1,1189 @@
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 11:58:55.205 +10:00] [progress] startup:references started Scanning related references
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 11:58:55.206 +10:00] [progress] startup:history started Collecting recent history
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 11:58:55.206 +10:00] [progress] startup:docs started Loading docs context
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.219 +10:00] [progress] startup:references completed count=0 duration=0.0s Reference scan complete
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.219 +10:00] [progress] startup:history completed count=18 duration=0.0s History collection complete
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.219 +10:00] [progress] startup:docs completed count=1 duration=0.0s Docs collection complete
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.219 +10:00] [progress] startup:prechecks started Running prechecks
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.219 +10:00] [progress] startup:prechecks completed count=2 duration=0.1s Prechecks complete
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.220 +10:00] [progress] run:header reviewers=claude-code max_rounds=2 changed_files=2 changed_lines=4 convergence_enabled=true context_enabled=true
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.220 +10:00] [progress] phase:start analyzer
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.220 +10:00] [progress] analyzer:start
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.220 +10:00] [agent-chat] -> claude-code index db52d8e..f3fa468 100644 name=prompt[:80],
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.220 +10:00] [analysis]
+## Local Diff Analysis
+
+Increased CoderConfig session_timeout default from 600s (10 min) to 3600s (1 hour) to fix premature task timeouts. The default is now defined once in the Pydantic model, and the explicit override in inline task creation was removed to use the new default. This addresses timeout failures during agent execution iterations where 10 minutes proved insufficient.
+
+### Suggested Review Focus
+- Timeout adequacy validation: 10x increase is significant; reviewers must confirm 1 hour is sufficient for target workloads without being excessive. No baseline metrics provided for typical coder execution times.
+- Stuck task detection: Longer timeout increases risk of masking genuinely hung agents. Verify monitoring/logging exists to distinguish legitimate slow execution from infinite loops or deadlocks.
+- Resource contention on worker: Longer-held tmux sessions and SSH connections multiply resource pressure. Check if worker has capacity and cleanup guarantees for 60+ concurrent 1-hour sessions.
+- Timeout application scope: Verify this timeout applies uniformly across all coder→eval retry cycles (max_iterations=3). Each iteration gets full 3600s?
+- User experience impact: Failures now take up to 1 hour to surface. Confirm feedback loops and retry logic handle this latency appropriately.
+
+### Trade-offs
+- Prevents premature timeout failures but increases latency for blocked/hung tasks — relies on external monitoring to catch legitimately stuck agents
+- Worker resources (tmux sessions, disk, memory) held 6x longer per iteration — requires validation that worker capacity and cleanup mechanisms handle sustained load
+- Removed explicit timeout override in inline task creation makes behavior implicit and harder to audit — now depends on class default which could drift in future refactors
+- No per-task timeout configurability — all tasks get 1 hour regardless of complexity; may be over-provisioned for simple tasks
+
+### Affected Modules
+- factory/models.py — CoderConfig class, session_timeout field default
+- factory/cli.py — _build_inline_task() function, CoderConfig instantiation
+- factory/runner.py — run_task() likely uses CoderConfig.session_timeout in polling loop
+- factory/session.py — RemoteSession likely uses timeout when polling .factory/status file
+
+### Call Chain
+- cli.py:_build_inline_task() → creates TaskDefinition with CoderConfig(session_timeout=3600 via default)
+- runner.py:run_task(task) → extracts task.coder.session_timeout
+- session.py:RemoteSession.poll() → waits up to 3600s for .factory/status == 'done'
+- evaluator.py:run_eval() → executes post-coder validation, may also respect timeout
+
+### Design Patterns
+- Pydantic config object with typed defaults — centralizes timeout configuration
+- Default-over-explicit pattern — removed hardcoded value to rely on class default, reduces duplication but increases implicit behavior
+- Config inheritance — CoderConfig timeout applies uniformly to all execution paths that use it
+
+### Reviewer Checklist
+- Search codebase for other hardcoded `session_timeout` values (600, 3600, etc.) to ensure no orphaned configs
+- Verify session.py and runner.py correctly propagate CoderConfig.session_timeout to the polling loop
+- Check logs/metrics for typical coder execution times — confirm 3600s is data-driven, not a guess
+- Inspect worker cleanup: do timed-out or completed sessions properly release tmux/SSH resources within minutes?
+- Confirm evaluator.py timeout behavior: does it inherit from CoderConfig or have its own timeout?
+- Review Slack notifications / alerts: do they fire before timeout occurs, or only after?
+- Test scenario: intentionally slow coder task — verify it completes within 3600s and doesn't hang beyond
+- Consider if timeout should be task-parameter or per-agent (e.g., 'claude' may need more time than 'codex')
+
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.220 +10:00] [system-context]
+### System Context
+- Changed files: 2
+- Reference snippets: 0
+- History commits: 18
+- Docs snippets: 1
+- Deterministic prechecks: 2
+- Affected files:
+  - factory/cli.py
+  - factory/models.py
+- Precheck results:
+  - untangle-analyze-report [Fail] error: unexpected argument '.' found
+
+Usage: untangle analyze [OPTIONS] <PATH>
+
+For more information, try '--help'.
+  - untangle-quality-report [Fail] error: unrecognized subcommand 'quality'
+
+Usage: untangle <COMMAND>
+
+For more information, try '--help'.
+
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.220 +10:00] [progress] analyzer:done
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.220 +10:00] [progress] phase:done analyzer
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.220 +10:00] [progress] phase:start agent-preflight
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.220 +10:00] [progress] phase:done agent-preflight
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.220 +10:00] [progress] phase:start round-1
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.220 +10:00] [progress] round:1 start (agents: claude-code)
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.220 +10:00] [progress] round:1 status [... claude-code]
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.220 +10:00] [progress] round:1 status [RUN claude-code]
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.221 +10:00] [progress] agent:start round=1 id=claude-code
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.221 +10:00] [agent-chat] -> claude-code index db52d8e..f3fa468 100644 name=prompt[:80],
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.221 +10:00] [agent-review] round=1 id=claude-code 8 findings (2 Critical, 3 Warning, 3 Info) | Round-1 audit of timeout increase from 600s to 3600s. Found 2 CRITICAL consistency issues: (1) fallback in poller.py line 65 still hardcoded to 600s instead of new 3600s default, creating silent timeout mismatch for template-less polling scenarios; (2) wait_for_status() default parameter not synchronized—still 600s, though currently masked by explicit callers. Also identified maintainability risks: implicit default removal (from inline task creation) reduces auditability, no per-task timeout configurability added for CLI, and zero test coverage for timeout paths. Resource impact acceptable (per-iteration basis), but lack of metrics justifying 6x increase is concerning.
+[agent-review] details:
+Narrative:
+Round-1 audit of timeout increase from 600s to 3600s. Found 2 CRITICAL consistency issues: (1) fallback in poller.py line 65 still hardcoded to 600s instead of new 3600s default, creating silent timeout mismatch for template-less polling scenarios; (2) wait_for_status() default parameter not synchronized—still 600s, though currently masked by explicit callers. Also identified maintainability risks: implicit default removal (from inline task creation) reduces auditability, no per-task timeout configurability added for CLI, and zero test coverage for timeout paths. Resource impact acceptable (per-iteration basis), but lack of metrics justifying 6x increase is concerning.
+
+Findings:
+- [Critical] factory/poller.py:65 Update poller.py line 65 fallback from 600 to 3600 to match new CoderConfig default. This ensures consistency across all code paths that instantiate CoderConfig.
+  description: The poller.py issue_to_task() function creates a CoderConfig with a hardcoded fallback of 600s when template.coder is None. This fallback was not updated when CoderConfig.session_timeout default was increased to 3600s in models.py. This creates a silent inconsistency: polling without an explicit coder template will use 600s instead of the new 3600s default, potentially causing premature timeouts in edge cases where templates lack coder config.
+- [Critical] factory/session.py:191 Synchronize wait_for_status() default parameter with CoderConfig default. Either: (1) update default to 3600, or (2) remove the default entirely and require explicit timeout at all call sites. Option 2 is safer for preventing silent timeout mismatches.
+  description: The wait_for_status() function defines its own default parameter timeout=600 (line 191). While all current callers in runner.py explicitly pass timeout=task.coder.session_timeout (correctly using 3600s), this orphaned default creates a maintenance hazard. If future code calls wait_for_status() without an explicit timeout argument, it will silently revert to 600s instead of 3600s. This violates the single-source-of-truth principle and makes the codebase fragile to refactoring.
+- [Warning] factory/cli.py:133 Consider adding a `--session-timeout` CLI option to _build_inline_task() for per-task configurability. Document the default timeout behavior clearly in the function docstring and in CLI help text.
+  description: The commit removed `session_timeout=600` from _build_inline_task(), replacing it with reliance on the model's default (now 3600s). While this reduces duplication, it makes the timeout value implicit in the code. Code reviewers and maintainers must now consult factory/models.py to understand what timeout an inline task gets. The old explicit value was more discoverable during code review. Additionally, there is no CLI flag (e.g., `--session-timeout`) to override the timeout for individual inline tasks.
+- [Warning] factory/runner.py:210-212 Verify that actual coder execution times for target workloads fit comfortably within 3600s per iteration. Provide baseline metrics or profiling data to justify the 6x timeout increase. Document the maximum total execution time (including eval/crucible/evaluator phases) in task configuration.
+  description: Each coder iteration gets the full session_timeout (now 3600s). With max_iterations=3 (default), that's 3 × 3600s = 10,800s for coder alone. Additionally, each iteration runs eval (300s), crucible (600s), and evaluator (120s) if enabled. Total per-iteration: 3600 + 300 + 600 + 120 = 4620s (77 minutes). The commit message and focus areas do not address whether these compounding timeouts have been validated against actual workload requirements.
+- [Warning] <unknown> Add unit tests for: (1) wait_for_status() behavior with both explicit and default timeouts, (2) issue_to_task() timeout handling with/without template coder, (3) timeout logging and RunState transition when timeout occurs, (4) resource cleanup after timeout (session kill, port release).
+  description: Per CLAUDE.md, 'No tests exist yet — the main way to verify changes is running a task end-to-end.' This timeout change affects critical control flow (timeout detection at line 290-298 in runner.py) but has no unit or integration tests. Edge cases like: wait_for_status() called without explicit timeout, poller creating tasks without coder template, concurrent 3600s sessions on worker, timeout message logging — none are tested. Risk of silent failures in edge paths.
+- [Info] factory/runner.py:290-298 Verify the logic in wait_for_status(): the loop condition `while elapsed < timeout:` and the increment `elapsed += poll_interval` ensure that the function returns 'timeout' within ±poll_interval (5s) of the target timeout. With 3600s timeout and 5s poll interval, this is acceptable precision.
+  description: The timeout detection at line 290 correctly checks if wait_for_status() returns 'timeout' and logs the session_timeout value in run.notes. However, this assumes wait_for_status() will always return 'timeout' when elapsed >= timeout. Verify that the polling loop in session.py line 202-224 correctly enforces the timeout boundary and does not continue looping beyond the specified timeout.
+- [Info] factory/session.py:217-220 Consider adding log entries to understand resource utilization during long-running iterations. Example: memory usage, CPU %, number of active tmux panes.
+  description: The wait_for_status() function logs 'still running...' heartbeat every 60 seconds (line 217-220). With the new 3600s timeout, engineers will see ~60 status updates per iteration, providing good visibility into long-running tasks. This is a positive aspect of the change.
+- [Info] factory/models.py:41-55 Add detailed comment explaining the timeout rationale: typical execution times, what workloads require >600s, what symptoms led to the timeout increase, and any trade-offs (e.g., resource cost of longer-lived sessions).
+  description: The CoderConfig class comment for session_timeout (line 44) reads only '# seconds to wait for the agent to finish per iteration' with no context about why 3600s was chosen or what workloads require this duration. The change from 600s to 3600s is a 6x increase, but no metrics, profiling, or user feedback is documented to justify the threshold.
+
+[agent-review]   [CRITICAL] factory/poller.py:65 Update poller.py line 65 fallback from 600 to 3600 to match new CoderConfig default. This ensures consistency across all code paths that instantiate CoderConfig.
+[agent-review]   [CRITICAL] factory/session.py:191 Synchronize wait_for_status() default parameter with CoderConfig default. Either: (1) update default to 3600, or (2) remove the default entirely and require explicit timeout at all call sites. Option 2 is safer for preventing silent timeout mismatches.
+[agent-review]   [WARNING] factory/cli.py:133 Consider adding a `--session-timeout` CLI option to _build_inline_task() for per-task configurability. Document the default timeout behavior clearly in the function docstring and in CLI help text.
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.221 +10:00] [progress] round:1 status [OK claude-code (89.1s)]
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.221 +10:00] [progress] agent:done round=1 id=claude-code
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.222 +10:00] [progress] round:1 done
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.222 +10:00] [agent-chat] -> claude-code Findings so far: [{"agent":"claude-code","severity":"Warning","confidence":"Medium","file":"factory/runner.py","span":{"start":210,"end":212},"message":"Verify that actual coder ex
+…
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.222 +10:00] [progress] convergence round=1 verdict=NOT_CONVERGED rationale=Two unresolved Critical-severity findings represent correctness/maintainability hazards introduced by this change: (1) poller.py line 65 hardcoded fallback of 600s is not synchronized with CoderConfig's new 3600s default—this creates silent timeout mismatches in edge cases when tasks lack explicit coder templates; (2) session.py line 191 wait_for_status() default parameter remains at 600s, violating single-source-of-truth and creating a maintenance trap for future refactoring. While all current callers in runner.py explicitly pass timeout=task.coder.session_timeout, the orphaned defaults are ticking time bombs. Additionally, the diff removes explicit session_timeout=600 from cli.py without providing CLI configurability for per-task timeout override, reducing auditability and runtime flexibility. These three issues (poller fallback, session default, CLI discoverability) must be resolved before convergence. Recommended: (a) sync poller.py line 65 to 3600, (b) remove default from wait_for_status() signature or update to 3600, (c) add --session-timeout CLI option, (d) enhance CoderConfig docstring with timeout rationale and compound phase durations (4620s max per iteration).
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.222 +10:00] [progress] round:1/2 complete
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.222 +10:00] [progress] phase:done round-1
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.222 +10:00] [progress] phase:start round-2
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.223 +10:00] [progress] round:2 start (agents: claude-code)
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.223 +10:00] [progress] round:2 status [... claude-code]
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.223 +10:00] [progress] round:2 status [RUN claude-code]
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.223 +10:00] [progress] agent:start round=2 id=claude-code
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.223 +10:00] [agent-chat] -> claude-code Round 1 prior reviewer findings: index db52d8e..f3fa468 100644
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.223 +10:00] [agent-review] round=2 id=claude-code 9 findings (2 Critical, 5 Warning, 2 Info) | Round 2 fix is INCOMPLETE. While the commit correctly removes hardcoded session_timeout=600 from cli.py and updates the CoderConfig default to 3600, it fails to address TWO CRITICAL issues explicitly identified in Round 1: (1) poller.py:65 still has hardcoded 600 fallback when no template is provided, and (2) session.py:191 still has default parameter timeout=600, creating a silent timeout mismatch risk. The fix also lacks per-task configurability, timeout verification data, and documentation of rationale. Current state violates the principle that timeout defaults should be defined in ONE place and used everywhere.
+[agent-review] details:
+Narrative:
+Round 2 fix is INCOMPLETE. While the commit correctly removes hardcoded session_timeout=600 from cli.py and updates the CoderConfig default to 3600, it fails to address TWO CRITICAL issues explicitly identified in Round 1: (1) poller.py:65 still has hardcoded 600 fallback when no template is provided, and (2) session.py:191 still has default parameter timeout=600, creating a silent timeout mismatch risk. The fix also lacks per-task configurability, timeout verification data, and documentation of rationale. Current state violates the principle that timeout defaults should be defined in ONE place and used everywhere.
+
+Findings:
+- [Critical] factory/poller.py:65 The fallback session_timeout of 600s in poller.py:65 contradicts the new CoderConfig default of 3600s. When a GitHub issue task is created without an explicit template coder config, it will use the old 10-minute timeout instead of the new 1-hour timeout, defeating the purpose of the fix.
+  description: Round 1 explicitly flagged this line: 'Update poller.py line 65 fallback from 600 to 3600 to match new CoderConfig default. This ensures consistency across all code paths that instantiate CoderConfig.' The diff does not address this. When issue_to_task() creates a CoderConfig from a template without coder config (template.coder is None), it falls back to hardcoded 600 seconds instead of using the new 3600s default.
+- [Critical] factory/session.py:191 The wait_for_status() function has default parameter timeout=600, which conflicts with the new CoderConfig default of 3600s. Any call to wait_for_status() without explicit timeout will silently use the old 10-minute limit, even though the intent is a 1-hour limit. While runner.py currently passes explicit timeout values (line 253), this default creates a maintenance hazard for future code.
+  description: Round 1 flagged: 'factory/session.py:191 Synchronize wait_for_status() default parameter with CoderConfig default. Either: (1) update default to 3600, or (2) remove the default entirely and require explicit timeout at all call sites. Option 2 is safer for preventing silent timeout mismatches.' The diff does not address this. The function signature still has `timeout: int = 600`, meaning if someone calls wait_for_status() without an explicit timeout argument, they get 600 seconds instead of 3600 seconds. This is a footgun that violates DRY and defeats the timeout increase.
+- [Warning] <unknown> The commit only partially implements Round 1's findings. Two critical timeout mismatches remain unaddressed (poller.py:65 and session.py:191), which means task creation via GitHub issues and any fallback to default timeout parameters will still use the old 600s limit, undermining the entire fix.
+  description: The diff addresses only 2 of the 4 critical/warning locations identified in Round 1 review. Specifically: (1) cli.py:133 fix is implemented (removed hardcoded 600), (2) models.py:41 default is increased to 3600, BUT (3) poller.py:65 is NOT fixed, and (4) session.py:191 is NOT fixed. This suggests either incomplete implementation or misunderstanding of scope. The Round 1 review explicitly required both poller.py and session.py to be updated for 'consistency across all code paths.'
+- [Warning] factory/cli.py:130-133 Users can no longer configure session timeout per task via CLI. All inline runs now get exactly 3600s, with no override mechanism. This reduces flexibility and makes it harder to experiment with optimal timeout values or handle edge cases where a specific task needs more/less time.
+  description: Round 1 flagged: 'factory/cli.py:133 Consider adding a `--session-timeout` CLI option to _build_inline_task() for per-task configurability.' The diff does not implement this. The function now relies entirely on CoderConfig's hardcoded default (3600s), with no way for users to override per-task. This is problematic because: (1) different tasks have different complexity — some may finish in seconds, others legitimately need hours, (2) resource constraints on the worker may require shorter timeouts for some tasks, (3) ability to experiment with timeout values is removed.
+- [Warning] factory/models.py:41-44 The CoderConfig.session_timeout default was increased from 600 to 3600 seconds with no comment explaining why. Without justification, this value is difficult to validate and may be over-provisioned or under-provisioned. Future maintainers have no context for adjusting it.
+  description: Round 1 flagged: 'factory/models.py:41 Add detailed comment explaining the timeout rationale: typical execution times, what workloads require >600s, what symptoms led to the timeout increase, and any trade-offs.' The diff increases the timeout from 600 to 3600 seconds (1 hour) but provides zero documentation. This is problematic because: (1) a 6x increase is significant and warrants justification, (2) future maintainers won't understand why this value was chosen, (3) no baseline metrics are provided to validate the choice is data-driven vs. a guess, (4) the trade-offs (longer resource hold, longer failure latency) are not acknowledged.
+- [Warning] <unknown> No tests were added to validate that the new 3600s timeout is applied correctly across all code paths, or to verify that the poller.py and session.py defaults are synchronized with CoderConfig. This leaves the fix vulnerable to regressions.
+  description: Round 1 flagged: 'factory/cli.py:133 Consider adding... Document the default timeout behavior clearly in the function docstring and in CLI help text' and 'Add unit tests for: (1) wait_for_status() behavior with both explicit and default timeouts, (2) issue_to_task() timeout handling with/without template coder, (3) timeout logging and RunState transition when timeout occurs, (4) resource cleanup after timeout (session kill, port release).' The diff includes zero new tests. This is concerning because: (1) timeout logic is mission-critical — incorrect timeouts cause task failures, (2) three separate timeout paths exist (CoderConfig default, wait_for_status default, poller.py fallback), (3) without tests, future refactors risk re-introducing timeout mismatches.
+- [Warning] factory/runner.py:210-256 There is no validation that target workloads complete within 3600s per iteration, and no documentation of the maximum total runtime. With 3 iterations @ 3600s each plus eval/crucible/evaluator overhead, tasks could run 4+ hours. This risks poor user experience (very long feedback loops) and resource exhaustion if many concurrent runs are allowed.
+  description: Round 1 flagged: 'factory/runner.py:210 Verify that actual coder execution times for target workloads fit comfortably within 3600s per iteration. Provide baseline metrics or profiling data to justify the 6x timeout increase. Document the maximum total execution time (including eval/crucible/evaluator phases) in task configuration.' The diff does not provide any such validation or documentation. Looking at the loop structure (lines 214-256), each iteration calls wait_for_status() with 3600s timeout. With max_iterations=3 (default), the coder phase alone can consume up to 10,800 seconds (3 hours). Add eval (~5-30 min), crucible review (~2-10 min), and evaluator agent (~2-5 min), and total runtime could easily exceed 4-5 hours per task. This is not documented anywhere.
+- [Info] factory/poller.py:62-70 CoderConfig is always explicitly instantiated with conditional fallback values. This makes the code verbose and error-prone. If a new field is added to CoderConfig, this code won't automatically use its default — it must be updated manually.
+  description: The issue_to_task() function explicitly constructs a CoderConfig with many fallback values (lines 62-70). When template.coder is None, it uses hardcoded fallback values (600 for timeout, 3, ["claude"], etc.) instead of relying on CoderConfig's model defaults. This is repetitive and increases the risk of mismatches (as evidenced by the 600 vs. 3600 mismatch). A cleaner approach would be to construct only when needed and rely on model defaults for unspecified fields.
+- [Info] factory/models.py:44 The session_timeout comment should clarify that it is a default value used throughout the codebase and should be kept synchronized with other timeout fallback values (e.g., in poller.py:65 and session.py:191).
+  description: The comment `# seconds to wait for the agent to finish per iteration` is minimal. It doesn't explain that this is a DEFAULT that can be overridden at call sites (e.g., in poller.py, cli.py). Understanding whether a value is a hard-coded constant vs. a default with fallbacks elsewhere is crucial for maintenance.
+
+[agent-review]   [CRITICAL] factory/poller.py:65 The fallback session_timeout of 600s in poller.py:65 contradicts the new CoderConfig default of 3600s. When a GitHub issue task is created without an explicit template coder config, it will use the old 10-minute timeout instead of the new 1-hour timeout, defeating the purpose of the fix.
+[agent-review]   [CRITICAL] factory/session.py:191 The wait_for_status() function has default parameter timeout=600, which conflicts with the new CoderConfig default of 3600s. Any call to wait_for_status() without explicit timeout will silently use the old 10-minute limit, even though the intent is a 1-hour limit. While runner.py currently passes explicit timeout values (line 253), this default creates a maintenance hazard for future code.
+[agent-review]   [WARNING] <unknown> The commit only partially implements Round 1's findings. Two critical timeout mismatches remain unaddressed (poller.py:65 and session.py:191), which means task creation via GitHub issues and any fallback to default timeout parameters will still use the old 600s limit, undermining the entire fix.
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.224 +10:00] [progress] round:2 status [OK claude-code (101.9s)]
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.224 +10:00] [progress] agent:done round=2 id=claude-code
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.224 +10:00] [progress] round:2 done
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.224 +10:00] [progress] round:2/2 complete
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.224 +10:00] [progress] phase:done round-2
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.225 +10:00] [agent-chat] -> claude-code Normalize these findings into canonical issues (merge duplicates): [{"agent":"claude-code","severity":"Warning","confidence":"Medium","file":"factory/runner.py","span":{"start":210
+…
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.225 +10:00] [progress] phase:start finalize
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.225 +10:00] [agent-chat] -> claude-code Findings: [{"agent":"claude-code","severity":"Warning","confidence":"Medium","file":"factory/runner.py","span":{"start":210,"end":212},"message":"Verify that actual coder execution
+…
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.225 +10:00] [progress] autofix:ready
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.225 +10:00] [run:ed4095dc-a46d-44f9-b391-25ebda5faa7b] [2026-05-18 12:03:50.225 +10:00] [progress] phase:done finalize
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b]
+[2026-05-18 12:03:50.226 +10:00] [report]
+{
+  "agent_failures": [],
+  "analysis_markdown": "## Local Diff Analysis\n\nIncreased CoderConfig session_timeout default from 600s (10 min) to 3600s (1 hour) to fix premature task timeouts. The default is now defined once in the Pydantic model, and the explicit override in inline task creation was removed to use the new default. This addresses timeout failures during agent execution iterations where 10 minutes proved insufficient.\n\n### Suggested Review Focus\n- Timeout adequacy validation: 10x increase is significant; reviewers must confirm 1 hour is sufficient for target workloads without being excessive. No baseline metrics provided for typical coder execution times.\n- Stuck task detection: Longer timeout increases risk of masking genuinely hung agents. Verify monitoring/logging exists to distinguish legitimate slow execution from infinite loops or deadlocks.\n- Resource contention on worker: Longer-held tmux sessions and SSH connections multiply resource pressure. Check if worker has capacity and cleanup guarantees for 60+ concurrent 1-hour sessions.\n- Timeout application scope: Verify this timeout applies uniformly across all coder→eval retry cycles (max_iterations=3). Each iteration gets full 3600s?\n- User experience impact: Failures now take up to 1 hour to surface. Confirm feedback loops and retry logic handle this latency appropriately.\n\n### Trade-offs\n- Prevents premature timeout failures but increases latency for blocked/hung tasks — relies on external monitoring to catch legitimately stuck agents\n- Worker resources (tmux sessions, disk, memory) held 6x longer per iteration — requires validation that worker capacity and cleanup mechanisms handle sustained load\n- Removed explicit timeout override in inline task creation makes behavior implicit and harder to audit — now depends on class default which could drift in future refactors\n- No per-task timeout configurability — all tasks get 1 hour regardless of complexity; may be over-provisioned for simple tasks\n\n### Affected Modules\n- factory/models.py — CoderConfig class, session_timeout field default\n- factory/cli.py — _build_inline_task() function, CoderConfig instantiation\n- factory/runner.py — run_task() likely uses CoderConfig.session_timeout in polling loop\n- factory/session.py — RemoteSession likely uses timeout when polling .factory/status file\n\n### Call Chain\n- cli.py:_build_inline_task() → creates TaskDefinition with CoderConfig(session_timeout=3600 via default)\n- runner.py:run_task(task) → extracts task.coder.session_timeout\n- session.py:RemoteSession.poll() → waits up to 3600s for .factory/status == 'done'\n- evaluator.py:run_eval() → executes post-coder validation, may also respect timeout\n\n### Design Patterns\n- Pydantic config object with typed defaults — centralizes timeout configuration\n- Default-over-explicit pattern — removed hardcoded value to rely on class default, reduces duplication but increases implicit behavior\n- Config inheritance — CoderConfig timeout applies uniformly to all execution paths that use it\n\n### Reviewer Checklist\n- Search codebase for other hardcoded `session_timeout` values (600, 3600, etc.) to ensure no orphaned configs\n- Verify session.py and runner.py correctly propagate CoderConfig.session_timeout to the polling loop\n- Check logs/metrics for typical coder execution times — confirm 3600s is data-driven, not a guess\n- Inspect worker cleanup: do timed-out or completed sessions properly release tmux/SSH resources within minutes?\n- Confirm evaluator.py timeout behavior: does it inherit from CoderConfig or have its own timeout?\n- Review Slack notifications / alerts: do they fire before timeout occurs, or only after?\n- Test scenario: intentionally slow coder task — verify it completes within 3600s and doesn't hang beyond\n- Consider if timeout should be task-parameter or per-agent (e.g., 'claude' may need more time than 'codex')\n",
+  "auto_fix": {
+    "explanation": "## Unified Review Consensus\n\n### Status: INCOMPLETE FIX - CRITICAL GAPS IDENTIFIED\n\nThe provided diff addresses only **2 of 4 critical timeout synchronization issues** identified in Round 1. This leaves the codebase in an inconsistent state where timeout mismatches can silently occur.\n\n---\n\n### Findings Convergence\n\n**Agreed Critical Issues (All Agents Aligned):**\n\n1. **poller.py:65 - Hardcoded fallback not synchronized** ❌ NOT FIXED IN PROVIDED DIFF\n   - `session_timeout=...if template.coder else 600` must become `else 3600`\n   - **Severity**: Critical — task creation via GitHub polling will silently use 600s timeout\n   - **Status**: Requires fix\n\n2. **session.py:191 - Default parameter creates maintenance hazard** ❌ NOT FIXED IN PROVIDED DIFF\n   - `timeout: int = 600` must become `timeout: int` (remove default)\n   - **Severity**: Critical — any future code calling `wait_for_status()` without explicit timeout will revert to 600s\n   - **Status**: Requires fix\n\n3. **models.py:44 - CoderConfig default updated** ✅ FIXED\n   - Changed from `session_timeout: int = 600` to `session_timeout: int = 3600`\n   - **Enhancement**: Added clarifying comment about 6x increase and validation requirement\n\n4. **cli.py:133 - Removed hardcoded override** ✅ FIXED\n   - Removed explicit `session_timeout=600`, now relies on CoderConfig default\n   - **Status**: Complete\n\n---\n\n### Canonical Issues (Final Resolution)\n\n| File | Line | Issue | Fix | Priority |\n|------|------|-------|-----|----------|\n| `factory/poller.py` | 65 | Fallback timeout = 600 (old default) | Change to 3600 | **Critical** |\n| `factory/session.py` | 191 | Default timeout = 600 (old default) | Remove default; require explicit timeout | **Critical** |\n| `factory/models.py` | 44 | Timeout increased 6x; lacks justification | Add explanatory comment | **Done** |\n| `factory/cli.py` | 133 | Hardcoded timeout creates duplication | Remove hardcoded value | **Done** |\n\n---\n\n### Auto-Fix Guidance\n\nThe unified diff above includes ALL 4 fixes:\n\n1. **poller.py change**: Updates fallback from 600 → 3600 to match CoderConfig default\n2. **session.py change**: Removes the unsafe default timeout parameter, forcing all callers to explicitly pass timeout\n3. **models.py enhancement**: Adds context explaining the 6x increase\n4. **cli.py change**: Already complete in provided diff\n\n### Implementation Notes\n\n- **session.py removal of default is safer than changing to 3600** because it prevents future careless calls from silently using the wrong timeout\n- **Verify all callers** of `wait_for_status()` explicitly pass timeout parameter (current calls in runner.py already do, but grep for all uses)\n- **Poller.py fix ensures consistency** when tasks are created from GitHub issues without explicit coder templates\n\n### Testing Recommendation (Round 1 Finding - Not Addressed in Diff)\n\nAdd unit tests covering:\n- `CoderConfig()` instantiation yields `session_timeout == 3600`\n- `issue_to_task()` with `template.coder=None` yields `coder.session_timeout == 3600`\n- `wait_for_status()` called without timeout parameter **fails** (type error) — validates removal of default\n- timeout value flows correctly from CoderConfig → runner.py → wait_for_status()\n\nWithout tests, future refactoring risks re-introducing 600s timeout in edge paths.\n\n### Confidence Assessment\n\n- **poller.py fix**: High (straightforward constant change, single source)\n- **session.py fix**: High (prevents silent timeout reversion, aligns with safe-by-default principle)\n- **Overall correctness**: Medium (no tests; manual end-to-end verification required per CLAUDE.md)\n",
+    "unified_diff": "diff --git a/factory/cli.py b/factory/cli.py\nindex db52d8e..f3fa468 100644\n--- a/factory/cli.py\n+++ b/factory/cli.py\n@@ -130,7 +130,7 @@ def _build_inline_task(\n         name=prompt[:80],\n         worker=worker_name,\n         repo=RepoConfig(path=repo_path, branch=\"main\", url=f\"git@github.com:{gh_repo}.git\"),\n-        coder=CoderConfig(prompt=prompt, max_iterations=3, session_timeout=600, agents=[\"claude\"]),\n+        coder=CoderConfig(prompt=prompt, max_iterations=3, agents=[\"claude\"]),\n         crucible=CrucibleConfig(block_on=\"Critical\", timeout=300),\n         gemini_review=GeminiReviewConfig(),\n         slack=SlackConfig(reviewers=[r for r in os.environ.get(\"SLACK_DEFAULT_REVIEWERS\", \"\").split(\",\") if r.strip()]),\ndiff --git a/factory/models.py b/factory/models.py\nindex baaaa9a..2aa97b0 100644\n--- a/factory/models.py\n+++ b/factory/models.py\n@@ -41,7 +41,7 @@ class EvalConfig(BaseModel):\n class CoderConfig(BaseModel):\n     prompt: str\n     max_iterations: int = 3      # how many coder → eval cycles before giving up\n-    session_timeout: int = 600   # seconds to wait for the agent to finish per iteration\n+    session_timeout: int = 3600  # seconds to wait for the agent to finish per iteration (6x increase from 600s for complex refactorings; validate against actual workload metrics)\n     agents: List[str] = Field(default_factory=lambda: [\"claude\"])  # agents to try in order\n     model: Optional[str] = None  # claude model alias e.g. \"sonnet\", \"opus\"; None = worker default\n     effort: Optional[str] = None  # claude effort level: low, medium, high, max; None = worker default\ndiff --git a/factory/poller.py b/factory/poller.py\nindex xxxx..yyyy 100644\n--- a/factory/poller.py\n+++ b/factory/poller.py\n@@ -62,7 +62,7 @@ def issue_to_task(issue: dict, template: TaskDefinition) -> TaskDefinition:\n         agent=template.coder.agents[0] if template.coder else \"claude\",\n     )\n     coder = CoderConfig(\n-        session_timeout=template.coder.session_timeout if template.coder else 600,\n+        session_timeout=template.coder.session_timeout if template.coder else 3600,\n         prompt=f\"{template.coder.prompt}\\n\\n## GitHub Issue\\n{issue['body']}\",\n         max_iterations=template.coder.max_iterations if template.coder else 3,\n         agents=template.coder.agents if template.coder else [\"claude\"],\ndiff --git a/factory/session.py b/factory/session.py\nindex zzzz..wwww 100644\n--- a/factory/session.py\n+++ b/factory/session.py\n@@ -188,7 +188,8 @@ def launch_session(\n def wait_for_status(\n     client: SSHClient,\n     working_dir: str,\n-    timeout: int = 600,\n+    timeout: int,\n+    # NOTE: timeout is now required (no default) to prevent silent timeout mismatches.\n+    # All callers must explicitly pass timeout=task.coder.session_timeout for consistency.\n     poll_interval: int = 5,\n ) -> str:"
+  },
+  "consensus": [
+    {
+      "agreed_count": 1,
+      "file": "factory/runner.py",
+      "reached_quorum": true,
+      "severity": "Warning",
+      "span": {
+        "end": 212,
+        "start": 210
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/runner.py",
+      "reached_quorum": true,
+      "severity": "Info",
+      "span": {
+        "end": 298,
+        "start": 290
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/poller.py",
+      "reached_quorum": true,
+      "severity": "Critical",
+      "span": {
+        "end": 65,
+        "start": 65
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/session.py",
+      "reached_quorum": true,
+      "severity": "Info",
+      "span": {
+        "end": 220,
+        "start": 217
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/models.py",
+      "reached_quorum": true,
+      "severity": "Info",
+      "span": {
+        "end": 55,
+        "start": 41
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/cli.py",
+      "reached_quorum": true,
+      "severity": "Warning",
+      "span": {
+        "end": 133,
+        "start": 133
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/session.py",
+      "reached_quorum": true,
+      "severity": "Critical",
+      "span": {
+        "end": 191,
+        "start": 191
+      },
+      "total_agents": 1
+    }
+  ],
+  "final_action_plan": {
+    "prioritized_steps": [
+      "[Critical] Timeout parameter inconsistency across multiple code paths (<unknown>)",
+      "[Critical] Incomplete implementation: poller.py and session.py not updated in round-2 fix (<unknown>)",
+      "[Critical] Hardcoded timeout fallback not synchronized with CoderConfig default change (factory/poller.py:65)",
+      "[Critical] wait_for_status() default timeout parameter not synchronized with CoderConfig (factory/session.py:191)",
+      "[Warning] Incomplete round-2 fix misses critical Round-1 findings (<unknown>)",
+      "[Warning] No test coverage for timeout behavior; change relies entirely on manual end-to-end testing (<unknown>)",
+      "[Warning] No unit tests added for timeout behavior (Round 1 requirement) (<unknown>)",
+      "[Warning] No unit tests added for timeout behavior across all code paths (<unknown>)",
+      "[Warning] Removed explicit timeout parameter makes inline task timeout behavior implicit and hard to audit (factory/cli.py:133)",
+      "[Warning] Per-iteration timeout multiplier not documented; total runtime could exceed 4600s with all phases enabled (factory/runner.py:210)",
+      "[Warning] Per-iteration timeout multiplier effect not documented; total runtime could exceed 4600s per iteration with all phases enabled (factory/runner.py:210)"
+    ],
+    "quick_wins": [
+      "[Info] CoderConfig timeout change lacks documentation of justification (factory/models.py:41)",
+      "[Info] CoderConfig timeout increase from 600s to 3600s lacks documented justification (factory/models.py:41)",
+      "[Info] Timeout detection and logging is correct but relies on wait_for_status() return value (factory/runner.py:290)",
+      "[Info] Heartbeat logging every 60s is good for observability; 3600s timeout will produce ~60 heartbeats per iteration (factory/session.py:217)"
+    ]
+  },
+  "final_analysis_markdown": "## Final Analysis\n\n- Issues: 15 (Critical: 4, Warning: 7, Info: 4)\n- Agent failures: 0\n\n### Top Issues\n- [Critical] Timeout parameter inconsistency across multiple code paths `<unknown>`\n- [Critical] Incomplete implementation: poller.py and session.py not updated in round-2 fix `<unknown>`\n- [Critical] Hardcoded timeout fallback not synchronized with CoderConfig default change `factory/poller.py:65`\n- [Critical] wait_for_status() default timeout parameter not synchronized with CoderConfig `factory/session.py:191`\n- [Warning] Incomplete round-2 fix misses critical Round-1 findings `<unknown>`\n- [Warning] No test coverage for timeout behavior; change relies entirely on manual end-to-end testing `<unknown>`\n- [Warning] No unit tests added for timeout behavior (Round 1 requirement) `<unknown>`\n- [Warning] No unit tests added for timeout behavior across all code paths `<unknown>`\n- [Warning] Removed explicit timeout parameter makes inline task timeout behavior implicit and hard to audit `factory/cli.py:133`\n- [Warning] Per-iteration timeout multiplier not documented; total runtime could exceed 4600s with all phases enabled `factory/runner.py:210`\n\n### Action Plan\n- [Critical] Timeout parameter inconsistency across multiple code paths (<unknown>)\n- [Critical] Incomplete implementation: poller.py and session.py not updated in round-2 fix (<unknown>)\n- [Critical] Hardcoded timeout fallback not synchronized with CoderConfig default change (factory/poller.py:65)\n- [Critical] wait_for_status() default timeout parameter not synchronized with CoderConfig (factory/session.py:191)\n- [Warning] Incomplete round-2 fix misses critical Round-1 findings (<unknown>)\n- [Warning] No test coverage for timeout behavior; change relies entirely on manual end-to-end testing (<unknown>)\n- [Warning] No unit tests added for timeout behavior (Round 1 requirement) (<unknown>)\n- [Warning] No unit tests added for timeout behavior across all code paths (<unknown>)\n- [Warning] Removed explicit timeout parameter makes inline task timeout behavior implicit and hard to audit (factory/cli.py:133)\n- [Warning] Per-iteration timeout multiplier not documented; total runtime could exceed 4600s with all phases enabled (factory/runner.py:210)\n- [Warning] Per-iteration timeout multiplier effect not documented; total runtime could exceed 4600s per iteration with all phases enabled (factory/runner.py:210)\n",
+  "findings": [
+    {
+      "agent": "claude-code",
+      "category": "correctness",
+      "confidence": "Medium",
+      "description": "Each coder iteration gets the full session_timeout (now 3600s). With max_iterations=3 (default), that's 3 × 3600s = 10,800s for coder alone. Additionally, each iteration runs eval (300s), crucible (600s), and evaluator (120s) if enabled. Total per-iteration: 3600 + 300 + 600 + 120 = 4620s (77 minutes). The commit message and focus areas do not address whether these compounding timeouts have been validated against actual workload requirements.",
+      "evidence": [
+        {
+          "location": "factory/models.py:44",
+          "quote": "session_timeout: int = 3600  # seconds to wait for the agent to finish per iteration"
+        },
+        {
+          "location": "factory/runner.py:210-212",
+          "quote": "max_iterations = (\n    task.crucible.rounds + 1 if task.crucible else task.coder.max_iterations\n)"
+        },
+        {
+          "location": "factory/models.py:38,59,72,78",
+          "quote": "EvalConfig.timeout=300, EvaluatorConfig.timeout=120, CrucibleConfig.timeout=600, GeminiReviewConfig.timeout=120"
+        }
+      ],
+      "file": "factory/runner.py",
+      "message": "Verify that actual coder execution times for target workloads fit comfortably within 3600s per iteration. Provide baseline metrics or profiling data to justify the 6x timeout increase. Document the maximum total execution time (including eval/crucible/evaluator phases) in task configuration.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Warning",
+      "span": {
+        "end": 212,
+        "start": 210
+      },
+      "suggested_fix": "Add a comment in CoderConfig docstring: '# Per-iteration timeout. With eval (300s), crucible (600s), evaluator (120s), total max per iteration ~4620s. Set conservatively; actual durations vary by model, effort, and task complexity.' Collect runtime metrics to validate 3600s sufficiency.",
+      "title": "Per-iteration timeout multiplier not documented; total runtime could exceed 4600s with all phases enabled"
+    },
+    {
+      "agent": "claude-code",
+      "category": "correctness",
+      "confidence": "Medium",
+      "description": "The timeout detection at line 290 correctly checks if wait_for_status() returns 'timeout' and logs the session_timeout value in run.notes. However, this assumes wait_for_status() will always return 'timeout' when elapsed >= timeout. Verify that the polling loop in session.py line 202-224 correctly enforces the timeout boundary and does not continue looping beyond the specified timeout.",
+      "evidence": [
+        {
+          "location": "factory/session.py:202-224",
+          "quote": "while elapsed < timeout:\n    result = client.run(f\"cat {working_dir}/.factory/status 2>/dev/null\")\n    status = result.stdout.strip()\n    if status in (\"done\", \"failed\"):\n        return status\n    ...\n    time.sleep(poll_interval)\n    elapsed += poll_interval\nreturn \"timeout\""
+        },
+        {
+          "location": "factory/runner.py:290-294",
+          "quote": "if agent_status == \"timeout\":\n    run.state = RunState.failed\n    run.notes = f\"Coder timed out after {task.coder.session_timeout}s\"\n    store.save_run(run)"
+        }
+      ],
+      "file": "factory/runner.py",
+      "message": "Verify the logic in wait_for_status(): the loop condition `while elapsed < timeout:` and the increment `elapsed += poll_interval` ensure that the function returns 'timeout' within ±poll_interval (5s) of the target timeout. With 3600s timeout and 5s poll interval, this is acceptable precision.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Info",
+      "span": {
+        "end": 298,
+        "start": 290
+      },
+      "suggested_fix": "No change needed if behavior is verified. Add a comment in wait_for_status() docstring: 'Timeout enforcement: returns \"timeout\" after elapsed >= timeout. Precision: ±poll_interval (default 5s).'",
+      "title": "Timeout detection and logging is correct but relies on wait_for_status() return value"
+    },
+    {
+      "agent": "claude-code",
+      "category": "correctness",
+      "confidence": "High",
+      "description": "The poller.py issue_to_task() function creates a CoderConfig with a hardcoded fallback of 600s when template.coder is None. This fallback was not updated when CoderConfig.session_timeout default was increased to 3600s in models.py. This creates a silent inconsistency: polling without an explicit coder template will use 600s instead of the new 3600s default, potentially causing premature timeouts in edge cases where templates lack coder config.",
+      "evidence": [
+        {
+          "location": "factory/poller.py:65",
+          "quote": "session_timeout=template.coder.session_timeout if template.coder else 600,"
+        },
+        {
+          "location": "factory/models.py:44",
+          "quote": "session_timeout: int = 3600  # seconds to wait for the agent to finish per iteration"
+        }
+      ],
+      "file": "factory/poller.py",
+      "message": "Update poller.py line 65 fallback from 600 to 3600 to match new CoderConfig default. This ensures consistency across all code paths that instantiate CoderConfig.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Critical",
+      "span": {
+        "end": 65,
+        "start": 65
+      },
+      "suggested_fix": "Change line 65 from `session_timeout=template.coder.session_timeout if template.coder else 600,` to `session_timeout=template.coder.session_timeout if template.coder else 3600,`",
+      "title": "Hardcoded timeout fallback not synchronized with CoderConfig default change"
+    },
+    {
+      "agent": "claude-code",
+      "category": "maintainability",
+      "confidence": "Low",
+      "description": "The CoderConfig class comment for session_timeout (line 44) reads only '# seconds to wait for the agent to finish per iteration' with no context about why 3600s was chosen or what workloads require this duration. The change from 600s to 3600s is a 6x increase, but no metrics, profiling, or user feedback is documented to justify the threshold.",
+      "evidence": [
+        {
+          "location": "factory/models.py:41-55",
+          "quote": "class CoderConfig(BaseModel):\n    prompt: str\n    max_iterations: int = 3      # how many coder → eval cycles before giving up\n    session_timeout: int = 3600  # seconds to wait for the agent to finish per iteration"
+        }
+      ],
+      "file": "factory/models.py",
+      "message": "Add detailed comment explaining the timeout rationale: typical execution times, what workloads require >600s, what symptoms led to the timeout increase, and any trade-offs (e.g., resource cost of longer-lived sessions).",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Info",
+      "span": {
+        "end": 55,
+        "start": 41
+      },
+      "suggested_fix": "Update comment to:\n`# session_timeout: int = 3600  # seconds per coder iteration (was 600s, increased to handle complex refactorings and large codebases; see #ISSUE-XXX for metrics)`",
+      "title": "CoderConfig timeout change lacks documentation of justification"
+    },
+    {
+      "agent": "claude-code",
+      "category": "maintainability",
+      "confidence": "High",
+      "description": "The commit removed `session_timeout=600` from _build_inline_task(), replacing it with reliance on the model's default (now 3600s). While this reduces duplication, it makes the timeout value implicit in the code. Code reviewers and maintainers must now consult factory/models.py to understand what timeout an inline task gets. The old explicit value was more discoverable during code review. Additionally, there is no CLI flag (e.g., `--session-timeout`) to override the timeout for individual inline tasks.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:105-138",
+          "quote": "def _build_inline_task(\n    prompt: str,\n    repo: Optional[str],\n    eval_commands: List[str],\n    workers_path: Path,\n) -> \"TaskDefinition\":\n    ...\n    coder=CoderConfig(prompt=prompt, max_iterations=3, agents=[\"claude\"]),"
+        },
+        {
+          "location": "factory/cli.py:143-175",
+          "quote": "def run_cmd(...): [No timeout parameter exposed to user]"
+        }
+      ],
+      "file": "factory/cli.py",
+      "message": "Consider adding a `--session-timeout` CLI option to _build_inline_task() for per-task configurability. Document the default timeout behavior clearly in the function docstring and in CLI help text.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Warning",
+      "span": {
+        "end": 133,
+        "start": 133
+      },
+      "suggested_fix": "Add optional `session_timeout: Optional[int] = None` parameter to _build_inline_task(). If provided, pass it to CoderConfig(); if None, use the model default. Expose via CLI with `typer.Option(None, '--session-timeout', help=...)`. Add docstring: 'session_timeout: Max seconds per coder iteration (default: 3600 from CoderConfig)'",
+      "title": "Removed explicit timeout parameter makes inline task timeout behavior implicit and hard to audit"
+    },
+    {
+      "agent": "claude-code",
+      "category": "performance",
+      "confidence": "Low",
+      "description": "The wait_for_status() function logs 'still running...' heartbeat every 60 seconds (line 217-220). With the new 3600s timeout, engineers will see ~60 status updates per iteration, providing good visibility into long-running tasks. This is a positive aspect of the change.",
+      "evidence": [
+        {
+          "location": "factory/session.py:217-220",
+          "quote": "if elapsed - last_heartbeat >= 60:\n            m, s = divmod(elapsed, 60)\n            _console.print(Text(f\"  still running... {m}m{s:02d}s\", style=\"dim\"))\n            last_heartbeat = elapsed"
+        }
+      ],
+      "file": "factory/session.py",
+      "message": "Consider adding log entries to understand resource utilization during long-running iterations. Example: memory usage, CPU %, number of active tmux panes.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Info",
+      "span": {
+        "end": 220,
+        "start": 217
+      },
+      "suggested_fix": "Optional enhancement: at heartbeat intervals, capture `ps aux | grep claude` or `tmux list-sessions` stats and include in log output. This helps diagnose resource exhaustion.",
+      "title": "Heartbeat logging every 60s is good for observability; 3600s timeout will produce ~60 heartbeats per iteration"
+    },
+    {
+      "agent": "claude-code",
+      "category": "correctness",
+      "confidence": "High",
+      "description": "The wait_for_status() function defines its own default parameter timeout=600 (line 191). While all current callers in runner.py explicitly pass timeout=task.coder.session_timeout (correctly using 3600s), this orphaned default creates a maintenance hazard. If future code calls wait_for_status() without an explicit timeout argument, it will silently revert to 600s instead of 3600s. This violates the single-source-of-truth principle and makes the codebase fragile to refactoring.",
+      "evidence": [
+        {
+          "location": "factory/session.py:191",
+          "quote": "def wait_for_status(\n    client: SSHClient,\n    working_dir: str,\n    timeout: int = 600,"
+        },
+        {
+          "location": "factory/runner.py:251-256",
+          "quote": "agent_status = sess.wait_for_status(\n    client, working_dir,\n    timeout=task.coder.session_timeout,  # <- Explicit, but relies on implicit default elsewhere"
+        }
+      ],
+      "file": "factory/session.py",
+      "message": "Synchronize wait_for_status() default parameter with CoderConfig default. Either: (1) update default to 3600, or (2) remove the default entirely and require explicit timeout at all call sites. Option 2 is safer for preventing silent timeout mismatches.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Critical",
+      "span": {
+        "end": 191,
+        "start": 191
+      },
+      "suggested_fix": "Remove the default value from line 191: change `timeout: int = 600,` to `timeout: int,` and ensure all callers explicitly pass the timeout. Alternatively, update default to 3600 for safety, but this creates a second source of truth that can drift.",
+      "title": "wait_for_status() default timeout parameter not synchronized with CoderConfig"
+    },
+    {
+      "agent": "claude-code",
+      "category": "testing",
+      "confidence": "High",
+      "description": "Per CLAUDE.md, 'No tests exist yet — the main way to verify changes is running a task end-to-end.' This timeout change affects critical control flow (timeout detection at line 290-298 in runner.py) but has no unit or integration tests. Edge cases like: wait_for_status() called without explicit timeout, poller creating tasks without coder template, concurrent 3600s sessions on worker, timeout message logging — none are tested. Risk of silent failures in edge paths.",
+      "evidence": [
+        {
+          "location": "CLAUDE.md",
+          "quote": "No tests exist yet — the main way to verify changes is running a task end-to-end."
+        },
+        {
+          "location": "factory/runner.py:290-298",
+          "quote": "if agent_status == \"timeout\":\n    run.state = RunState.failed\n    run.notes = f\"Coder timed out after {task.coder.session_timeout}s\"\n    ..."
+        }
+      ],
+      "file": null,
+      "message": "Add unit tests for: (1) wait_for_status() behavior with both explicit and default timeouts, (2) issue_to_task() timeout handling with/without template coder, (3) timeout logging and RunState transition when timeout occurs, (4) resource cleanup after timeout (session kill, port release).",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Warning",
+      "span": null,
+      "suggested_fix": "Create factory/tests/test_timeout.py with fixtures for mocked SSHClient, test cases for: test_wait_for_status_explicit_timeout, test_wait_for_status_default_fallback, test_issue_to_task_timeout_without_coder_template, test_runner_timeout_state_transition, test_session_cleanup_on_timeout. Run tests in CI before merging timeout changes.",
+      "title": "No test coverage for timeout behavior; change relies entirely on manual end-to-end testing"
+    },
+    {
+      "agent": "claude-code",
+      "category": "correctness",
+      "confidence": "High",
+      "description": "The diff addresses only 2 of the 4 critical/warning locations identified in Round 1 review. Specifically: (1) cli.py:133 fix is implemented (removed hardcoded 600), (2) models.py:41 default is increased to 3600, BUT (3) poller.py:65 is NOT fixed, and (4) session.py:191 is NOT fixed. This suggests either incomplete implementation or misunderstanding of scope. The Round 1 review explicitly required both poller.py and session.py to be updated for 'consistency across all code paths.'",
+      "evidence": [
+        {
+          "location": "Round 1 findings - Critical issues",
+          "quote": "[Critical] factory/poller.py:65 Update poller.py line 65 fallback from 600 to 3600... [Critical] factory/session.py:191 Synchronize wait_for_status() default parameter..."
+        },
+        {
+          "location": "Commit diff",
+          "quote": "factory/cli.py and factory/models.py are modified, but factory/poller.py and factory/session.py are NOT in the diff"
+        }
+      ],
+      "file": null,
+      "message": "The commit only partially implements Round 1's findings. Two critical timeout mismatches remain unaddressed (poller.py:65 and session.py:191), which means task creation via GitHub issues and any fallback to default timeout parameters will still use the old 600s limit, undermining the entire fix.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 2,
+      "severity": "Warning",
+      "span": null,
+      "suggested_fix": "Complete the fix by: (1) updating poller.py:65 fallback from 600 to 3600, and (2) synchronizing session.py:191 default parameter (either to 3600 or removing the default). Verify all code paths by grepping for '600' and 'timeout' in the codebase.",
+      "title": "Incomplete round-2 fix misses critical Round-1 findings"
+    },
+    {
+      "agent": "claude-code",
+      "category": "testing",
+      "confidence": "Medium",
+      "description": "Round 1 flagged: 'factory/cli.py:133 Consider adding... Document the default timeout behavior clearly in the function docstring and in CLI help text' and 'Add unit tests for: (1) wait_for_status() behavior with both explicit and default timeouts, (2) issue_to_task() timeout handling with/without template coder, (3) timeout logging and RunState transition when timeout occurs, (4) resource cleanup after timeout (session kill, port release).' The diff includes zero new tests. This is concerning because: (1) timeout logic is mission-critical — incorrect timeouts cause task failures, (2) three separate timeout paths exist (CoderConfig default, wait_for_status default, poller.py fallback), (3) without tests, future refactors risk re-introducing timeout mismatches.",
+      "evidence": [
+        {
+          "location": "Round 1 findings - Warning",
+          "quote": "Add unit tests for: (1) wait_for_status() behavior with both explicit and default timeouts, (2) issue_to_task() timeout handling with/without template coder, (3) timeout logging and RunState transition when timeout occurs, (4) resource cleanup after timeout"
+        },
+        {
+          "location": "Diff context",
+          "quote": "No test files are modified or created in the diff"
+        }
+      ],
+      "file": null,
+      "message": "No tests were added to validate that the new 3600s timeout is applied correctly across all code paths, or to verify that the poller.py and session.py defaults are synchronized with CoderConfig. This leaves the fix vulnerable to regressions.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 2,
+      "severity": "Warning",
+      "span": null,
+      "suggested_fix": "Add unit tests in a new file (e.g., test/test_timeouts.py or tests in an existing test suite) covering: (1) CoderConfig instantiation with and without explicit session_timeout, (2) issue_to_task() creating CoderConfig with/without template.coder, (3) wait_for_status() called with explicit timeout vs. using default, (4) runner.py polling loop correctly passing timeout from CoderConfig to wait_for_status, (5) timeout handling in poller.py fallback. Example: `assert CoderConfig(prompt='test').session_timeout == 3600; assert issue_to_task(..., None).coder.session_timeout == 3600 [after fix]; assert wait_for_status(..., timeout=600) respects 600 override.`",
+      "title": "No unit tests added for timeout behavior (Round 1 requirement)"
+    }
+  ],
+  "issues": [
+    {
+      "category": "correctness",
+      "description": "Three separate locations maintain timeout defaults that are not synchronized: (1) poller.py:65 has hardcoded fallback of 600s when template.coder is None, (2) session.py:191 defines wait_for_status() default parameter as 600s, and (3) cli.py:133 previously had explicit 600s but was removed. While current call sites in runner.py pass explicit timeout=task.coder.session_timeout (3600s), these orphaned defaults create maintenance hazards. Future code paths that instantiate CoderConfig or call wait_for_status() without explicit timeout arguments will silently revert to 600s instead of the intended 3600s, causing premature timeouts.",
+      "evidence": [],
+      "file": null,
+      "line_end": null,
+      "line_start": null,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Critical",
+      "suggested_fix": "(1) Update factory/poller.py:65 from `session_timeout=template.coder.session_timeout if template.coder else 600,` to `session_timeout=template.coder.session_timeout if template.coder else 3600,`. (2) Remove default value from factory/session.py:191: change `timeout: int = 600,` to `timeout: int,` and ensure all callers explicitly pass timeout. (3) Verify no other hardcoded 600s or timeout defaults exist via: `grep -rn '\\b600\\b' factory/ | grep -i timeout`",
+      "title": "Timeout parameter inconsistency across multiple code paths"
+    },
+    {
+      "category": "correctness",
+      "description": "Round 1 review identified four critical/warning findings requiring synchronization of timeout parameters across CoderConfig, wait_for_status(), poller fallback, and CLI. The round-2 commit only partially addressed these issues: factory/models.py:41 (CoderConfig default increased to 3600) and factory/cli.py:133 (removed hardcoded 600) were fixed, but factory/poller.py:65 and factory/session.py:191 remain unaddressed with their original 600s defaults. This leaves the fix incomplete and undermines the stated goal of 'consistency across all code paths.' Reviewers should not approve this commit until all four locations are synchronized.",
+      "evidence": [],
+      "file": null,
+      "line_end": null,
+      "line_start": null,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Critical",
+      "suggested_fix": "Complete the fix by addressing the two remaining locations: (1) poller.py:65 and (2) session.py:191 (see previous issue for details). Add a comment in the commit message: 'Synchronize timeout defaults across CoderConfig, wait_for_status(), poller.issue_to_task(), and CLI to prevent silent timeout mismatches in edge code paths.'",
+      "title": "Incomplete implementation: poller.py and session.py not updated in round-2 fix"
+    },
+    {
+      "category": "correctness",
+      "description": "The poller.py issue_to_task() function creates a CoderConfig with a hardcoded fallback of 600s when template.coder is None. This fallback was not updated when CoderConfig.session_timeout default was increased to 3600s in models.py. This creates a silent inconsistency: polling without an explicit coder template will use 600s instead of the new 3600s default, potentially causing premature timeouts in edge cases where templates lack coder config.",
+      "evidence": [
+        {
+          "location": "factory/poller.py:65",
+          "quote": "session_timeout=template.coder.session_timeout if template.coder else 600,"
+        },
+        {
+          "location": "factory/models.py:44",
+          "quote": "session_timeout: int = 3600  # seconds to wait for the agent to finish per iteration"
+        }
+      ],
+      "file": "factory/poller.py",
+      "line_end": 65,
+      "line_start": 65,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Critical",
+      "suggested_fix": "Change line 65 from `session_timeout=template.coder.session_timeout if template.coder else 600,` to `session_timeout=template.coder.session_timeout if template.coder else 3600,`",
+      "title": "Hardcoded timeout fallback not synchronized with CoderConfig default change"
+    },
+    {
+      "category": "correctness",
+      "description": "The wait_for_status() function defines its own default parameter timeout=600 (line 191). While all current callers in runner.py explicitly pass timeout=task.coder.session_timeout (correctly using 3600s), this orphaned default creates a maintenance hazard. If future code calls wait_for_status() without an explicit timeout argument, it will silently revert to 600s instead of 3600s. This violates the single-source-of-truth principle and makes the codebase fragile to refactoring.",
+      "evidence": [
+        {
+          "location": "factory/session.py:191",
+          "quote": "def wait_for_status(\n    client: SSHClient,\n    working_dir: str,\n    timeout: int = 600,"
+        },
+        {
+          "location": "factory/runner.py:251-256",
+          "quote": "agent_status = sess.wait_for_status(\n    client, working_dir,\n    timeout=task.coder.session_timeout,  # <- Explicit, but relies on implicit default elsewhere"
+        }
+      ],
+      "file": "factory/session.py",
+      "line_end": 191,
+      "line_start": 191,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Critical",
+      "suggested_fix": "Remove the default value from line 191: change `timeout: int = 600,` to `timeout: int,` and ensure all callers explicitly pass the timeout. Alternatively, update default to 3600 for safety, but this creates a second source of truth that can drift.",
+      "title": "wait_for_status() default timeout parameter not synchronized with CoderConfig"
+    },
+    {
+      "category": "correctness",
+      "description": "The diff addresses only 2 of the 4 critical/warning locations identified in Round 1 review. Specifically: (1) cli.py:133 fix is implemented (removed hardcoded 600), (2) models.py:41 default is increased to 3600, BUT (3) poller.py:65 is NOT fixed, and (4) session.py:191 is NOT fixed. This suggests either incomplete implementation or misunderstanding of scope. The Round 1 review explicitly required both poller.py and session.py to be updated for 'consistency across all code paths.'",
+      "evidence": [
+        {
+          "location": "Round 1 findings - Critical issues",
+          "quote": "[Critical] factory/poller.py:65 Update poller.py line 65 fallback from 600 to 3600... [Critical] factory/session.py:191 Synchronize wait_for_status() default parameter..."
+        },
+        {
+          "location": "Commit diff",
+          "quote": "factory/cli.py and factory/models.py are modified, but factory/poller.py and factory/session.py are NOT in the diff"
+        }
+      ],
+      "file": null,
+      "line_end": null,
+      "line_start": null,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "Complete the fix by: (1) updating poller.py:65 fallback from 600 to 3600, and (2) synchronizing session.py:191 default parameter (either to 3600 or removing the default). Verify all code paths by grepping for '600' and 'timeout' in the codebase.",
+      "title": "Incomplete round-2 fix misses critical Round-1 findings"
+    },
+    {
+      "category": "testing",
+      "description": "Per CLAUDE.md, 'No tests exist yet — the main way to verify changes is running a task end-to-end.' This timeout change affects critical control flow (timeout detection at line 290-298 in runner.py) but has no unit or integration tests. Edge cases like: wait_for_status() called without explicit timeout, poller creating tasks without coder template, concurrent 3600s sessions on worker, timeout message logging — none are tested. Risk of silent failures in edge paths.",
+      "evidence": [
+        {
+          "location": "CLAUDE.md",
+          "quote": "No tests exist yet — the main way to verify changes is running a task end-to-end."
+        },
+        {
+          "location": "factory/runner.py:290-298",
+          "quote": "if agent_status == \"timeout\":\n    run.state = RunState.failed\n    run.notes = f\"Coder timed out after {task.coder.session_timeout}s\"\n    ..."
+        }
+      ],
+      "file": null,
+      "line_end": null,
+      "line_start": null,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "Create factory/tests/test_timeout.py with fixtures for mocked SSHClient, test cases for: test_wait_for_status_explicit_timeout, test_wait_for_status_default_fallback, test_issue_to_task_timeout_without_coder_template, test_runner_timeout_state_transition, test_session_cleanup_on_timeout. Run tests in CI before merging timeout changes.",
+      "title": "No test coverage for timeout behavior; change relies entirely on manual end-to-end testing"
+    },
+    {
+      "category": "testing",
+      "description": "Round 1 flagged: 'factory/cli.py:133 Consider adding... Document the default timeout behavior clearly in the function docstring and in CLI help text' and 'Add unit tests for: (1) wait_for_status() behavior with both explicit and default timeouts, (2) issue_to_task() timeout handling with/without template coder, (3) timeout logging and RunState transition when timeout occurs, (4) resource cleanup after timeout (session kill, port release).' The diff includes zero new tests. This is concerning because: (1) timeout logic is mission-critical — incorrect timeouts cause task failures, (2) three separate timeout paths exist (CoderConfig default, wait_for_status default, poller.py fallback), (3) without tests, future refactors risk re-introducing timeout mismatches.",
+      "evidence": [
+        {
+          "location": "Round 1 findings - Warning",
+          "quote": "Add unit tests for: (1) wait_for_status() behavior with both explicit and default timeouts, (2) issue_to_task() timeout handling with/without template coder, (3) timeout logging and RunState transition when timeout occurs, (4) resource cleanup after timeout"
+        },
+        {
+          "location": "Diff context",
+          "quote": "No test files are modified or created in the diff"
+        }
+      ],
+      "file": null,
+      "line_end": null,
+      "line_start": null,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "Add unit tests in a new file (e.g., test/test_timeouts.py or tests in an existing test suite) covering: (1) CoderConfig instantiation with and without explicit session_timeout, (2) issue_to_task() creating CoderConfig with/without template.coder, (3) wait_for_status() called with explicit timeout vs. using default, (4) runner.py polling loop correctly passing timeout from CoderConfig to wait_for_status, (5) timeout handling in poller.py fallback. Example: `assert CoderConfig(prompt='test').session_timeout == 3600; assert issue_to_task(..., None).coder.session_timeout == 3600 [after fix]; assert wait_for_status(..., timeout=600) respects 600 override.`",
+      "title": "No unit tests added for timeout behavior (Round 1 requirement)"
+    },
+    {
+      "category": "testing",
+      "description": "The timeout change affects mission-critical control flow (timeout detection, RunState transitions, session cleanup) but adds zero test coverage. Three separate timeout defaults exist (CoderConfig, wait_for_status(), poller.py fallback), creating three separate edge cases. Per CLAUDE.md, 'No tests exist yet — the main way to verify changes is running a task end-to-end,' which is insufficient for a 6x timeout multiplier change. Untested edge cases include: (1) wait_for_status() called without explicit timeout (uses default), (2) poller creating tasks without coder template (uses fallback), (3) concurrent 3600s sessions on worker (resource impact), (4) timeout message logging and RunState.failed transition, (5) tmux session cleanup and port release after timeout.",
+      "evidence": [],
+      "file": null,
+      "line_end": null,
+      "line_start": null,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "Create factory/tests/test_timeout.py with unit tests covering: (1) `test_coder_config_default_timeout()` — assert CoderConfig().session_timeout == 3600, (2) `test_wait_for_status_explicit_timeout()` — mock SSHClient, verify wait_for_status(..., timeout=600) respects override, (3) `test_wait_for_status_default_timeout()` — after removing default, assert function requires explicit timeout, (4) `test_issue_to_task_timeout_with_coder_template()` — verify timeout comes from template, (5) `test_issue_to_task_timeout_without_coder_template()` — after fix, verify fallback is 3600, (6) `test_runner_timeout_state_transition()` — mock session returning 'timeout', verify RunState.failed and run.notes set correctly. Run in CI before merging.",
+      "title": "No unit tests added for timeout behavior across all code paths"
+    },
+    {
+      "category": "maintainability",
+      "description": "The commit removed `session_timeout=600` from _build_inline_task(), replacing it with reliance on the model's default (now 3600s). While this reduces duplication, it makes the timeout value implicit in the code. Code reviewers and maintainers must now consult factory/models.py to understand what timeout an inline task gets. The old explicit value was more discoverable during code review. Additionally, there is no CLI flag (e.g., `--session-timeout`) to override the timeout for individual inline tasks.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:105-138",
+          "quote": "def _build_inline_task(\n    prompt: str,\n    repo: Optional[str],\n    eval_commands: List[str],\n    workers_path: Path,\n) -> \"TaskDefinition\":\n    ...\n    coder=CoderConfig(prompt=prompt, max_iterations=3, agents=[\"claude\"]),"
+        },
+        {
+          "location": "factory/cli.py:143-175",
+          "quote": "def run_cmd(...): [No timeout parameter exposed to user]"
+        }
+      ],
+      "file": "factory/cli.py",
+      "line_end": 133,
+      "line_start": 133,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "Add optional `session_timeout: Optional[int] = None` parameter to _build_inline_task(). If provided, pass it to CoderConfig(); if None, use the model default. Expose via CLI with `typer.Option(None, '--session-timeout', help=...)`. Add docstring: 'session_timeout: Max seconds per coder iteration (default: 3600 from CoderConfig)'",
+      "title": "Removed explicit timeout parameter makes inline task timeout behavior implicit and hard to audit"
+    },
+    {
+      "category": "correctness",
+      "description": "Each coder iteration gets the full session_timeout (now 3600s). With max_iterations=3 (default), that's 3 × 3600s = 10,800s for coder alone. Additionally, each iteration runs eval (300s), crucible (600s), and evaluator (120s) if enabled. Total per-iteration: 3600 + 300 + 600 + 120 = 4620s (77 minutes). The commit message and focus areas do not address whether these compounding timeouts have been validated against actual workload requirements.",
+      "evidence": [
+        {
+          "location": "factory/models.py:44",
+          "quote": "session_timeout: int = 3600  # seconds to wait for the agent to finish per iteration"
+        },
+        {
+          "location": "factory/runner.py:210-212",
+          "quote": "max_iterations = (\n    task.crucible.rounds + 1 if task.crucible else task.coder.max_iterations\n)"
+        },
+        {
+          "location": "factory/models.py:38,59,72,78",
+          "quote": "EvalConfig.timeout=300, EvaluatorConfig.timeout=120, CrucibleConfig.timeout=600, GeminiReviewConfig.timeout=120"
+        }
+      ],
+      "file": "factory/runner.py",
+      "line_end": 212,
+      "line_start": 210,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "Add a comment in CoderConfig docstring: '# Per-iteration timeout. With eval (300s), crucible (600s), evaluator (120s), total max per iteration ~4620s. Set conservatively; actual durations vary by model, effort, and task complexity.' Collect runtime metrics to validate 3600s sufficiency.",
+      "title": "Per-iteration timeout multiplier not documented; total runtime could exceed 4600s with all phases enabled"
+    },
+    {
+      "category": "maintainability",
+      "description": "Each coder iteration gets the full session_timeout (now 3600s). With max_iterations=3 (default), coder alone runs for up to 3 × 3600s = 10,800s. Additionally, each iteration triggers eval (300s), crucible (600s), and evaluator (120s) if enabled. Total per-iteration: 3600 + 300 + 600 + 120 = 4620s (77 minutes). The commit and code comments do not document these compounding timeouts, which makes it difficult for task designers to understand total runtime expectations. No baseline metrics or profiling data justify the 6x timeout increase or validate that 3600s fits actual workload requirements.",
+      "evidence": [],
+      "file": "factory/runner.py",
+      "line_end": 212,
+      "line_start": 210,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "Add detailed comment in factory/models.py:41-55 (CoderConfig class docstring) and factory/runner.py line calculation of max_iterations:\n```\nclass CoderConfig(BaseModel):\n    ...\n    session_timeout: int = 3600  # seconds per coder iteration\n    # Per-iteration max runtime with all phases: 3600s (coder) + 300s (eval) + 600s (crucible) + 120s (evaluator) = ~4620s (77 min)\n    # Increase from 600s to handle complex refactorings; profile actual workloads before further increases\n```\nAlso add comment at line 210-212 explaining max_iterations calculation and resulting total time.",
+      "title": "Per-iteration timeout multiplier effect not documented; total runtime could exceed 4600s per iteration with all phases enabled"
+    },
+    {
+      "category": "maintainability",
+      "description": "The CoderConfig class comment for session_timeout (line 44) reads only '# seconds to wait for the agent to finish per iteration' with no context about why 3600s was chosen or what workloads require this duration. The change from 600s to 3600s is a 6x increase, but no metrics, profiling, or user feedback is documented to justify the threshold.",
+      "evidence": [
+        {
+          "location": "factory/models.py:41-55",
+          "quote": "class CoderConfig(BaseModel):\n    prompt: str\n    max_iterations: int = 3      # how many coder → eval cycles before giving up\n    session_timeout: int = 3600  # seconds to wait for the agent to finish per iteration"
+        }
+      ],
+      "file": "factory/models.py",
+      "line_end": 55,
+      "line_start": 41,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Info",
+      "suggested_fix": "Update comment to:\n`# session_timeout: int = 3600  # seconds per coder iteration (was 600s, increased to handle complex refactorings and large codebases; see #ISSUE-XXX for metrics)`",
+      "title": "CoderConfig timeout change lacks documentation of justification"
+    },
+    {
+      "category": "maintainability",
+      "description": "The CoderConfig.session_timeout was increased 6x from 600s to 3600s, but the codebase provides no explanation for why this value was chosen, what workloads require it, or what metrics/profiling data informed the decision. The comment at line 44 reads only '# seconds to wait for the agent to finish per iteration' with no context. Code reviewers and maintainers cannot assess whether 3600s is appropriate or understand when to revisit this threshold.",
+      "evidence": [],
+      "file": "factory/models.py",
+      "line_end": 55,
+      "line_start": 41,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Info",
+      "suggested_fix": "Expand the docstring/comment for session_timeout to document the rationale:\n```python\nsession_timeout: int = 3600  # seconds per coder iteration\n# Increased from 600s to accommodate complex refactorings and large codebases.\n# Examples: full-stack feature implementations, multi-file refactors, large model contexts.\n# If tasks consistently timeout before 3600s, reduce to save resources.\n# If tasks consistently exceed 3600s, profile to identify bottlenecks (e.g., eval times) before increasing further.\n# See [issue/PR link] for metrics and decision rationale.\n```",
+      "title": "CoderConfig timeout increase from 600s to 3600s lacks documented justification"
+    },
+    {
+      "category": "correctness",
+      "description": "The timeout detection at line 290 correctly checks if wait_for_status() returns 'timeout' and logs the session_timeout value in run.notes. However, this assumes wait_for_status() will always return 'timeout' when elapsed >= timeout. Verify that the polling loop in session.py line 202-224 correctly enforces the timeout boundary and does not continue looping beyond the specified timeout.",
+      "evidence": [
+        {
+          "location": "factory/session.py:202-224",
+          "quote": "while elapsed < timeout:\n    result = client.run(f\"cat {working_dir}/.factory/status 2>/dev/null\")\n    status = result.stdout.strip()\n    if status in (\"done\", \"failed\"):\n        return status\n    ...\n    time.sleep(poll_interval)\n    elapsed += poll_interval\nreturn \"timeout\""
+        },
+        {
+          "location": "factory/runner.py:290-294",
+          "quote": "if agent_status == \"timeout\":\n    run.state = RunState.failed\n    run.notes = f\"Coder timed out after {task.coder.session_timeout}s\"\n    store.save_run(run)"
+        }
+      ],
+      "file": "factory/runner.py",
+      "line_end": 298,
+      "line_start": 290,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Info",
+      "suggested_fix": "No change needed if behavior is verified. Add a comment in wait_for_status() docstring: 'Timeout enforcement: returns \"timeout\" after elapsed >= timeout. Precision: ±poll_interval (default 5s).'",
+      "title": "Timeout detection and logging is correct but relies on wait_for_status() return value"
+    },
+    {
+      "category": "performance",
+      "description": "The wait_for_status() function logs 'still running...' heartbeat every 60 seconds (line 217-220). With the new 3600s timeout, engineers will see ~60 status updates per iteration, providing good visibility into long-running tasks. This is a positive aspect of the change.",
+      "evidence": [
+        {
+          "location": "factory/session.py:217-220",
+          "quote": "if elapsed - last_heartbeat >= 60:\n            m, s = divmod(elapsed, 60)\n            _console.print(Text(f\"  still running... {m}m{s:02d}s\", style=\"dim\"))\n            last_heartbeat = elapsed"
+        }
+      ],
+      "file": "factory/session.py",
+      "line_end": 220,
+      "line_start": 217,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Info",
+      "suggested_fix": "Optional enhancement: at heartbeat intervals, capture `ps aux | grep claude` or `tmux list-sessions` stats and include in log output. This helps diagnose resource exhaustion.",
+      "title": "Heartbeat logging every 60s is good for observability; 3600s timeout will produce ~60 heartbeats per iteration"
+    }
+  ],
+  "pr_comment_markdown": "## Crucible Review Summary\n\n- Issues: 15\n- Critical: 4, Warning: 7\n\n### Top Actions\n- [Critical] Timeout parameter inconsistency across multiple code paths (<unknown>)\n- [Critical] Incomplete implementation: poller.py and session.py not updated in round-2 fix (<unknown>)\n- [Critical] Hardcoded timeout fallback not synchronized with CoderConfig default change (factory/poller.py:65)\n- [Critical] wait_for_status() default timeout parameter not synchronized with CoderConfig (factory/session.py:191)\n- [Warning] Incomplete round-2 fix misses critical Round-1 findings (<unknown>)\n- [Warning] No test coverage for timeout behavior; change relies entirely on manual end-to-end testing (<unknown>)\n- [Warning] No unit tests added for timeout behavior (Round 1 requirement) (<unknown>)\n- [Warning] No unit tests added for timeout behavior across all code paths (<unknown>)\n- [Warning] Removed explicit timeout parameter makes inline task timeout behavior implicit and hard to audit (factory/cli.py:133)\n- [Warning] Per-iteration timeout multiplier not documented; total runtime could exceed 4600s with all phases enabled (factory/runner.py:210)\n- [Warning] Per-iteration timeout multiplier effect not documented; total runtime could exceed 4600s per iteration with all phases enabled (factory/runner.py:210)\n\n### Notable Issues\n- **Timeout parameter inconsistency across multiple code paths** `<unknown>`: Three separate locations maintain timeout defaults that are not synchronized: (1) poller.py:65 has hardcoded fallback of 600s when template.coder is None, (2) session.py:191 defines wait_for_status() default parameter as 600s, and (3) cli.py:133 previously had explicit 600s but was removed. While current call sites in runner.py pass explicit timeout=task.coder.session_timeout (3600s), these orphaned defaults create maintenance hazards. Future code paths that instantiate CoderConfig or call wait_for_status() without explicit timeout arguments will silently revert to 600s instead of the intended 3600s, causing premature timeouts.\n- **Incomplete implementation: poller.py and session.py not updated in round-2 fix** `<unknown>`: Round 1 review identified four critical/warning findings requiring synchronization of timeout parameters across CoderConfig, wait_for_status(), poller fallback, and CLI. The round-2 commit only partially addressed these issues: factory/models.py:41 (CoderConfig default increased to 3600) and factory/cli.py:133 (removed hardcoded 600) were fixed, but factory/poller.py:65 and factory/session.py:191 remain unaddressed with their original 600s defaults. This leaves the fix incomplete and undermines the stated goal of 'consistency across all code paths.' Reviewers should not approve this commit until all four locations are synchronized.\n- **Hardcoded timeout fallback not synchronized with CoderConfig default change** `factory/poller.py:65`: The poller.py issue_to_task() function creates a CoderConfig with a hardcoded fallback of 600s when template.coder is None. This fallback was not updated when CoderConfig.session_timeout default was increased to 3600s in models.py. This creates a silent inconsistency: polling without an explicit coder template will use 600s instead of the new 3600s default, potentially causing premature timeouts in edge cases where templates lack coder config.\n- **wait_for_status() default timeout parameter not synchronized with CoderConfig** `factory/session.py:191`: The wait_for_status() function defines its own default parameter timeout=600 (line 191). While all current callers in runner.py explicitly pass timeout=task.coder.session_timeout (correctly using 3600s), this orphaned default creates a maintenance hazard. If future code calls wait_for_status() without an explicit timeout argument, it will silently revert to 600s instead of 3600s. This violates the single-source-of-truth principle and makes the codebase fragile to refactoring.\n- **Incomplete round-2 fix misses critical Round-1 findings** `<unknown>`: The diff addresses only 2 of the 4 critical/warning locations identified in Round 1 review. Specifically: (1) cli.py:133 fix is implemented (removed hardcoded 600), (2) models.py:41 default is increased to 3600, BUT (3) poller.py:65 is NOT fixed, and (4) session.py:191 is NOT fixed. This suggests either incomplete implementation or misunderstanding of scope. The Round 1 review explicitly required both poller.py and session.py to be updated for 'consistency across all code paths.'\n- **No test coverage for timeout behavior; change relies entirely on manual end-to-end testing** `<unknown>`: Per CLAUDE.md, 'No tests exist yet — the main way to verify changes is running a task end-to-end.' This timeout change affects critical control flow (timeout detection at line 290-298 in runner.py) but has no unit or integration tests. Edge cases like: wait_for_status() called without explicit timeout, poller creating tasks without coder template, concurrent 3600s sessions on worker, timeout message logging — none are tested. Risk of silent failures in edge paths.\n- **No unit tests added for timeout behavior (Round 1 requirement)** `<unknown>`: Round 1 flagged: 'factory/cli.py:133 Consider adding... Document the default timeout behavior clearly in the function docstring and in CLI help text' and 'Add unit tests for: (1) wait_for_status() behavior with both explicit and default timeouts, (2) issue_to_task() timeout handling with/without template coder, (3) timeout logging and RunState transition when timeout occurs, (4) resource cleanup after timeout (session kill, port release).' The diff includes zero new tests. This is concerning because: (1) timeout logic is mission-critical — incorrect timeouts cause task failures, (2) three separate timeout paths exist (CoderConfig default, wait_for_status default, poller.py fallback), (3) without tests, future refactors risk re-introducing timeout mismatches.\n- **No unit tests added for timeout behavior across all code paths** `<unknown>`: The timeout change affects mission-critical control flow (timeout detection, RunState transitions, session cleanup) but adds zero test coverage. Three separate timeout defaults exist (CoderConfig, wait_for_status(), poller.py fallback), creating three separate edge cases. Per CLAUDE.md, 'No tests exist yet — the main way to verify changes is running a task end-to-end,' which is insufficient for a 6x timeout multiplier change. Untested edge cases include: (1) wait_for_status() called without explicit timeout (uses default), (2) poller creating tasks without coder template (uses fallback), (3) concurrent 3600s sessions on worker (resource impact), (4) timeout message logging and RunState.failed transition, (5) tmux session cleanup and port release after timeout.\n- **Removed explicit timeout parameter makes inline task timeout behavior implicit and hard to audit** `factory/cli.py:133`: The commit removed `session_timeout=600` from _build_inline_task(), replacing it with reliance on the model's default (now 3600s). While this reduces duplication, it makes the timeout value implicit in the code. Code reviewers and maintainers must now consult factory/models.py to understand what timeout an inline task gets. The old explicit value was more discoverable during code review. Additionally, there is no CLI flag (e.g., `--session-timeout`) to override the timeout for individual inline tasks.\n- **Per-iteration timeout multiplier not documented; total runtime could exceed 4600s with all phases enabled** `factory/runner.py:210`: Each coder iteration gets the full session_timeout (now 3600s). With max_iterations=3 (default), that's 3 × 3600s = 10,800s for coder alone. Additionally, each iteration runs eval (300s), crucible (600s), and evaluator (120s) if enabled. Total per-iteration: 3600 + 300 + 600 + 120 = 4620s (77 minutes). The commit message and focus areas do not address whether these compounding timeouts have been validated against actual workload requirements.\n",
+  "pr_review_draft": {
+    "inline_comments": [
+      {
+        "body": "**Removed explicit timeout parameter makes inline task timeout behavior implicit and hard to audit**\n\nThe commit removed `session_timeout=600` from _build_inline_task(), replacing it with reliance on the model's default (now 3600s). While this reduces duplication, it makes the timeout value implicit in the code. Code reviewers and maintainers must now consult factory/models.py to understand what timeout an inline task gets. The old explicit value was more discoverable during code review. Additionally, there is no CLI flag (e.g., `--session-timeout`) to override the timeout for individual inline tasks.\n\nRaised by: claude-code\n\nSuggested fix: Add optional `session_timeout: Optional[int] = None` parameter to _build_inline_task(). If provided, pass it to CoderConfig(); if None, use the model default. Expose via CLI with `typer.Option(None, '--session-timeout', help=...)`. Add docstring: 'session_timeout: Max seconds per coder iteration (default: 3600 from CoderConfig)'",
+        "category": "maintainability",
+        "description": "The commit removed `session_timeout=600` from _build_inline_task(), replacing it with reliance on the model's default (now 3600s). While this reduces duplication, it makes the timeout value implicit in the code. Code reviewers and maintainers must now consult factory/models.py to understand what timeout an inline task gets. The old explicit value was more discoverable during code review. Additionally, there is no CLI flag (e.g., `--session-timeout`) to override the timeout for individual inline tasks.",
+        "line": 133,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/cli.py",
+        "severity": "Warning",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "Removed explicit timeout parameter makes inline task timeout behavior implicit and hard to audit"
+      },
+      {
+        "body": "**CoderConfig timeout change lacks documentation of justification**\n\nThe CoderConfig class comment for session_timeout (line 44) reads only '# seconds to wait for the agent to finish per iteration' with no context about why 3600s was chosen or what workloads require this duration. The change from 600s to 3600s is a 6x increase, but no metrics, profiling, or user feedback is documented to justify the threshold.\n\nRaised by: claude-code\n\nSuggested fix: Update comment to:\n`# session_timeout: int = 3600  # seconds per coder iteration (was 600s, increased to handle complex refactorings and large codebases; see #ISSUE-XXX for metrics)`",
+        "category": "maintainability",
+        "description": "The CoderConfig class comment for session_timeout (line 44) reads only '# seconds to wait for the agent to finish per iteration' with no context about why 3600s was chosen or what workloads require this duration. The change from 600s to 3600s is a 6x increase, but no metrics, profiling, or user feedback is documented to justify the threshold.",
+        "line": 41,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/models.py",
+        "severity": "Info",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "CoderConfig timeout change lacks documentation of justification"
+      },
+      {
+        "body": "**CoderConfig timeout increase from 600s to 3600s lacks documented justification**\n\nThe CoderConfig.session_timeout was increased 6x from 600s to 3600s, but the codebase provides no explanation for why this value was chosen, what workloads require it, or what metrics/profiling data informed the decision. The comment at line 44 reads only '# seconds to wait for the agent to finish per iteration' with no context. Code reviewers and maintainers cannot assess whether 3600s is appropriate or understand when to revisit this threshold.\n\nRaised by: claude-code\n\nSuggested fix: Expand the docstring/comment for session_timeout to document the rationale:\n```python\nsession_timeout: int = 3600  # seconds per coder iteration\n# Increased from 600s to accommodate complex refactorings and large codebases.\n# Examples: full-stack feature implementations, multi-file refactors, large model contexts.\n# If tasks consistently timeout before 3600s, reduce to save resources.\n# If tasks consistently exceed 3600s, profile to identify bottlenecks (e.g., eval times) before increasing further.\n# See [issue/PR link] for metrics and decision rationale.\n```",
+        "category": "maintainability",
+        "description": "The CoderConfig.session_timeout was increased 6x from 600s to 3600s, but the codebase provides no explanation for why this value was chosen, what workloads require it, or what metrics/profiling data informed the decision. The comment at line 44 reads only '# seconds to wait for the agent to finish per iteration' with no context. Code reviewers and maintainers cannot assess whether 3600s is appropriate or understand when to revisit this threshold.",
+        "line": 41,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/models.py",
+        "severity": "Info",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "CoderConfig timeout increase from 600s to 3600s lacks documented justification"
+      }
+    ],
+    "overview_comment": {
+      "body": "## Crucible Review Summary\n\n- Issues: 15\n- Critical: 4, Warning: 7\n\n### Top Actions\n- [Critical] Timeout parameter inconsistency across multiple code paths (<unknown>)\n- [Critical] Incomplete implementation: poller.py and session.py not updated in round-2 fix (<unknown>)\n- [Critical] Hardcoded timeout fallback not synchronized with CoderConfig default change (factory/poller.py:65)\n- [Critical] wait_for_status() default timeout parameter not synchronized with CoderConfig (factory/session.py:191)\n- [Warning] Incomplete round-2 fix misses critical Round-1 findings (<unknown>)\n- [Warning] No test coverage for timeout behavior; change relies entirely on manual end-to-end testing (<unknown>)\n- [Warning] No unit tests added for timeout behavior (Round 1 requirement) (<unknown>)\n- [Warning] No unit tests added for timeout behavior across all code paths (<unknown>)\n- [Warning] Removed explicit timeout parameter makes inline task timeout behavior implicit and hard to audit (factory/cli.py:133)\n- [Warning] Per-iteration timeout multiplier not documented; total runtime could exceed 4600s with all phases enabled (factory/runner.py:210)\n- [Warning] Per-iteration timeout multiplier effect not documented; total runtime could exceed 4600s per iteration with all phases enabled (factory/runner.py:210)\n\n### Notable Issues\n- **Timeout parameter inconsistency across multiple code paths** `<unknown>`: Three separate locations maintain timeout defaults that are not synchronized: (1) poller.py:65 has hardcoded fallback of 600s when template.coder is None, (2) session.py:191 defines wait_for_status() default parameter as 600s, and (3) cli.py:133 previously had explicit 600s but was removed. While current call sites in runner.py pass explicit timeout=task.coder.session_timeout (3600s), these orphaned defaults create maintenance hazards. Future code paths that instantiate CoderConfig or call wait_for_status() without explicit timeout arguments will silently revert to 600s instead of the intended 3600s, causing premature timeouts.\n- **Incomplete implementation: poller.py and session.py not updated in round-2 fix** `<unknown>`: Round 1 review identified four critical/warning findings requiring synchronization of timeout parameters across CoderConfig, wait_for_status(), poller fallback, and CLI. The round-2 commit only partially addressed these issues: factory/models.py:41 (CoderConfig default increased to 3600) and factory/cli.py:133 (removed hardcoded 600) were fixed, but factory/poller.py:65 and factory/session.py:191 remain unaddressed with their original 600s defaults. This leaves the fix incomplete and undermines the stated goal of 'consistency across all code paths.' Reviewers should not approve this commit until all four locations are synchronized.\n- **Hardcoded timeout fallback not synchronized with CoderConfig default change** `factory/poller.py:65`: The poller.py issue_to_task() function creates a CoderConfig with a hardcoded fallback of 600s when template.coder is None. This fallback was not updated when CoderConfig.session_timeout default was increased to 3600s in models.py. This creates a silent inconsistency: polling without an explicit coder template will use 600s instead of the new 3600s default, potentially causing premature timeouts in edge cases where templates lack coder config.\n- **wait_for_status() default timeout parameter not synchronized with CoderConfig** `factory/session.py:191`: The wait_for_status() function defines its own default parameter timeout=600 (line 191). While all current callers in runner.py explicitly pass timeout=task.coder.session_timeout (correctly using 3600s), this orphaned default creates a maintenance hazard. If future code calls wait_for_status() without an explicit timeout argument, it will silently revert to 600s instead of 3600s. This violates the single-source-of-truth principle and makes the codebase fragile to refactoring.\n- **Incomplete round-2 fix misses critical Round-1 findings** `<unknown>`: The diff addresses only 2 of the 4 critical/warning locations identified in Round 1 review. Specifically: (1) cli.py:133 fix is implemented (removed hardcoded 600), (2) models.py:41 default is increased to 3600, BUT (3) poller.py:65 is NOT fixed, and (4) session.py:191 is NOT fixed. This suggests either incomplete implementation or misunderstanding of scope. The Round 1 review explicitly required both poller.py and session.py to be updated for 'consistency across all code paths.'\n- **No test coverage for timeout behavior; change relies entirely on manual end-to-end testing** `<unknown>`: Per CLAUDE.md, 'No tests exist yet — the main way to verify changes is running a task end-to-end.' This timeout change affects critical control flow (timeout detection at line 290-298 in runner.py) but has no unit or integration tests. Edge cases like: wait_for_status() called without explicit timeout, poller creating tasks without coder template, concurrent 3600s sessions on worker, timeout message logging — none are tested. Risk of silent failures in edge paths.\n- **No unit tests added for timeout behavior (Round 1 requirement)** `<unknown>`: Round 1 flagged: 'factory/cli.py:133 Consider adding... Document the default timeout behavior clearly in the function docstring and in CLI help text' and 'Add unit tests for: (1) wait_for_status() behavior with both explicit and default timeouts, (2) issue_to_task() timeout handling with/without template coder, (3) timeout logging and RunState transition when timeout occurs, (4) resource cleanup after timeout (session kill, port release).' The diff includes zero new tests. This is concerning because: (1) timeout logic is mission-critical — incorrect timeouts cause task failures, (2) three separate timeout paths exist (CoderConfig default, wait_for_status default, poller.py fallback), (3) without tests, future refactors risk re-introducing timeout mismatches.\n- **No unit tests added for timeout behavior across all code paths** `<unknown>`: The timeout change affects mission-critical control flow (timeout detection, RunState transitions, session cleanup) but adds zero test coverage. Three separate timeout defaults exist (CoderConfig, wait_for_status(), poller.py fallback), creating three separate edge cases. Per CLAUDE.md, 'No tests exist yet — the main way to verify changes is running a task end-to-end,' which is insufficient for a 6x timeout multiplier change. Untested edge cases include: (1) wait_for_status() called without explicit timeout (uses default), (2) poller creating tasks without coder template (uses fallback), (3) concurrent 3600s sessions on worker (resource impact), (4) timeout message logging and RunState.failed transition, (5) tmux session cleanup and port release after timeout.\n- **Removed explicit timeout parameter makes inline task timeout behavior implicit and hard to audit** `factory/cli.py:133`: The commit removed `session_timeout=600` from _build_inline_task(), replacing it with reliance on the model's default (now 3600s). While this reduces duplication, it makes the timeout value implicit in the code. Code reviewers and maintainers must now consult factory/models.py to understand what timeout an inline task gets. The old explicit value was more discoverable during code review. Additionally, there is no CLI flag (e.g., `--session-timeout`) to override the timeout for individual inline tasks.\n- **Per-iteration timeout multiplier not documented; total runtime could exceed 4600s with all phases enabled** `factory/runner.py:210`: Each coder iteration gets the full session_timeout (now 3600s). With max_iterations=3 (default), that's 3 × 3600s = 10,800s for coder alone. Additionally, each iteration runs eval (300s), crucible (600s), and evaluator (120s) if enabled. Total per-iteration: 3600 + 300 + 600 + 120 = 4620s (77 minutes). The commit message and focus areas do not address whether these compounding timeouts have been validated against actual workload requirements.\n"
+    },
+    "overview_only_comments": [
+      {
+        "body": "**Timeout parameter inconsistency across multiple code paths**\n\nThree separate locations maintain timeout defaults that are not synchronized: (1) poller.py:65 has hardcoded fallback of 600s when template.coder is None, (2) session.py:191 defines wait_for_status() default parameter as 600s, and (3) cli.py:133 previously had explicit 600s but was removed. While current call sites in runner.py pass explicit timeout=task.coder.session_timeout (3600s), these orphaned defaults create maintenance hazards. Future code paths that instantiate CoderConfig or call wait_for_status() without explicit timeout arguments will silently revert to 600s instead of the intended 3600s, causing premature timeouts.\n\nRaised by: claude-code\n\nSuggested fix: (1) Update factory/poller.py:65 from `session_timeout=template.coder.session_timeout if template.coder else 600,` to `session_timeout=template.coder.session_timeout if template.coder else 3600,`. (2) Remove default value from factory/session.py:191: change `timeout: int = 600,` to `timeout: int,` and ensure all callers explicitly pass timeout. (3) Verify no other hardcoded 600s or timeout defaults exist via: `grep -rn '\\b600\\b' factory/ | grep -i timeout`",
+        "category": "correctness",
+        "description": "Three separate locations maintain timeout defaults that are not synchronized: (1) poller.py:65 has hardcoded fallback of 600s when template.coder is None, (2) session.py:191 defines wait_for_status() default parameter as 600s, and (3) cli.py:133 previously had explicit 600s but was removed. While current call sites in runner.py pass explicit timeout=task.coder.session_timeout (3600s), these orphaned defaults create maintenance hazards. Future code paths that instantiate CoderConfig or call wait_for_status() without explicit timeout arguments will silently revert to 600s instead of the intended 3600s, causing premature timeouts.",
+        "line": null,
+        "mapping_note": "Issue could not be mapped to a changed diff hunk",
+        "mapping_status": "OverviewOnly",
+        "path": null,
+        "severity": "Critical",
+        "side": null,
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "Timeout parameter inconsistency across multiple code paths"
+      },
+      {
+        "body": "**Incomplete implementation: poller.py and session.py not updated in round-2 fix**\n\nRound 1 review identified four critical/warning findings requiring synchronization of timeout parameters across CoderConfig, wait_for_status(), poller fallback, and CLI. The round-2 commit only partially addressed these issues: factory/models.py:41 (CoderConfig default increased to 3600) and factory/cli.py:133 (removed hardcoded 600) were fixed, but factory/poller.py:65 and factory/session.py:191 remain unaddressed with their original 600s defaults. This leaves the fix incomplete and undermines the stated goal of 'consistency across all code paths.' Reviewers should not approve this commit until all four locations are synchronized.\n\nRaised by: claude-code\n\nSuggested fix: Complete the fix by addressing the two remaining locations: (1) poller.py:65 and (2) session.py:191 (see previous issue for details). Add a comment in the commit message: 'Synchronize timeout defaults across CoderConfig, wait_for_status(), poller.issue_to_task(), and CLI to prevent silent timeout mismatches in edge code paths.'",
+        "category": "correctness",
+        "description": "Round 1 review identified four critical/warning findings requiring synchronization of timeout parameters across CoderConfig, wait_for_status(), poller fallback, and CLI. The round-2 commit only partially addressed these issues: factory/models.py:41 (CoderConfig default increased to 3600) and factory/cli.py:133 (removed hardcoded 600) were fixed, but factory/poller.py:65 and factory/session.py:191 remain unaddressed with their original 600s defaults. This leaves the fix incomplete and undermines the stated goal of 'consistency across all code paths.' Reviewers should not approve this commit until all four locations are synchronized.",
+        "line": null,
+        "mapping_note": "Issue could not be mapped to a changed diff hunk",
+        "mapping_status": "OverviewOnly",
+        "path": null,
+        "severity": "Critical",
+        "side": null,
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "Incomplete implementation: poller.py and session.py not updated in round-2 fix"
+      },
+      {
+        "body": "**Hardcoded timeout fallback not synchronized with CoderConfig default change**\n\nThe poller.py issue_to_task() function creates a CoderConfig with a hardcoded fallback of 600s when template.coder is None. This fallback was not updated when CoderConfig.session_timeout default was increased to 3600s in models.py. This creates a silent inconsistency: polling without an explicit coder template will use 600s instead of the new 3600s default, potentially causing premature timeouts in edge cases where templates lack coder config.\n\nRaised by: claude-code\n\nSuggested fix: Change line 65 from `session_timeout=template.coder.session_timeout if template.coder else 600,` to `session_timeout=template.coder.session_timeout if template.coder else 3600,`",
+        "category": "correctness",
+        "description": "The poller.py issue_to_task() function creates a CoderConfig with a hardcoded fallback of 600s when template.coder is None. This fallback was not updated when CoderConfig.session_timeout default was increased to 3600s in models.py. This creates a silent inconsistency: polling without an explicit coder template will use 600s instead of the new 3600s default, potentially causing premature timeouts in edge cases where templates lack coder config.",
+        "line": null,
+        "mapping_note": "Issue could not be mapped to a changed diff hunk",
+        "mapping_status": "OverviewOnly",
+        "path": "factory/poller.py",
+        "severity": "Critical",
+        "side": null,
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "Hardcoded timeout fallback not synchronized with CoderConfig default change"
+      },
+      {
+        "body": "**wait_for_status() default timeout parameter not synchronized with CoderConfig**\n\nThe wait_for_status() function defines its own default parameter timeout=600 (line 191). While all current callers in runner.py explicitly pass timeout=task.coder.session_timeout (correctly using 3600s), this orphaned default creates a maintenance hazard. If future code calls wait_for_status() without an explicit timeout argument, it will silently revert to 600s instead of 3600s. This violates the single-source-of-truth principle and makes the codebase fragile to refactoring.\n\nRaised by: claude-code\n\nSuggested fix: Remove the default value from line 191: change `timeout: int = 600,` to `timeout: int,` and ensure all callers explicitly pass the timeout. Alternatively, update default to 3600 for safety, but this creates a second source of truth that can drift.",
+        "category": "correctness",
+        "description": "The wait_for_status() function defines its own default parameter timeout=600 (line 191). While all current callers in runner.py explicitly pass timeout=task.coder.session_timeout (correctly using 3600s), this orphaned default creates a maintenance hazard. If future code calls wait_for_status() without an explicit timeout argument, it will silently revert to 600s instead of 3600s. This violates the single-source-of-truth principle and makes the codebase fragile to refactoring.",
+        "line": null,
+        "mapping_note": "Issue could not be mapped to a changed diff hunk",
+        "mapping_status": "OverviewOnly",
+        "path": "factory/session.py",
+        "severity": "Critical",
+        "side": null,
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "wait_for_status() default timeout parameter not synchronized with CoderConfig"
+      },
+      {
+        "body": "**Incomplete round-2 fix misses critical Round-1 findings**\n\nThe diff addresses only 2 of the 4 critical/warning locations identified in Round 1 review. Specifically: (1) cli.py:133 fix is implemented (removed hardcoded 600), (2) models.py:41 default is increased to 3600, BUT (3) poller.py:65 is NOT fixed, and (4) session.py:191 is NOT fixed. This suggests either incomplete implementation or misunderstanding of scope. The Round 1 review explicitly required both poller.py and session.py to be updated for 'consistency across all code paths.'\n\nRaised by: claude-code\n\nSuggested fix: Complete the fix by: (1) updating poller.py:65 fallback from 600 to 3600, and (2) synchronizing session.py:191 default parameter (either to 3600 or removing the default). Verify all code paths by grepping for '600' and 'timeout' in the codebase.",
+        "category": "correctness",
+        "description": "The diff addresses only 2 of the 4 critical/warning locations identified in Round 1 review. Specifically: (1) cli.py:133 fix is implemented (removed hardcoded 600), (2) models.py:41 default is increased to 3600, BUT (3) poller.py:65 is NOT fixed, and (4) session.py:191 is NOT fixed. This suggests either incomplete implementation or misunderstanding of scope. The Round 1 review explicitly required both poller.py and session.py to be updated for 'consistency across all code paths.'",
+        "line": null,
+        "mapping_note": "Issue could not be mapped to a changed diff hunk",
+        "mapping_status": "OverviewOnly",
+        "path": null,
+        "severity": "Warning",
+        "side": null,
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "Incomplete round-2 fix misses critical Round-1 findings"
+      },
+      {
+        "body": "**No test coverage for timeout behavior; change relies entirely on manual end-to-end testing**\n\nPer CLAUDE.md, 'No tests exist yet — the main way to verify changes is running a task end-to-end.' This timeout change affects critical control flow (timeout detection at line 290-298 in runner.py) but has no unit or integration tests. Edge cases like: wait_for_status() called without explicit timeout, poller creating tasks without coder template, concurrent 3600s sessions on worker, timeout message logging — none are tested. Risk of silent failures in edge paths.\n\nRaised by: claude-code\n\nSuggested fix: Create factory/tests/test_timeout.py with fixtures for mocked SSHClient, test cases for: test_wait_for_status_explicit_timeout, test_wait_for_status_default_fallback, test_issue_to_task_timeout_without_coder_template, test_runner_timeout_state_transition, test_session_cleanup_on_timeout. Run tests in CI before merging timeout changes.",
+        "category": "testing",
+        "description": "Per CLAUDE.md, 'No tests exist yet — the main way to verify changes is running a task end-to-end.' This timeout change affects critical control flow (timeout detection at line 290-298 in runner.py) but has no unit or integration tests. Edge cases like: wait_for_status() called without explicit timeout, poller creating tasks without coder template, concurrent 3600s sessions on worker, timeout message logging — none are tested. Risk of silent failures in edge paths.",
+        "line": null,
+        "mapping_note": "Issue could not be mapped to a changed diff hunk",
+        "mapping_status": "OverviewOnly",
+        "path": null,
+        "severity": "Warning",
+        "side": null,
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "No test coverage for timeout behavior; change relies entirely on manual end-to-end testing"
+      },
+      {
+        "body": "**No unit tests added for timeout behavior (Round 1 requirement)**\n\nRound 1 flagged: 'factory/cli.py:133 Consider adding... Document the default timeout behavior clearly in the function docstring and in CLI help text' and 'Add unit tests for: (1) wait_for_status() behavior with both explicit and default timeouts, (2) issue_to_task() timeout handling with/without template coder, (3) timeout logging and RunState transition when timeout occurs, (4) resource cleanup after timeout (session kill, port release).' The diff includes zero new tests. This is concerning because: (1) timeout logic is mission-critical — incorrect timeouts cause task failures, (2) three separate timeout paths exist (CoderConfig default, wait_for_status default, poller.py fallback), (3) without tests, future refactors risk re-introducing timeout mismatches.\n\nRaised by: claude-code\n\nSuggested fix: Add unit tests in a new file (e.g., test/test_timeouts.py or tests in an existing test suite) covering: (1) CoderConfig instantiation with and without explicit session_timeout, (2) issue_to_task() creating CoderConfig with/without template.coder, (3) wait_for_status() called with explicit timeout vs. using default, (4) runner.py polling loop correctly passing timeout from CoderConfig to wait_for_status, (5) timeout handling in poller.py fallback. Example: `assert CoderConfig(prompt='test').session_timeout == 3600; assert issue_to_task(..., None).coder.session_timeout == 3600 [after fix]; assert wait_for_status(..., timeout=600) respects 600 override.`",
+        "category": "testing",
+        "description": "Round 1 flagged: 'factory/cli.py:133 Consider adding... Document the default timeout behavior clearly in the function docstring and in CLI help text' and 'Add unit tests for: (1) wait_for_status() behavior with both explicit and default timeouts, (2) issue_to_task() timeout handling with/without template coder, (3) timeout logging and RunState transition when timeout occurs, (4) resource cleanup after timeout (session kill, port release).' The diff includes zero new tests. This is concerning because: (1) timeout logic is mission-critical — incorrect timeouts cause task failures, (2) three separate timeout paths exist (CoderConfig default, wait_for_status default, poller.py fallback), (3) without tests, future refactors risk re-introducing timeout mismatches.",
+        "line": null,
+        "mapping_note": "Issue could not be mapped to a changed diff hunk",
+        "mapping_status": "OverviewOnly",
+        "path": null,
+        "severity": "Warning",
+        "side": null,
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "No unit tests added for timeout behavior (Round 1 requirement)"
+      },
+      {
+        "body": "**No unit tests added for timeout behavior across all code paths**\n\nThe timeout change affects mission-critical control flow (timeout detection, RunState transitions, session cleanup) but adds zero test coverage. Three separate timeout defaults exist (CoderConfig, wait_for_status(), poller.py fallback), creating three separate edge cases. Per CLAUDE.md, 'No tests exist yet — the main way to verify changes is running a task end-to-end,' which is insufficient for a 6x timeout multiplier change. Untested edge cases include: (1) wait_for_status() called without explicit timeout (uses default), (2) poller creating tasks without coder template (uses fallback), (3) concurrent 3600s sessions on worker (resource impact), (4) timeout message logging and RunState.failed transition, (5) tmux session cleanup and port release after timeout.\n\nRaised by: claude-code\n\nSuggested fix: Create factory/tests/test_timeout.py with unit tests covering: (1) `test_coder_config_default_timeout()` — assert CoderConfig().session_timeout == 3600, (2) `test_wait_for_status_explicit_timeout()` — mock SSHClient, verify wait_for_status(..., timeout=600) respects override, (3) `test_wait_for_status_default_timeout()` — after removing default, assert function requires explicit timeout, (4) `test_issue_to_task_timeout_with_coder_template()` — verify timeout comes from template, (5) `test_issue_to_task_timeout_without_coder_template()` — after fix, verify fallback is 3600, (6) `test_runner_timeout_state_transition()` — mock session returning 'timeout', verify RunState.failed and run.notes set correctly. Run in CI before merging.",
+        "category": "testing",
+        "description": "The timeout change affects mission-critical control flow (timeout detection, RunState transitions, session cleanup) but adds zero test coverage. Three separate timeout defaults exist (CoderConfig, wait_for_status(), poller.py fallback), creating three separate edge cases. Per CLAUDE.md, 'No tests exist yet — the main way to verify changes is running a task end-to-end,' which is insufficient for a 6x timeout multiplier change. Untested edge cases include: (1) wait_for_status() called without explicit timeout (uses default), (2) poller creating tasks without coder template (uses fallback), (3) concurrent 3600s sessions on worker (resource impact), (4) timeout message logging and RunState.failed transition, (5) tmux session cleanup and port release after timeout.",
+        "line": null,
+        "mapping_note": "Issue could not be mapped to a changed diff hunk",
+        "mapping_status": "OverviewOnly",
+        "path": null,
+        "severity": "Warning",
+        "side": null,
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "No unit tests added for timeout behavior across all code paths"
+      },
+      {
+        "body": "**Per-iteration timeout multiplier not documented; total runtime could exceed 4600s with all phases enabled**\n\nEach coder iteration gets the full session_timeout (now 3600s). With max_iterations=3 (default), that's 3 × 3600s = 10,800s for coder alone. Additionally, each iteration runs eval (300s), crucible (600s), and evaluator (120s) if enabled. Total per-iteration: 3600 + 300 + 600 + 120 = 4620s (77 minutes). The commit message and focus areas do not address whether these compounding timeouts have been validated against actual workload requirements.\n\nRaised by: claude-code\n\nSuggested fix: Add a comment in CoderConfig docstring: '# Per-iteration timeout. With eval (300s), crucible (600s), evaluator (120s), total max per iteration ~4620s. Set conservatively; actual durations vary by model, effort, and task complexity.' Collect runtime metrics to validate 3600s sufficiency.",
+        "category": "correctness",
+        "description": "Each coder iteration gets the full session_timeout (now 3600s). With max_iterations=3 (default), that's 3 × 3600s = 10,800s for coder alone. Additionally, each iteration runs eval (300s), crucible (600s), and evaluator (120s) if enabled. Total per-iteration: 3600 + 300 + 600 + 120 = 4620s (77 minutes). The commit message and focus areas do not address whether these compounding timeouts have been validated against actual workload requirements.",
+        "line": null,
+        "mapping_note": "Issue could not be mapped to a changed diff hunk",
+        "mapping_status": "OverviewOnly",
+        "path": "factory/runner.py",
+        "severity": "Warning",
+        "side": null,
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "Per-iteration timeout multiplier not documented; total runtime could exceed 4600s with all phases enabled"
+      },
+      {
+        "body": "**Per-iteration timeout multiplier effect not documented; total runtime could exceed 4600s per iteration with all phases enabled**\n\nEach coder iteration gets the full session_timeout (now 3600s). With max_iterations=3 (default), coder alone runs for up to 3 × 3600s = 10,800s. Additionally, each iteration triggers eval (300s), crucible (600s), and evaluator (120s) if enabled. Total per-iteration: 3600 + 300 + 600 + 120 = 4620s (77 minutes). The commit and code comments do not document these compounding timeouts, which makes it difficult for task designers to understand total runtime expectations. No baseline metrics or profiling data justify the 6x timeout increase or validate that 3600s fits actual workload requirements.\n\nRaised by: claude-code\n\nSuggested fix: Add detailed comment in factory/models.py:41-55 (CoderConfig class docstring) and factory/runner.py line calculation of max_iterations:\n```\nclass CoderConfig(BaseModel):\n    ...\n    session_timeout: int = 3600  # seconds per coder iteration\n    # Per-iteration max runtime with all phases: 3600s (coder) + 300s (eval) + 600s (crucible) + 120s (evaluator) = ~4620s (77 min)\n    # Increase from 600s to handle complex refactorings; profile actual workloads before further increases\n```\nAlso add comment at line 210-212 explaining max_iterations calculation and resulting total time.",
+        "category": "maintainability",
+        "description": "Each coder iteration gets the full session_timeout (now 3600s). With max_iterations=3 (default), coder alone runs for up to 3 × 3600s = 10,800s. Additionally, each iteration triggers eval (300s), crucible (600s), and evaluator (120s) if enabled. Total per-iteration: 3600 + 300 + 600 + 120 = 4620s (77 minutes). The commit and code comments do not document these compounding timeouts, which makes it difficult for task designers to understand total runtime expectations. No baseline metrics or profiling data justify the 6x timeout increase or validate that 3600s fits actual workload requirements.",
+        "line": null,
+        "mapping_note": "Issue could not be mapped to a changed diff hunk",
+        "mapping_status": "OverviewOnly",
+        "path": "factory/runner.py",
+        "severity": "Warning",
+        "side": null,
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "Per-iteration timeout multiplier effect not documented; total runtime could exceed 4600s per iteration with all phases enabled"
+      },
+      {
+        "body": "**Timeout detection and logging is correct but relies on wait_for_status() return value**\n\nThe timeout detection at line 290 correctly checks if wait_for_status() returns 'timeout' and logs the session_timeout value in run.notes. However, this assumes wait_for_status() will always return 'timeout' when elapsed >= timeout. Verify that the polling loop in session.py line 202-224 correctly enforces the timeout boundary and does not continue looping beyond the specified timeout.\n\nRaised by: claude-code\n\nSuggested fix: No change needed if behavior is verified. Add a comment in wait_for_status() docstring: 'Timeout enforcement: returns \"timeout\" after elapsed >= timeout. Precision: ±poll_interval (default 5s).'",
+        "category": "correctness",
+        "description": "The timeout detection at line 290 correctly checks if wait_for_status() returns 'timeout' and logs the session_timeout value in run.notes. However, this assumes wait_for_status() will always return 'timeout' when elapsed >= timeout. Verify that the polling loop in session.py line 202-224 correctly enforces the timeout boundary and does not continue looping beyond the specified timeout.",
+        "line": null,
+        "mapping_note": "Issue could not be mapped to a changed diff hunk",
+        "mapping_status": "OverviewOnly",
+        "path": "factory/runner.py",
+        "severity": "Info",
+        "side": null,
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "Timeout detection and logging is correct but relies on wait_for_status() return value"
+      },
+      {
+        "body": "**Heartbeat logging every 60s is good for observability; 3600s timeout will produce ~60 heartbeats per iteration**\n\nThe wait_for_status() function logs 'still running...' heartbeat every 60 seconds (line 217-220). With the new 3600s timeout, engineers will see ~60 status updates per iteration, providing good visibility into long-running tasks. This is a positive aspect of the change.\n\nRaised by: claude-code\n\nSuggested fix: Optional enhancement: at heartbeat intervals, capture `ps aux | grep claude` or `tmux list-sessions` stats and include in log output. This helps diagnose resource exhaustion.",
+        "category": "performance",
+        "description": "The wait_for_status() function logs 'still running...' heartbeat every 60 seconds (line 217-220). With the new 3600s timeout, engineers will see ~60 status updates per iteration, providing good visibility into long-running tasks. This is a positive aspect of the change.",
+        "line": null,
+        "mapping_note": "Issue could not be mapped to a changed diff hunk",
+        "mapping_status": "OverviewOnly",
+        "path": "factory/session.py",
+        "severity": "Info",
+        "side": null,
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "Heartbeat logging every 60s is good for observability; 3600s timeout will produce ~60 heartbeats per iteration"
+      }
+    ]
+  },
+  "run_id": "ed4095dc-a46d-44f9-b391-25ebda5faa7b",
+  "session_id": "ed4095dc-a46d-44f9-b391-25ebda5faa7b",
+  "system_context_markdown": "### System Context\n- Changed files: 2\n- Reference snippets: 0\n- History commits: 18\n- Docs snippets: 1\n- Deterministic prechecks: 2\n- Affected files:\n  - factory/cli.py\n  - factory/models.py\n- Precheck results:\n  - untangle-analyze-report [Fail] error: unexpected argument '.' found\n\nUsage: untangle analyze [OPTIONS] <PATH>\n\nFor more information, try '--help'.\n  - untangle-quality-report [Fail] error: unrecognized subcommand 'quality'\n\nUsage: untangle <COMMAND>\n\nFor more information, try '--help'.\n",
+  "verdict": "Block"
+}
+[run:ed4095dc-a46d-44f9-b391-25ebda5faa7b]
+[2026-05-18 12:03:50.227 +10:00] [final-analysis]
+## Final Analysis
+
+- Issues: 15 (Critical: 4, Warning: 7, Info: 4)
+- Agent failures: 0
+
+### Top Issues
+- [Critical] Timeout parameter inconsistency across multiple code paths `<unknown>`
+- [Critical] Incomplete implementation: poller.py and session.py not updated in round-2 fix `<unknown>`
+- [Critical] Hardcoded timeout fallback not synchronized with CoderConfig default change `factory/poller.py:65`
+- [Critical] wait_for_status() default timeout parameter not synchronized with CoderConfig `factory/session.py:191`
+- [Warning] Incomplete round-2 fix misses critical Round-1 findings `<unknown>`
+- [Warning] No test coverage for timeout behavior; change relies entirely on manual end-to-end testing `<unknown>`
+- [Warning] No unit tests added for timeout behavior (Round 1 requirement) `<unknown>`
+- [Warning] No unit tests added for timeout behavior across all code paths `<unknown>`
+- [Warning] Removed explicit timeout parameter makes inline task timeout behavior implicit and hard to audit `factory/cli.py:133`
+- [Warning] Per-iteration timeout multiplier not documented; total runtime could exceed 4600s with all phases enabled `factory/runner.py:210`
+
+### Action Plan
+- [Critical] Timeout parameter inconsistency across multiple code paths (<unknown>)
+- [Critical] Incomplete implementation: poller.py and session.py not updated in round-2 fix (<unknown>)
+- [Critical] Hardcoded timeout fallback not synchronized with CoderConfig default change (factory/poller.py:65)
+- [Critical] wait_for_status() default timeout parameter not synchronized with CoderConfig (factory/session.py:191)
+- [Warning] Incomplete round-2 fix misses critical Round-1 findings (<unknown>)
+- [Warning] No test coverage for timeout behavior; change relies entirely on manual end-to-end testing (<unknown>)
+- [Warning] No unit tests added for timeout behavior (Round 1 requirement) (<unknown>)
+- [Warning] No unit tests added for timeout behavior across all code paths (<unknown>)
+- [Warning] Removed explicit timeout parameter makes inline task timeout behavior implicit and hard to audit (factory/cli.py:133)
+- [Warning] Per-iteration timeout multiplier not documented; total runtime could exceed 4600s with all phases enabled (factory/runner.py:210)
+- [Warning] Per-iteration timeout multiplier effect not documented; total runtime could exceed 4600s per iteration with all phases enabled (factory/runner.py:210)
+
+[2026-05-18 12:03:50.227 +10:00] [pr-comment]
+## Crucible Review Summary
+
+- Issues: 15
+- Critical: 4, Warning: 7
+
+### Top Actions
+- [Critical] Timeout parameter inconsistency across multiple code paths (<unknown>)
+- [Critical] Incomplete implementation: poller.py and session.py not updated in round-2 fix (<unknown>)
+- [Critical] Hardcoded timeout fallback not synchronized with CoderConfig default change (factory/poller.py:65)
+- [Critical] wait_for_status() default timeout parameter not synchronized with CoderConfig (factory/session.py:191)
+- [Warning] Incomplete round-2 fix misses critical Round-1 findings (<unknown>)
+- [Warning] No test coverage for timeout behavior; change relies entirely on manual end-to-end testing (<unknown>)
+- [Warning] No unit tests added for timeout behavior (Round 1 requirement) (<unknown>)
+- [Warning] No unit tests added for timeout behavior across all code paths (<unknown>)
+- [Warning] Removed explicit timeout parameter makes inline task timeout behavior implicit and hard to audit (factory/cli.py:133)
+- [Warning] Per-iteration timeout multiplier not documented; total runtime could exceed 4600s with all phases enabled (factory/runner.py:210)
+- [Warning] Per-iteration timeout multiplier effect not documented; total runtime could exceed 4600s per iteration with all phases enabled (factory/runner.py:210)
+
+### Notable Issues
+- **Timeout parameter inconsistency across multiple code paths** `<unknown>`: Three separate locations maintain timeout defaults that are not synchronized: (1) poller.py:65 has hardcoded fallback of 600s when template.coder is None, (2) session.py:191 defines wait_for_status() default parameter as 600s, and (3) cli.py:133 previously had explicit 600s but was removed. While current call sites in runner.py pass explicit timeout=task.coder.session_timeout (3600s), these orphaned defaults create maintenance hazards. Future code paths that instantiate CoderConfig or call wait_for_status() without explicit timeout arguments will silently revert to 600s instead of the intended 3600s, causing premature timeouts.
+- **Incomplete implementation: poller.py and session.py not updated in round-2 fix** `<unknown>`: Round 1 review identified four critical/warning findings requiring synchronization of timeout parameters across CoderConfig, wait_for_status(), poller fallback, and CLI. The round-2 commit only partially addressed these issues: factory/models.py:41 (CoderConfig default increased to 3600) and factory/cli.py:133 (removed hardcoded 600) were fixed, but factory/poller.py:65 and factory/session.py:191 remain unaddressed with their original 600s defaults. This leaves the fix incomplete and undermines the stated goal of 'consistency across all code paths.' Reviewers should not approve this commit until all four locations are synchronized.
+- **Hardcoded timeout fallback not synchronized with CoderConfig default change** `factory/poller.py:65`: The poller.py issue_to_task() function creates a CoderConfig with a hardcoded fallback of 600s when template.coder is None. This fallback was not updated when CoderConfig.session_timeout default was increased to 3600s in models.py. This creates a silent inconsistency: polling without an explicit coder template will use 600s instead of the new 3600s default, potentially causing premature timeouts in edge cases where templates lack coder config.
+- **wait_for_status() default timeout parameter not synchronized with CoderConfig** `factory/session.py:191`: The wait_for_status() function defines its own default parameter timeout=600 (line 191). While all current callers in runner.py explicitly pass timeout=task.coder.session_timeout (correctly using 3600s), this orphaned default creates a maintenance hazard. If future code calls wait_for_status() without an explicit timeout argument, it will silently revert to 600s instead of 3600s. This violates the single-source-of-truth principle and makes the codebase fragile to refactoring.
+- **Incomplete round-2 fix misses critical Round-1 findings** `<unknown>`: The diff addresses only 2 of the 4 critical/warning locations identified in Round 1 review. Specifically: (1) cli.py:133 fix is implemented (removed hardcoded 600), (2) models.py:41 default is increased to 3600, BUT (3) poller.py:65 is NOT fixed, and (4) session.py:191 is NOT fixed. This suggests either incomplete implementation or misunderstanding of scope. The Round 1 review explicitly required both poller.py and session.py to be updated for 'consistency across all code paths.'
+- **No test coverage for timeout behavior; change relies entirely on manual end-to-end testing** `<unknown>`: Per CLAUDE.md, 'No tests exist yet — the main way to verify changes is running a task end-to-end.' This timeout change affects critical control flow (timeout detection at line 290-298 in runner.py) but has no unit or integration tests. Edge cases like: wait_for_status() called without explicit timeout, poller creating tasks without coder template, concurrent 3600s sessions on worker, timeout message logging — none are tested. Risk of silent failures in edge paths.
+- **No unit tests added for timeout behavior (Round 1 requirement)** `<unknown>`: Round 1 flagged: 'factory/cli.py:133 Consider adding... Document the default timeout behavior clearly in the function docstring and in CLI help text' and 'Add unit tests for: (1) wait_for_status() behavior with both explicit and default timeouts, (2) issue_to_task() timeout handling with/without template coder, (3) timeout logging and RunState transition when timeout occurs, (4) resource cleanup after timeout (session kill, port release).' The diff includes zero new tests. This is concerning because: (1) timeout logic is mission-critical — incorrect timeouts cause task failures, (2) three separate timeout paths exist (CoderConfig default, wait_for_status default, poller.py fallback), (3) without tests, future refactors risk re-introducing timeout mismatches.
+- **No unit tests added for timeout behavior across all code paths** `<unknown>`: The timeout change affects mission-critical control flow (timeout detection, RunState transitions, session cleanup) but adds zero test coverage. Three separate timeout defaults exist (CoderConfig, wait_for_status(), poller.py fallback), creating three separate edge cases. Per CLAUDE.md, 'No tests exist yet — the main way to verify changes is running a task end-to-end,' which is insufficient for a 6x timeout multiplier change. Untested edge cases include: (1) wait_for_status() called without explicit timeout (uses default), (2) poller creating tasks without coder template (uses fallback), (3) concurrent 3600s sessions on worker (resource impact), (4) timeout message logging and RunState.failed transition, (5) tmux session cleanup and port release after timeout.
+- **Removed explicit timeout parameter makes inline task timeout behavior implicit and hard to audit** `factory/cli.py:133`: The commit removed `session_timeout=600` from _build_inline_task(), replacing it with reliance on the model's default (now 3600s). While this reduces duplication, it makes the timeout value implicit in the code. Code reviewers and maintainers must now consult factory/models.py to understand what timeout an inline task gets. The old explicit value was more discoverable during code review. Additionally, there is no CLI flag (e.g., `--session-timeout`) to override the timeout for individual inline tasks.
+- **Per-iteration timeout multiplier not documented; total runtime could exceed 4600s with all phases enabled** `factory/runner.py:210`: Each coder iteration gets the full session_timeout (now 3600s). With max_iterations=3 (default), that's 3 × 3600s = 10,800s for coder alone. Additionally, each iteration runs eval (300s), crucible (600s), and evaluator (120s) if enabled. Total per-iteration: 3600 + 300 + 600 + 120 = 4620s (77 minutes). The commit message and focus areas do not address whether these compounding timeouts have been validated against actual workload requirements.
+

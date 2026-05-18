@@ -114,7 +114,7 @@ def launch_task(task: TaskDefinition, workers_path: Path = Path("workers.yaml"))
 
     # ── Launch first agent session ───────────────────────────────────────────
     session_name = sess.session_name_for_run(run.run_id)
-    prompt = _prepend_constitution(task.coder.prompt)
+    prompt = _build_prompt(task)
     agent_commands = [worker.agents.get(name, name) for name in agent_names]
     agent_cmd = agent_commands[0]
     agent_name = agent_names[0]
@@ -196,7 +196,7 @@ def watch_task(
     try:
         # ── Coder → eval loop ────────────────────────────────────────────────
         if task.coder is not None:
-            original_prompt = _prepend_constitution(task.coder.prompt)
+            original_prompt = _build_prompt(task)
             coder_model = task.coder.model or worker.model
             coder_effort = task.coder.effort or worker.effort
             agent_names = task.coder.agents or ["claude"]
@@ -428,13 +428,13 @@ def watch_task(
                     store.save_run(run)
                     _log(run_id, f"state=passed  (iteration {iteration})")
                     _post_results(slack_client, run, results, passed=True)
-                    if slack_client and run.slack_channel_id:
-                        summary = client.run(
-                            f"cat {working_dir}/.factory/completion.md 2>/dev/null || true",
-                            timeout=10,
-                        ).stdout.strip()
-                        if summary:
-                            _slack_post(slack_client, run, f":robot_face: {summary[:2000]}")
+                    summary = client.run(
+                        f"cat {working_dir}/.factory/completion.md 2>/dev/null || true",
+                        timeout=10,
+                    ).stdout.strip()
+                    if slack_client and run.slack_channel_id and summary:
+                        _slack_post(slack_client, run, f":robot_face: {summary[:2000]}")
+                    _update_repo_context(run_id, task, client, working_dir, passed=True)
                     sess.kill_session(client, session_name)
                     if run.slack_thread_ts:
                         sess.unregister_run(client, run.slack_thread_ts)
@@ -451,6 +451,7 @@ def watch_task(
             _log(run_id, f"state=failed  (exhausted {max_iterations} iterations)")
             _post_results(slack_client, run, run.eval_results or [], passed=False)
             _maybe_comment_failure(run, repo, issue_number)
+            _update_repo_context(run_id, task, client, working_dir, passed=False)
             sess.kill_session(client, session_name)
             if run.slack_thread_ts:
                 sess.unregister_run(client, run.slack_thread_ts)
@@ -728,6 +729,57 @@ def _prepend_constitution(prompt: str) -> str:
     if not constitution_path.exists():
         return prompt
     return f"{constitution_path.read_text()}\n\n---\n\n{prompt}"
+
+
+def _repo_slug_for_task(task: TaskDefinition) -> Optional[str]:
+    """Return the context slug for a task's repo, or None if the task has no repo."""
+    if task.repo is None:
+        return None
+    return store.repo_slug(
+        repo_url=task.repo.url,
+        repo_path=task.repo.path,
+        task_id=task.id,
+    )
+
+
+def _build_prompt(task: TaskDefinition) -> str:
+    """Build the full task prompt: repo context + constitution + coder prompt."""
+    assert task.coder is not None
+    prompt = _prepend_constitution(task.coder.prompt)
+    slug = _repo_slug_for_task(task)
+    if slug:
+        context = store.load_repo_context(slug)
+        if context.strip():
+            prompt = f"{context.rstrip()}\n\n---\n\n{prompt}"
+    return prompt
+
+
+def _update_repo_context(
+    run_id: str,
+    task: TaskDefinition,
+    client: "SSHClient",
+    working_dir: str,
+    passed: bool,
+) -> None:
+    """Read completion.md from the worker and append it to the local repo context file."""
+    slug = _repo_slug_for_task(task)
+    if not slug:
+        return
+    completion = client.run(
+        f"cat {working_dir}/.factory/completion.md 2>/dev/null || true",
+        timeout=10,
+    ).stdout.strip()
+    if not completion:
+        return
+    from datetime import datetime as _dt
+    date_str = _dt.utcnow().strftime("%Y-%m-%d")
+    status_str = "passed" if passed else "failed"
+    entry = (
+        f"### Run: {task.name} ({run_id}) — {status_str} — {date_str}\n"
+        f"{completion}"
+    )
+    store.append_to_repo_context(slug, entry)
+    _log(run_id, f"  updated repo context: contexts/{slug}.md")
 
 
 def _allocate_port(worker: WorkerConfig) -> int:

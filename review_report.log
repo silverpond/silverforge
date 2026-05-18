@@ -1,0 +1,466 @@
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:04:02.277 +10:00] [progress] startup:references started Scanning related references
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:04:02.277 +10:00] [progress] startup:history started Collecting recent history
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:04:02.277 +10:00] [progress] startup:docs started Loading docs context
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.276 +10:00] [progress] startup:references completed count=0 duration=0.0s Reference scan complete
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.276 +10:00] [progress] startup:history completed count=15 duration=0.0s History collection complete
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.277 +10:00] [progress] startup:docs completed count=1 duration=0.0s Docs collection complete
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.277 +10:00] [progress] startup:prechecks started Running prechecks
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.277 +10:00] [progress] startup:prechecks completed count=2 duration=0.1s Prechecks complete
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.277 +10:00] [progress] run:header reviewers=claude-code max_rounds=2 changed_files=1 changed_lines=10 convergence_enabled=true context_enabled=true
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.277 +10:00] [progress] phase:start analyzer
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.277 +10:00] [progress] analyzer:start
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.277 +10:00] [agent-chat] -> claude-code index 5e462a4..09cbba1 100644 worktree = run.worktree_path
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.277 +10:00] [analysis]
+## Local Diff Analysis
+
+Extended git commit messages to support structured descriptions. The `_push_and_pr()` function now reads an optional `completion.md` file from `.factory/` during PR creation and appends its contents as a second `-m` argument to the git commit. This allows tasks/agents to provide detailed commit bodies beyond the subject line, improving PR context and documentation. The change maintains backward compatibility via graceful fallback when the file is absent.
+
+### Suggested Review Focus
+- Completion.md Population & Contract: The feature assumes agents or task execution writes `.factory/completion.md`. Must verify: (1) which phase/agent creates this file, (2) is the format validated, (3) what happens if creation fails silently.
+- File Read Error Handling: Uses `2>/dev/null || true` to suppress errors, but any SSH timeout or SSH failure will cause the read to hang. The 10s timeout mitigates this, but edge cases (network lag, worker load) could skip valid descriptions.
+- Git Commit Message Size & Encoding: No validation on completion.md content size or character encoding. Extremely large or malformed content could create invalid commit messages or fail silently. Consider line count or byte limits.
+- Integration with Existing Task Lifecycle: Need to audit where completion.md is written (session.py, evaluator_agent.py?) and ensure it's created before `_push_and_pr()` is called. Check for race conditions in concurrent runs.
+
+### Trade-offs
+- Adds a network call (SSH) per PR creation — minor latency impact on the critical path.
+- Assumes downstream agent/coder phases will populate completion.md. If missing, commits lack context but still succeed (silent degradation). Consider breaking change if contract is not documented.
+- Uses shlex.quote() on untrusted content from the worker file. If completion.md contains shell metacharacters, they are escaped but commit message may look garbled.
+- No retry logic if file read times out — missed descriptions cannot be recovered.
+
+### Affected Modules
+- factory/poller.py — `_push_and_pr()` function modified
+- factory/session.py (likely) — must verify if this is where completion.md is created
+- factory/evaluator_agent.py (likely) — if agent output drives completion.md generation
+- factory/models.py — may need to track completion.md in Run state if not already
+
+### Call Chain
+- poller.poll() → _push_and_pr(run, task, repo, number) → [NEW: SSH read .factory/completion.md] → git add -A && git reset && git commit -m subject -m body
+- Agent execution (coder/evaluator_agent) → [ASSUMED: writes .factory/completion.md] → _push_and_pr() consumes it
+
+### Design Patterns
+- File-based inter-process communication (IPC) between agent execution and PR creation phases.
+- Graceful degradation — missing optional file does not break workflow.
+- Multi-flag git commit convention (subject + body via two `-m` flags).
+
+### Reviewer Checklist
+- □ Search codebase for all locations that write `.factory/completion.md` — verify they exist and are reachable before _push_and_pr() runs.
+- □ Confirm the 10s timeout is adequate for typical `.factory/completion.md` file sizes. Is there a max size enforced?
+- □ Test behavior when completion.md contains: (a) multiline text, (b) shell metacharacters, (c) non-UTF8 encoding, (d) very large content (>10KB).
+- □ Verify this change does not break PR creation when completion.md is legitimately absent (backward compatibility).
+- □ Check if concurrent runs (multiple worktrees) could race on `.factory/completion.md` reads. Is the file per-worktree or global?
+- □ Document the contract: which phases create completion.md, expected format, size limits, required vs. optional.
+- □ Audit git commit message in generated PRs to ensure body is human-readable and not URL-encoded or escaped in unexpected ways.
+- □ Consider adding logging/metrics: log when completion.md is found vs. missing, track commit message size distribution.
+
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.277 +10:00] [system-context]
+### System Context
+- Changed files: 1
+- Reference snippets: 0
+- History commits: 15
+- Docs snippets: 1
+- Deterministic prechecks: 2
+- Affected files:
+  - factory/poller.py
+- Precheck results:
+  - untangle-analyze-report [Fail] error: unexpected argument '.' found
+
+Usage: untangle analyze [OPTIONS] <PATH>
+
+For more information, try '--help'.
+  - untangle-quality-report [Fail] error: unrecognized subcommand 'quality'
+
+Usage: untangle <COMMAND>
+
+For more information, try '--help'.
+
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.277 +10:00] [progress] analyzer:done
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.277 +10:00] [progress] phase:done analyzer
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.277 +10:00] [progress] phase:start agent-preflight
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.277 +10:00] [progress] phase:done agent-preflight
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.277 +10:00] [progress] phase:start round-1
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.278 +10:00] [progress] round:1 start (agents: claude-code)
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.278 +10:00] [progress] round:1 status [... claude-code]
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.278 +10:00] [progress] round:1 status [RUN claude-code]
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.278 +10:00] [progress] agent:start round=1 id=claude-code
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.278 +10:00] [agent-chat] -> claude-code index 5e462a4..09cbba1 100644 worktree = run.worktree_path
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.278 +10:00] [agent-review] round=1 id=claude-code 9 findings (3 Critical, 4 Warning, 2 Info) | The change extends git commit messages by reading an optional `.factory/completion.md` file and appending its contents as a commit body. The feature assumes a contract with upstream agents (documented in constitution.md) to create this file. However, there are several critical issues: (1) The `worktree` path variable is not shell-quoted in the cat command, causing failures if the path contains spaces. (2) The feature is incomplete—there's no verification that completion.md is created before _push_and_pr() is called; if missing, the commit silently lacks the description. (3) File read timeout silently degrades to empty string with no logging. (4) No validation on file size/encoding could exceed system limits. (5) An unquoted `worktree` path is also present in the git -C commands (pre-existing issue, but compounded by the new cat command). The design is sound (file-based IPC with graceful degradation), but implementation has correctness and robustness gaps.
+[agent-review] details:
+Narrative:
+The change extends git commit messages by reading an optional `.factory/completion.md` file and appending its contents as a commit body. The feature assumes a contract with upstream agents (documented in constitution.md) to create this file. However, there are several critical issues: (1) The `worktree` path variable is not shell-quoted in the cat command, causing failures if the path contains spaces. (2) The feature is incomplete—there's no verification that completion.md is created before _push_and_pr() is called; if missing, the commit silently lacks the description. (3) File read timeout silently degrades to empty string with no logging. (4) No validation on file size/encoding could exceed system limits. (5) An unquoted `worktree` path is also present in the git -C commands (pre-existing issue, but compounded by the new cat command). The design is sound (file-based IPC with graceful degradation), but implementation has correctness and robustness gaps.
+
+Findings:
+- [Critical] factory/poller.py:114 Quote the `worktree` variable in the cat command using shlex.quote() or shell escaping to prevent word-splitting on spaces or special characters.
+  description: The `worktree` variable is not shell-quoted in the cat command. If the worktree path contains spaces or shell metacharacters, the command will fail. The worktree path is constructed in runner.py line 542 as `f"{worktree_base}/{task.id}-{run_id}"`, and `worktree_base` comes from worker config (worker.default_worktree_base), which is user-configurable and could contain spaces. Example failure: if worktree is `/home/user/my worktree/task-123`, the shell will parse `cat /home/user/my worktree/task-123/.factory/completion.md` as multiple arguments.
+- [Critical] factory/poller.py:117 Quote the `worktree` variable in all git -C invocations to handle paths with spaces.
+  description: The `worktree` variable is not quoted in the `git -C {worktree}` commands on line 117 and throughout the git command chain (lines 122-125). Git's -C option takes a single path argument, and if the path contains spaces, the shell will split it into multiple arguments before git receives them. This is a pre-existing issue in the codebase (also seen in lines 122-125 of the original code), but it's exacerbated by the new code path.
+- [Critical] factory/poller.py:113-116 Verify that completion.md is reliably created before _push_and_pr() is called. Consider: (1) documenting which phase creates the file, (2) adding logging when the file is found/missing, or (3) enforcing the contract with explicit error handling if required.
+  description: The feature assumes upstream task execution (agent/coder phases) will write `.factory/completion.md` as documented in constitution.md (lines 17-24). However, there is no code in the diff showing where completion.md is created, and no verification before _push_and_pr() is called. If an agent fails to create the file (or creates it with incorrect content), the commit will silently lack the description body with no indication that something went wrong. This creates a subtle contract violation: downstream code reads a file that upstream code may or may not create, with no error signaling.
+- [Warning] factory/poller.py:113-116 Add explicit timeout handling and logging. Check result.ok or result.exit_code before accessing stdout, or log when timeout occurs.
+  description: The file read uses `timeout=10` but does not explicitly handle or log timeout events. If the SSH command times out (e.g., due to network lag or remote I/O blocking), the SSHClient.run() method returns SSHResult with exit_code=-1 and stderr="Command timed out after 10s" (see ssh.py line 65). However, the code only accesses `.stdout.strip()`, which returns an empty string on timeout, causing silent degradation. The user will not know whether the file was missing, the network timed out, or the remote cat command hung.
+- [Warning] factory/poller.py:114 Add a size limit when reading completion.md. Consider limiting to a reasonable maximum (e.g., 10KB).
+  description: The code reads the entire completion.md file with no size limits. If the file is extremely large (e.g., megabytes), this could: (1) exceed the ARG_MAX limit when building the git command (typically 128KB on Linux), causing the commit to fail silently; (2) cause excessive memory usage; (3) create an oversized commit message that is invalid or hard to read. The constitution.md documentation says 'short completion summary', implying size expectations, but these are not enforced in code.
+- [Warning] factory/poller.py:113-116 Add encoding validation when reading the file. Consider using `decode(errors='replace')` or similar to handle invalid UTF-8 gracefully.
+  description: The code calls `.stdout.strip()` on the SSH result without validating that the content is valid UTF-8. If the file contains non-UTF8 bytes, `.strip()` may fail or produce unexpected results. Git commit messages should be UTF-8, and if invalid bytes are passed to git, the commit could fail or produce garbled output.
+- [Warning] factory/poller.py:87-127 If logging is added, refactor _push_and_pr() to accept a logging function or run_id parameter.
+  description: The suggested fixes above recommend using `_log()` for logging completion.md status. However, looking at the function signature `_push_and_pr(gh, repo, run, task, issue, workers_path)`, there is no `run_id` or logging function passed in. The `_push_and_pr()` function does not have access to a logging function (unlike runner.py which has `_log()`). This would require refactoring to pass a logger or run_id.
+- [Info] factory/poller.py:113-116 This is an acceptable trade-off for the feature, but consider monitoring latency if PR creation becomes a bottleneck.
+  description: The code makes a separate SSH call to read completion.md before the main git command chain. This adds a network round-trip on the critical path of PR creation. For typical completion.md files (<1KB), this is acceptable, but for multiple concurrent PRs, the accumulated latency could be noticeable.
+- [Info] factory/poller.py:112 Consider improving the comment to explain the purpose of the completion file.
+  description: The comment 'Read completion.md for the extended commit description' describes what the code does (reads a file) rather than why (to include agent-generated task summary in PR). More descriptive comments aid maintainability.
+
+[agent-review]   [CRITICAL] factory/poller.py:114 Quote the `worktree` variable in the cat command using shlex.quote() or shell escaping to prevent word-splitting on spaces or special characters.
+[agent-review]   [CRITICAL] factory/poller.py:117 Quote the `worktree` variable in all git -C invocations to handle paths with spaces.
+[agent-review]   [CRITICAL] factory/poller.py:113 Verify that completion.md is reliably created before _push_and_pr() is called. Consider: (1) documenting which phase creates the file, (2) adding logging when the file is found/missing, or (3) enforcing the contract with explicit error handling if required.
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.278 +10:00] [progress] round:1 status [OK claude-code (132.7s)]
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.278 +10:00] [progress] agent:done round=1 id=claude-code
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.278 +10:00] [progress] round:1 done
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.278 +10:00] [agent-chat] -> claude-code Findings so far: [{"agent":"claude-code","severity":"Critical","confidence":"High","file":"factory/poller.py","span":{"start":117,"end":117},"message":"Quote the `worktree` variabl
+…
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.278 +10:00] [progress] convergence round=1 verdict=CONVERGED rationale=All three findings are valid and non-conflicting. Two Critical issues (unquoted `worktree` in cat and git commands) represent genuine shell-injection/word-splitting vulnerabilities where user-configurable paths with spaces or metacharacters will cause command failures. One Info issue (comment clarity) is a straightforward style improvement. All fixes are well-specified: use `shlex.quote(worktree)` consistently across lines 114, 117, and 122–125. No disagreements exist between agents, no net-new high-severity risks requiring another round. Recommend immediate fix: quote all `worktree` path references in shell commands, and update comment on line 112 to explain intent (e.g., 'Fetch agent completion summary for use as commit body') rather than implementation.
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.279 +10:00] [progress] round:1/2 complete
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.279 +10:00] [progress] phase:done round-1
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.279 +10:00] [agent-chat] -> claude-code Normalize these findings into canonical issues (merge duplicates): [{"agent":"claude-code","severity":"Critical","confidence":"High","file":"factory/poller.py","span":{"start":117,
+…
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.279 +10:00] [progress] phase:start finalize
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.279 +10:00] [agent-chat] -> claude-code Findings: [{"agent":"claude-code","severity":"Critical","confidence":"High","file":"factory/poller.py","span":{"start":117,"end":117},"message":"Quote the `worktree` variable in al
+…
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.279 +10:00] [progress] autofix:ready
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.279 +10:00] [run:5126cc17-5f82-48ed-a3e8-e2587492ded9] [2026-05-18 11:07:19.279 +10:00] [progress] phase:done finalize
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9]
+[2026-05-18 11:07:19.279 +10:00] [report]
+{
+  "agent_failures": [],
+  "analysis_markdown": "## Local Diff Analysis\n\nExtended git commit messages to support structured descriptions. The `_push_and_pr()` function now reads an optional `completion.md` file from `.factory/` during PR creation and appends its contents as a second `-m` argument to the git commit. This allows tasks/agents to provide detailed commit bodies beyond the subject line, improving PR context and documentation. The change maintains backward compatibility via graceful fallback when the file is absent.\n\n### Suggested Review Focus\n- Completion.md Population & Contract: The feature assumes agents or task execution writes `.factory/completion.md`. Must verify: (1) which phase/agent creates this file, (2) is the format validated, (3) what happens if creation fails silently.\n- File Read Error Handling: Uses `2>/dev/null || true` to suppress errors, but any SSH timeout or SSH failure will cause the read to hang. The 10s timeout mitigates this, but edge cases (network lag, worker load) could skip valid descriptions.\n- Git Commit Message Size & Encoding: No validation on completion.md content size or character encoding. Extremely large or malformed content could create invalid commit messages or fail silently. Consider line count or byte limits.\n- Integration with Existing Task Lifecycle: Need to audit where completion.md is written (session.py, evaluator_agent.py?) and ensure it's created before `_push_and_pr()` is called. Check for race conditions in concurrent runs.\n\n### Trade-offs\n- Adds a network call (SSH) per PR creation — minor latency impact on the critical path.\n- Assumes downstream agent/coder phases will populate completion.md. If missing, commits lack context but still succeed (silent degradation). Consider breaking change if contract is not documented.\n- Uses shlex.quote() on untrusted content from the worker file. If completion.md contains shell metacharacters, they are escaped but commit message may look garbled.\n- No retry logic if file read times out — missed descriptions cannot be recovered.\n\n### Affected Modules\n- factory/poller.py — `_push_and_pr()` function modified\n- factory/session.py (likely) — must verify if this is where completion.md is created\n- factory/evaluator_agent.py (likely) — if agent output drives completion.md generation\n- factory/models.py — may need to track completion.md in Run state if not already\n\n### Call Chain\n- poller.poll() → _push_and_pr(run, task, repo, number) → [NEW: SSH read .factory/completion.md] → git add -A && git reset && git commit -m subject -m body\n- Agent execution (coder/evaluator_agent) → [ASSUMED: writes .factory/completion.md] → _push_and_pr() consumes it\n\n### Design Patterns\n- File-based inter-process communication (IPC) between agent execution and PR creation phases.\n- Graceful degradation — missing optional file does not break workflow.\n- Multi-flag git commit convention (subject + body via two `-m` flags).\n\n### Reviewer Checklist\n- □ Search codebase for all locations that write `.factory/completion.md` — verify they exist and are reachable before _push_and_pr() runs.\n- □ Confirm the 10s timeout is adequate for typical `.factory/completion.md` file sizes. Is there a max size enforced?\n- □ Test behavior when completion.md contains: (a) multiline text, (b) shell metacharacters, (c) non-UTF8 encoding, (d) very large content (>10KB).\n- □ Verify this change does not break PR creation when completion.md is legitimately absent (backward compatibility).\n- □ Check if concurrent runs (multiple worktrees) could race on `.factory/completion.md` reads. Is the file per-worktree or global?\n- □ Document the contract: which phases create completion.md, expected format, size limits, required vs. optional.\n- □ Audit git commit message in generated PRs to ensure body is human-readable and not URL-encoded or escaped in unexpected ways.\n- □ Consider adding logging/metrics: log when completion.md is found vs. missing, track commit message size distribution.\n",
+  "auto_fix": {
+    "explanation": "**Consensus**: All three findings are valid and should be fixed. The unquoted worktree path is a correctness bug that can cause failures when paths contain spaces or special characters.\n\n**Canonical Issues**:\n\n1. **Unquoted worktree paths in shell commands** (3 locations, Critical)\n   - Line 114: `cat {worktree}` → `cat {shlex.quote(worktree)}`\n   - Line 118: `git -C {worktree}` → `git -C {shlex.quote(worktree)}`\n   - Lines 122-125: All three `git -C {worktree}` invocations → each gets `shlex.quote(worktree)`\n   - **Root cause**: The worktree path is user-configurable via `worker.default_worktree_base` and can contain spaces or special characters. The shell will split such paths into multiple arguments, causing command failure.\n   - **Impact**: Broken PR creation when worktree paths have spaces\n\n2. **Misleading comment** (Line 112, Info→Style)\n   - **Current**: \"Read completion.md for the extended commit description\" (describes *what* the code does)\n   - **Improved**: \"Fetch completion summary from agent execution to use as commit body\" (explains *why*—intent is to use agent-generated summary as commit body)\n   - **Impact**: Better code maintainability\n\n**Fix Strategy**:\n- Add `shlex.quote()` wrapper around all `{worktree}` variables in f-strings that are passed to `client.run()` (which executes shell commands)\n- Update the comment to clarify intent\n- Assumption: `shlex` is already imported at the top of `poller.py`",
+    "unified_diff": "--- a/factory/poller.py\n+++ b/factory/poller.py\n@@ -109,12 +109,20 @@ def _push_and_pr(\n     worktree = run.worktree_path\n \n     commit_msg = f\"factory: fix for issue #{number}\" if number else f\"factory: {task.name[:60]}\"\n-    # Read completion.md for the extended commit description\n+    # Fetch completion summary from agent execution to use as commit body\n     completion = client.run(\n-        f\"cat {worktree}/.factory/completion.md 2>/dev/null || true\",\n+        f\"cat {shlex.quote(worktree)}/.factory/completion.md 2>/dev/null || true\",\n         timeout=10,\n     ).stdout.strip()\n-    commit_cmd = f\"git -C {worktree} commit -m {shlex.quote(commit_msg)}\"\n+    commit_cmd = f\"git -C {shlex.quote(worktree)} commit -m {shlex.quote(commit_msg)}\"\n     if completion:\n         commit_cmd += f\" -m {shlex.quote(completion)}\"\n     # Exclude .factory/ and .claude/ (contain secrets and machine-specific config)\n     client.run(\n-        f\"git -C {worktree} add -A && \"\n-        f\"git -C {worktree} reset HEAD -- .factory/ .claude/ .crucible/ 2>/dev/null || true && \"\n-        f\"git -C {worktree} diff --cached --quiet || \"\n+        f\"git -C {shlex.quote(worktree)} add -A && \"\n+        f\"git -C {shlex.quote(worktree)} reset HEAD -- .factory/ .claude/ .crucible/ 2>/dev/null || true && \"\n+        f\"git -C {shlex.quote(worktree)} diff --cached --quiet || \"\n         f\"{commit_cmd}\",\n         timeout=30,\n     )"
+  },
+  "consensus": [
+    {
+      "agreed_count": 1,
+      "file": "factory/poller.py",
+      "reached_quorum": true,
+      "severity": "Info",
+      "span": {
+        "end": 112,
+        "start": 112
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/poller.py",
+      "reached_quorum": true,
+      "severity": "Critical",
+      "span": {
+        "end": 114,
+        "start": 114
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/poller.py",
+      "reached_quorum": true,
+      "severity": "Critical",
+      "span": {
+        "end": 117,
+        "start": 117
+      },
+      "total_agents": 1
+    }
+  ],
+  "final_action_plan": {
+    "prioritized_steps": [
+      "[Critical] Unquoted worktree path in cat command (factory/poller.py:114)",
+      "[Critical] Unquoted worktree path in shell commands (factory/poller.py:114)",
+      "[Critical] Unquoted worktree path in git -C commands (factory/poller.py:117)"
+    ],
+    "quick_wins": [
+      "[Info] Comment describes implementation detail, not intent (factory/poller.py:112)"
+    ]
+  },
+  "final_analysis_markdown": "## Final Analysis\n\n- Issues: 4 (Critical: 3, Warning: 0, Info: 1)\n- Agent failures: 0\n\n### Top Issues\n- [Critical] Unquoted worktree path in cat command `factory/poller.py:114`\n- [Critical] Unquoted worktree path in shell commands `factory/poller.py:114`\n- [Critical] Unquoted worktree path in git -C commands `factory/poller.py:117`\n- [Info] Comment describes implementation detail, not intent `factory/poller.py:112`\n\n### Action Plan\n- [Critical] Unquoted worktree path in cat command (factory/poller.py:114)\n- [Critical] Unquoted worktree path in shell commands (factory/poller.py:114)\n- [Critical] Unquoted worktree path in git -C commands (factory/poller.py:117)\n",
+  "findings": [
+    {
+      "agent": "claude-code",
+      "category": "correctness",
+      "confidence": "High",
+      "description": "The `worktree` variable is not quoted in the `git -C {worktree}` commands on line 117 and throughout the git command chain (lines 122-125). Git's -C option takes a single path argument, and if the path contains spaces, the shell will split it into multiple arguments before git receives them. This is a pre-existing issue in the codebase (also seen in lines 122-125 of the original code), but it's exacerbated by the new code path.",
+      "evidence": [
+        {
+          "location": "factory/poller.py:117",
+          "quote": "f\"git -C {worktree} commit -m {shlex.quote(commit_msg)}\""
+        },
+        {
+          "location": "factory/poller.py:122-125",
+          "quote": "f\"git -C {worktree} add -A && \" ... f\"git -C {worktree} reset HEAD ...\""
+        }
+      ],
+      "file": "factory/poller.py",
+      "message": "Quote the `worktree` variable in all git -C invocations to handle paths with spaces.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Critical",
+      "span": {
+        "end": 117,
+        "start": 117
+      },
+      "suggested_fix": "Change `git -C {worktree}` to `git -C {shlex.quote(worktree)}` in lines 117, 122-125. However, this requires careful handling of the f-string construction since the entire command is built as a string.",
+      "title": "Unquoted worktree path in git -C commands"
+    },
+    {
+      "agent": "claude-code",
+      "category": "style",
+      "confidence": "Low",
+      "description": "The comment 'Read completion.md for the extended commit description' describes what the code does (reads a file) rather than why (to include agent-generated task summary in PR). More descriptive comments aid maintainability.",
+      "evidence": [
+        {
+          "location": "factory/poller.py:112",
+          "quote": "# Read completion.md for the extended commit description"
+        }
+      ],
+      "file": "factory/poller.py",
+      "message": "Consider improving the comment to explain the purpose of the completion file.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Info",
+      "span": {
+        "end": 112,
+        "start": 112
+      },
+      "suggested_fix": "Change comment to: '# Fetch completion summary from agent execution to use as commit body'",
+      "title": "Comment describes implementation detail, not intent"
+    },
+    {
+      "agent": "claude-code",
+      "category": "correctness",
+      "confidence": "High",
+      "description": "The `worktree` variable is not shell-quoted in the cat command. If the worktree path contains spaces or shell metacharacters, the command will fail. The worktree path is constructed in runner.py line 542 as `f\"{worktree_base}/{task.id}-{run_id}\"`, and `worktree_base` comes from worker config (worker.default_worktree_base), which is user-configurable and could contain spaces. Example failure: if worktree is `/home/user/my worktree/task-123`, the shell will parse `cat /home/user/my worktree/task-123/.factory/completion.md` as multiple arguments.",
+      "evidence": [
+        {
+          "location": "factory/poller.py:114",
+          "quote": "f\"cat {worktree}/.factory/completion.md 2>/dev/null || true\""
+        },
+        {
+          "location": "factory/runner.py:542",
+          "quote": "worktree_path = f\"{worktree_base}/{task.id}-{run_id}\""
+        }
+      ],
+      "file": "factory/poller.py",
+      "message": "Quote the `worktree` variable in the cat command using shlex.quote() or shell escaping to prevent word-splitting on spaces or special characters.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Critical",
+      "span": {
+        "end": 114,
+        "start": 114
+      },
+      "suggested_fix": "Change line 114 from `f\"cat {worktree}/.factory/completion.md 2>/dev/null || true\"` to `f\"cat {shlex.quote(worktree)}/.factory/completion.md 2>/dev/null || true\"`",
+      "title": "Unquoted worktree path in cat command"
+    }
+  ],
+  "issues": [
+    {
+      "category": "correctness",
+      "description": "The `worktree` variable is not shell-quoted in the cat command. If the worktree path contains spaces or shell metacharacters, the command will fail. The worktree path is constructed in runner.py line 542 as `f\"{worktree_base}/{task.id}-{run_id}\"`, and `worktree_base` comes from worker config (worker.default_worktree_base), which is user-configurable and could contain spaces. Example failure: if worktree is `/home/user/my worktree/task-123`, the shell will parse `cat /home/user/my worktree/task-123/.factory/completion.md` as multiple arguments.",
+      "evidence": [
+        {
+          "location": "factory/poller.py:114",
+          "quote": "f\"cat {worktree}/.factory/completion.md 2>/dev/null || true\""
+        },
+        {
+          "location": "factory/runner.py:542",
+          "quote": "worktree_path = f\"{worktree_base}/{task.id}-{run_id}\""
+        }
+      ],
+      "file": "factory/poller.py",
+      "line_end": 114,
+      "line_start": 114,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Critical",
+      "suggested_fix": "Change line 114 from `f\"cat {worktree}/.factory/completion.md 2>/dev/null || true\"` to `f\"cat {shlex.quote(worktree)}/.factory/completion.md 2>/dev/null || true\"`",
+      "title": "Unquoted worktree path in cat command"
+    },
+    {
+      "category": "correctness",
+      "description": "The `worktree` variable is used unquoted in multiple shell command invocations: cat command (line 114), git -C commands (lines 117, 122-125). If the worktree path contains spaces or shell metacharacters, these commands will fail with word-splitting errors. The worktree path is user-configurable (from worker.default_worktree_base in workers.yaml) and could reasonably contain spaces. This affects both file I/O and git operations across the commit creation workflow.",
+      "evidence": [],
+      "file": "factory/poller.py",
+      "line_end": 125,
+      "line_start": 114,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Critical",
+      "suggested_fix": "Wrap all `worktree` variable references with `shlex.quote()` before embedding in shell commands: (1) Line 114: `f\"cat {shlex.quote(worktree)}/.factory/completion.md 2>/dev/null || true\"`; (2) Line 117: `f\"git -C {shlex.quote(worktree)} commit -m {shlex.quote(commit_msg)}\"`; (3) Lines 122-125: Apply `shlex.quote(worktree)` to all `git -C` invocations in the command chain.",
+      "title": "Unquoted worktree path in shell commands"
+    },
+    {
+      "category": "correctness",
+      "description": "The `worktree` variable is not quoted in the `git -C {worktree}` commands on line 117 and throughout the git command chain (lines 122-125). Git's -C option takes a single path argument, and if the path contains spaces, the shell will split it into multiple arguments before git receives them. This is a pre-existing issue in the codebase (also seen in lines 122-125 of the original code), but it's exacerbated by the new code path.",
+      "evidence": [
+        {
+          "location": "factory/poller.py:117",
+          "quote": "f\"git -C {worktree} commit -m {shlex.quote(commit_msg)}\""
+        },
+        {
+          "location": "factory/poller.py:122-125",
+          "quote": "f\"git -C {worktree} add -A && \" ... f\"git -C {worktree} reset HEAD ...\""
+        }
+      ],
+      "file": "factory/poller.py",
+      "line_end": 117,
+      "line_start": 117,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Critical",
+      "suggested_fix": "Change `git -C {worktree}` to `git -C {shlex.quote(worktree)}` in lines 117, 122-125. However, this requires careful handling of the f-string construction since the entire command is built as a string.",
+      "title": "Unquoted worktree path in git -C commands"
+    },
+    {
+      "category": "style",
+      "description": "The comment 'Read completion.md for the extended commit description' describes what the code does (reads a file) rather than why (to include agent-generated task summary in PR). More descriptive comments aid maintainability.",
+      "evidence": [
+        {
+          "location": "factory/poller.py:112",
+          "quote": "# Read completion.md for the extended commit description"
+        }
+      ],
+      "file": "factory/poller.py",
+      "line_end": 112,
+      "line_start": 112,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Info",
+      "suggested_fix": "Change comment to: '# Fetch completion summary from agent execution to use as commit body'",
+      "title": "Comment describes implementation detail, not intent"
+    }
+  ],
+  "pr_comment_markdown": "## Crucible Review Summary\n\n- Issues: 4\n- Critical: 3, Warning: 0\n\n### Top Actions\n- [Critical] Unquoted worktree path in cat command (factory/poller.py:114)\n- [Critical] Unquoted worktree path in shell commands (factory/poller.py:114)\n- [Critical] Unquoted worktree path in git -C commands (factory/poller.py:117)\n\n### Notable Issues\n- **Unquoted worktree path in cat command** `factory/poller.py:114`: The `worktree` variable is not shell-quoted in the cat command. If the worktree path contains spaces or shell metacharacters, the command will fail. The worktree path is constructed in runner.py line 542 as `f\"{worktree_base}/{task.id}-{run_id}\"`, and `worktree_base` comes from worker config (worker.default_worktree_base), which is user-configurable and could contain spaces. Example failure: if worktree is `/home/user/my worktree/task-123`, the shell will parse `cat /home/user/my worktree/task-123/.factory/completion.md` as multiple arguments.\n- **Unquoted worktree path in shell commands** `factory/poller.py:114`: The `worktree` variable is used unquoted in multiple shell command invocations: cat command (line 114), git -C commands (lines 117, 122-125). If the worktree path contains spaces or shell metacharacters, these commands will fail with word-splitting errors. The worktree path is user-configurable (from worker.default_worktree_base in workers.yaml) and could reasonably contain spaces. This affects both file I/O and git operations across the commit creation workflow.\n- **Unquoted worktree path in git -C commands** `factory/poller.py:117`: The `worktree` variable is not quoted in the `git -C {worktree}` commands on line 117 and throughout the git command chain (lines 122-125). Git's -C option takes a single path argument, and if the path contains spaces, the shell will split it into multiple arguments before git receives them. This is a pre-existing issue in the codebase (also seen in lines 122-125 of the original code), but it's exacerbated by the new code path.\n- **Comment describes implementation detail, not intent** `factory/poller.py:112`: The comment 'Read completion.md for the extended commit description' describes what the code does (reads a file) rather than why (to include agent-generated task summary in PR). More descriptive comments aid maintainability.\n",
+  "pr_review_draft": {
+    "inline_comments": [
+      {
+        "body": "**Unquoted worktree path in cat command**\n\nThe `worktree` variable is not shell-quoted in the cat command. If the worktree path contains spaces or shell metacharacters, the command will fail. The worktree path is constructed in runner.py line 542 as `f\"{worktree_base}/{task.id}-{run_id}\"`, and `worktree_base` comes from worker config (worker.default_worktree_base), which is user-configurable and could contain spaces. Example failure: if worktree is `/home/user/my worktree/task-123`, the shell will parse `cat /home/user/my worktree/task-123/.factory/completion.md` as multiple arguments.\n\nRaised by: claude-code\n\nSuggested fix: Change line 114 from `f\"cat {worktree}/.factory/completion.md 2>/dev/null || true\"` to `f\"cat {shlex.quote(worktree)}/.factory/completion.md 2>/dev/null || true\"`",
+        "category": "correctness",
+        "description": "The `worktree` variable is not shell-quoted in the cat command. If the worktree path contains spaces or shell metacharacters, the command will fail. The worktree path is constructed in runner.py line 542 as `f\"{worktree_base}/{task.id}-{run_id}\"`, and `worktree_base` comes from worker config (worker.default_worktree_base), which is user-configurable and could contain spaces. Example failure: if worktree is `/home/user/my worktree/task-123`, the shell will parse `cat /home/user/my worktree/task-123/.factory/completion.md` as multiple arguments.",
+        "line": 114,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/poller.py",
+        "severity": "Critical",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "Unquoted worktree path in cat command"
+      },
+      {
+        "body": "**Unquoted worktree path in shell commands**\n\nThe `worktree` variable is used unquoted in multiple shell command invocations: cat command (line 114), git -C commands (lines 117, 122-125). If the worktree path contains spaces or shell metacharacters, these commands will fail with word-splitting errors. The worktree path is user-configurable (from worker.default_worktree_base in workers.yaml) and could reasonably contain spaces. This affects both file I/O and git operations across the commit creation workflow.\n\nRaised by: claude-code\n\nSuggested fix: Wrap all `worktree` variable references with `shlex.quote()` before embedding in shell commands: (1) Line 114: `f\"cat {shlex.quote(worktree)}/.factory/completion.md 2>/dev/null || true\"`; (2) Line 117: `f\"git -C {shlex.quote(worktree)} commit -m {shlex.quote(commit_msg)}\"`; (3) Lines 122-125: Apply `shlex.quote(worktree)` to all `git -C` invocations in the command chain.",
+        "category": "correctness",
+        "description": "The `worktree` variable is used unquoted in multiple shell command invocations: cat command (line 114), git -C commands (lines 117, 122-125). If the worktree path contains spaces or shell metacharacters, these commands will fail with word-splitting errors. The worktree path is user-configurable (from worker.default_worktree_base in workers.yaml) and could reasonably contain spaces. This affects both file I/O and git operations across the commit creation workflow.",
+        "line": 125,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/poller.py",
+        "severity": "Critical",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 114,
+        "start_side": "Right",
+        "title": "Unquoted worktree path in shell commands"
+      },
+      {
+        "body": "**Unquoted worktree path in git -C commands**\n\nThe `worktree` variable is not quoted in the `git -C {worktree}` commands on line 117 and throughout the git command chain (lines 122-125). Git's -C option takes a single path argument, and if the path contains spaces, the shell will split it into multiple arguments before git receives them. This is a pre-existing issue in the codebase (also seen in lines 122-125 of the original code), but it's exacerbated by the new code path.\n\nRaised by: claude-code\n\nSuggested fix: Change `git -C {worktree}` to `git -C {shlex.quote(worktree)}` in lines 117, 122-125. However, this requires careful handling of the f-string construction since the entire command is built as a string.",
+        "category": "correctness",
+        "description": "The `worktree` variable is not quoted in the `git -C {worktree}` commands on line 117 and throughout the git command chain (lines 122-125). Git's -C option takes a single path argument, and if the path contains spaces, the shell will split it into multiple arguments before git receives them. This is a pre-existing issue in the codebase (also seen in lines 122-125 of the original code), but it's exacerbated by the new code path.",
+        "line": 117,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/poller.py",
+        "severity": "Critical",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "Unquoted worktree path in git -C commands"
+      },
+      {
+        "body": "**Comment describes implementation detail, not intent**\n\nThe comment 'Read completion.md for the extended commit description' describes what the code does (reads a file) rather than why (to include agent-generated task summary in PR). More descriptive comments aid maintainability.\n\nRaised by: claude-code\n\nSuggested fix: Change comment to: '# Fetch completion summary from agent execution to use as commit body'",
+        "category": "style",
+        "description": "The comment 'Read completion.md for the extended commit description' describes what the code does (reads a file) rather than why (to include agent-generated task summary in PR). More descriptive comments aid maintainability.",
+        "line": 112,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/poller.py",
+        "severity": "Info",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "Comment describes implementation detail, not intent"
+      }
+    ],
+    "overview_comment": {
+      "body": "## Crucible Review Summary\n\n- Issues: 4\n- Critical: 3, Warning: 0\n\n### Top Actions\n- [Critical] Unquoted worktree path in cat command (factory/poller.py:114)\n- [Critical] Unquoted worktree path in shell commands (factory/poller.py:114)\n- [Critical] Unquoted worktree path in git -C commands (factory/poller.py:117)\n\n### Notable Issues\n- **Unquoted worktree path in cat command** `factory/poller.py:114`: The `worktree` variable is not shell-quoted in the cat command. If the worktree path contains spaces or shell metacharacters, the command will fail. The worktree path is constructed in runner.py line 542 as `f\"{worktree_base}/{task.id}-{run_id}\"`, and `worktree_base` comes from worker config (worker.default_worktree_base), which is user-configurable and could contain spaces. Example failure: if worktree is `/home/user/my worktree/task-123`, the shell will parse `cat /home/user/my worktree/task-123/.factory/completion.md` as multiple arguments.\n- **Unquoted worktree path in shell commands** `factory/poller.py:114`: The `worktree` variable is used unquoted in multiple shell command invocations: cat command (line 114), git -C commands (lines 117, 122-125). If the worktree path contains spaces or shell metacharacters, these commands will fail with word-splitting errors. The worktree path is user-configurable (from worker.default_worktree_base in workers.yaml) and could reasonably contain spaces. This affects both file I/O and git operations across the commit creation workflow.\n- **Unquoted worktree path in git -C commands** `factory/poller.py:117`: The `worktree` variable is not quoted in the `git -C {worktree}` commands on line 117 and throughout the git command chain (lines 122-125). Git's -C option takes a single path argument, and if the path contains spaces, the shell will split it into multiple arguments before git receives them. This is a pre-existing issue in the codebase (also seen in lines 122-125 of the original code), but it's exacerbated by the new code path.\n- **Comment describes implementation detail, not intent** `factory/poller.py:112`: The comment 'Read completion.md for the extended commit description' describes what the code does (reads a file) rather than why (to include agent-generated task summary in PR). More descriptive comments aid maintainability.\n"
+    },
+    "overview_only_comments": []
+  },
+  "run_id": "5126cc17-5f82-48ed-a3e8-e2587492ded9",
+  "session_id": "5126cc17-5f82-48ed-a3e8-e2587492ded9",
+  "system_context_markdown": "### System Context\n- Changed files: 1\n- Reference snippets: 0\n- History commits: 15\n- Docs snippets: 1\n- Deterministic prechecks: 2\n- Affected files:\n  - factory/poller.py\n- Precheck results:\n  - untangle-analyze-report [Fail] error: unexpected argument '.' found\n\nUsage: untangle analyze [OPTIONS] <PATH>\n\nFor more information, try '--help'.\n  - untangle-quality-report [Fail] error: unrecognized subcommand 'quality'\n\nUsage: untangle <COMMAND>\n\nFor more information, try '--help'.\n",
+  "verdict": "Block"
+}
+[run:5126cc17-5f82-48ed-a3e8-e2587492ded9]
+[2026-05-18 11:07:19.279 +10:00] [final-analysis]
+## Final Analysis
+
+- Issues: 4 (Critical: 3, Warning: 0, Info: 1)
+- Agent failures: 0
+
+### Top Issues
+- [Critical] Unquoted worktree path in cat command `factory/poller.py:114`
+- [Critical] Unquoted worktree path in shell commands `factory/poller.py:114`
+- [Critical] Unquoted worktree path in git -C commands `factory/poller.py:117`
+- [Info] Comment describes implementation detail, not intent `factory/poller.py:112`
+
+### Action Plan
+- [Critical] Unquoted worktree path in cat command (factory/poller.py:114)
+- [Critical] Unquoted worktree path in shell commands (factory/poller.py:114)
+- [Critical] Unquoted worktree path in git -C commands (factory/poller.py:117)
+
+[2026-05-18 11:07:19.279 +10:00] [pr-comment]
+## Crucible Review Summary
+
+- Issues: 4
+- Critical: 3, Warning: 0
+
+### Top Actions
+- [Critical] Unquoted worktree path in cat command (factory/poller.py:114)
+- [Critical] Unquoted worktree path in shell commands (factory/poller.py:114)
+- [Critical] Unquoted worktree path in git -C commands (factory/poller.py:117)
+
+### Notable Issues
+- **Unquoted worktree path in cat command** `factory/poller.py:114`: The `worktree` variable is not shell-quoted in the cat command. If the worktree path contains spaces or shell metacharacters, the command will fail. The worktree path is constructed in runner.py line 542 as `f"{worktree_base}/{task.id}-{run_id}"`, and `worktree_base` comes from worker config (worker.default_worktree_base), which is user-configurable and could contain spaces. Example failure: if worktree is `/home/user/my worktree/task-123`, the shell will parse `cat /home/user/my worktree/task-123/.factory/completion.md` as multiple arguments.
+- **Unquoted worktree path in shell commands** `factory/poller.py:114`: The `worktree` variable is used unquoted in multiple shell command invocations: cat command (line 114), git -C commands (lines 117, 122-125). If the worktree path contains spaces or shell metacharacters, these commands will fail with word-splitting errors. The worktree path is user-configurable (from worker.default_worktree_base in workers.yaml) and could reasonably contain spaces. This affects both file I/O and git operations across the commit creation workflow.
+- **Unquoted worktree path in git -C commands** `factory/poller.py:117`: The `worktree` variable is not quoted in the `git -C {worktree}` commands on line 117 and throughout the git command chain (lines 122-125). Git's -C option takes a single path argument, and if the path contains spaces, the shell will split it into multiple arguments before git receives them. This is a pre-existing issue in the codebase (also seen in lines 122-125 of the original code), but it's exacerbated by the new code path.
+- **Comment describes implementation detail, not intent** `factory/poller.py:112`: The comment 'Read completion.md for the extended commit description' describes what the code does (reads a file) rather than why (to include agent-generated task summary in PR). More descriptive comments aid maintainability.
+

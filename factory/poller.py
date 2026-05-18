@@ -62,7 +62,7 @@ def issue_to_task(issue: Dict, template: TaskDefinition) -> TaskDefinition:
     coder = CoderConfig(
         prompt=prompt,
         max_iterations=template.coder.max_iterations if template.coder else 3,
-        session_timeout=template.coder.session_timeout if template.coder else 600,
+        session_timeout=template.coder.session_timeout if template.coder else 3600,
         agents=template.coder.agents if template.coder else ["claude"],
         rate_limit_markers=template.coder.rate_limit_markers if template.coder else [],
         model=template.coder.model if template.coder else None,
@@ -109,12 +109,20 @@ def _push_and_pr(
     worktree = run.worktree_path
 
     commit_msg = f"factory: fix for issue #{number}" if number else f"factory: {task.name[:60]}"
+    # Read completion.md for the extended commit description
+    completion = client.run(
+        f"cat {worktree}/.factory/completion.md 2>/dev/null || true",
+        timeout=10,
+    ).stdout.strip()
+    commit_cmd = f"git -C {worktree} commit -m {shlex.quote(commit_msg)}"
+    if completion:
+        commit_cmd += f" -m {shlex.quote(completion)}"
     # Exclude .factory/ and .claude/ (contain secrets and machine-specific config)
     client.run(
         f"git -C {worktree} add -A && "
         f"git -C {worktree} reset HEAD -- .factory/ .claude/ .crucible/ 2>/dev/null || true && "
         f"git -C {worktree} diff --cached --quiet || "
-        f"git -C {worktree} commit -m {shlex.quote(commit_msg)}",
+        f"{commit_cmd}",
         timeout=30,
     )
 

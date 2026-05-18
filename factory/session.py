@@ -150,7 +150,10 @@ def start_session(client: SSHClient, session_name: str, working_dir: str) -> boo
         # Strip all ANSI/VT escape sequences including DEC private modes (\x1b[?...)
         clean = re.sub(r"\x1b(?:\[[0-9;?]*[A-Za-z]|\][^\x07]*\x07|[()][AB012])", "", pane)
         clean = re.sub(r"\r", "", clean)
-        if any("❯" in line for line in clean.splitlines()):
+        # Match only a bare ❯ at the end of a line (the actual input prompt).
+        # Dialog options look like "❯ Yes" or "❯ 1. Create CLAUDE.md" — those
+        # have non-whitespace after ❯ and must NOT be treated as ready.
+        if any(re.search(r"❯\s*$", line) for line in clean.splitlines()):
             ready = True
             break
 
@@ -172,12 +175,19 @@ def start_session(client: SSHClient, session_name: str, working_dir: str) -> boo
         client.run(f"tmux send-keys -t {session_name} Enter", timeout=5)
         time.sleep(3)
 
-        # Check if Claude received the instruction — welcome screen should be gone
+        # Check if Claude received the instruction — welcome/idle screens should be gone.
+        # "Welcome back" / "Recent activity" appear on subsequent runs.
+        # "What would you like" / "Welcome to Claude" appear on first run.
         pane = client.run(
             f"tmux capture-pane -t {session_name} -p 2>/dev/null", timeout=5
         ).stdout
         clean = re.sub(r"\x1b(?:\[[0-9;?]*[A-Za-z]|\][^\x07]*\x07|[()][AB012])", "", pane)
-        still_idle = "Welcome back" in clean or "Recent activity" in clean
+        still_idle = (
+            "Welcome back" in clean
+            or "Recent activity" in clean
+            or "What would you like" in clean
+            or "Welcome to Claude" in clean
+        )
         if not still_idle:
             break
 
@@ -188,7 +198,7 @@ def start_session(client: SSHClient, session_name: str, working_dir: str) -> boo
 def wait_for_status(
     client: SSHClient,
     working_dir: str,
-    timeout: int = 600,
+    timeout: int = 3600,
     poll_interval: int = 5,
     session_name: Optional[str] = None,
 ) -> str:

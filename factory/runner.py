@@ -338,7 +338,7 @@ def watch_task(
                     if task.crucible is not None and run.worktree_path:
                         # Commit any uncommitted agent changes so crucible can see the diff
                         import shlex as _shlex
-                        commit_msg = _shlex.quote(f"factory: agent changes (iter {iteration})")
+                        commit_msg = _shlex.quote(f"factory: {task.name[:72]} (iter {iteration})")
                         client.run(
                             f"git -C {working_dir} add -A && "
                             f"git -C {working_dir} reset HEAD -- .factory/ .claude/ .crucible/ 2>/dev/null || true && "

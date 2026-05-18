@@ -108,13 +108,24 @@ def _push_and_pr(
 
     worktree = run.worktree_path
 
-    commit_msg = f"factory: fix for issue #{number}" if number else f"factory: {task.name[:60]}"
+    if number:
+        commit_title = f"factory: fix #{number}: {issue['title']}"
+    else:
+        commit_title = f"factory: {task.name[:72]}"
+    # Read completion.md written by the agent for a detailed commit body
+    completion = client.run(
+        f"cat {worktree}/.factory/completion.md 2>/dev/null || true",
+        timeout=10,
+    ).stdout.strip()
+    commit_args = f"-m {shlex.quote(commit_title)}"
+    if completion:
+        commit_args += f" -m {shlex.quote(completion)}"
     # Exclude .factory/ and .claude/ (contain secrets and machine-specific config)
     client.run(
         f"git -C {worktree} add -A && "
         f"git -C {worktree} reset HEAD -- .factory/ .claude/ .crucible/ 2>/dev/null || true && "
         f"git -C {worktree} diff --cached --quiet || "
-        f"git -C {worktree} commit -m {shlex.quote(commit_msg)}",
+        f"git -C {worktree} commit {commit_args}",
         timeout=30,
     )
 

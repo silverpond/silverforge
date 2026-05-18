@@ -130,11 +130,11 @@ def _build_inline_task(
         name=prompt[:80],
         worker=worker_name,
         repo=RepoConfig(path=repo_path, branch="main", url=f"git@github.com:{gh_repo}.git"),
-        coder=CoderConfig(prompt=prompt, max_iterations=3, session_timeout=600, agents=["claude"]),
+        coder=CoderConfig(prompt=prompt, max_iterations=3, session_timeout=1800, agents=["claude"]),
         crucible=CrucibleConfig(block_on="Critical", timeout=600),
         gemini_review=GeminiReviewConfig(),
         slack=SlackConfig(reviewers=[r for r in os.environ.get("SLACK_DEFAULT_REVIEWERS", "").split(",") if r.strip()]),
-        eval=EvalConfig(commands=eval_commands, working_dir=repo_path, timeout=120),
+        eval=EvalConfig(commands=eval_commands, working_dir=repo_path, timeout=300),
     )
 
 

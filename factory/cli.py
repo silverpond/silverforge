@@ -150,6 +150,7 @@ def run_cmd(
     eval_cmd: Optional[List[str]] = typer.Option(None, "--eval", help="Eval command(s) for inline tasks"),
     crucible_rounds: Optional[int] = typer.Option(None, "--crucible-rounds", help="Number of crucible review rounds"),
     crucible_model: Optional[str] = typer.Option(None, "--crucible-model", help="Claude model for crucible reviewer (e.g. haiku)"),
+    timeout: Optional[int] = typer.Option(None, "--timeout", "-t", help="Agent session timeout in seconds (default: 1800)"),
     workers: Path = _WORKERS_OPT,
 ) -> None:
     """Run a task — pass a YAML file or an inline task description."""
@@ -172,6 +173,8 @@ def run_cmd(
         task.crucible.rounds = crucible_rounds
     if crucible_model and task.crucible:
         task.crucible.model = crucible_model
+    if timeout is not None and task.coder:
+        task.coder.session_timeout = timeout
 
     agents_display = ", ".join(task.coder.agents) if task.coder else "—"
     console.print()

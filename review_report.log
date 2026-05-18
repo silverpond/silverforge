@@ -1,0 +1,334 @@
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:52:51.730 +10:00] [progress] startup:references started Scanning related references
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:52:51.730 +10:00] [progress] startup:history started Collecting recent history
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:52:51.730 +10:00] [progress] startup:docs started Loading docs context
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.525 +10:00] [progress] startup:references completed count=0 duration=0.1s Reference scan complete
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.525 +10:00] [progress] startup:history completed count=5 duration=0.1s History collection complete
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.525 +10:00] [progress] startup:docs completed count=1 duration=0.1s Docs collection complete
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.525 +10:00] [progress] startup:prechecks started Running prechecks
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.525 +10:00] [progress] startup:prechecks completed count=2 duration=0.1s Prechecks complete
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.525 +10:00] [progress] run:header reviewers=claude-code max_rounds=2 changed_files=1 changed_lines=16 convergence_enabled=true context_enabled=true
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.525 +10:00] [progress] phase:start analyzer
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.526 +10:00] [progress] analyzer:start
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.526 +10:00] [agent-chat] -> claude-code index 635b9fd..9ce4f67 100644 # Strip all ANSI/VT escape sequences including DEC private modes (\x1b[?...)
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.526 +10:00] [analysis]
+## Local Diff Analysis
+
+**Improved shell prompt and idle screen detection robustness.** These changes refine terminal state detection during the session startup sequence in `factory/session.py`. The first fix changes prompt detection from substring matching (`"❯" in line`) to regex matching (`❯\s*$`), matching only a bare shell prompt at line-end and avoiding false positives from dialog options like "❯ Yes" or "❯ 1. Create CLAUDE.md". The second fix expands idle screen detection to cover all known welcome/idle variants across first run ("What would you like", "Welcome to Claude") and subsequent runs ("Welcome back", "Recent activity"), making the session readiness check more exhaustive. **Architectural impact**: These are targeted hardening fixes to the session lifecycle — the pipeline's most fragile point, relying on terminal state scraping to detect readiness. Reduces false-positive readiness signals that could cause premature task submission or agent script execution on non-ready sessions.
+
+### Suggested Review Focus
+- Regex pattern correctness: The `❯\s*$` pattern assumes the shell prompt is always a bare ❯ with trailing whitespace only. Must verify this matches all Claude CLI shell variants (different shells, themes, or Nix environment configurations). If the prompt has any trailing content or different unicode, this will fail silently.
+- Idle screen message coverage: Four screen strings are now hardcoded. If Claude CLI version changes or new welcome/idle messages are introduced (e.g., "Syncing messages", "Loading context"), the detection will fail and sessions will be treated as ready prematurely. No fallback if messages evolve.
+- Race condition / screen flicker: Terminal state detection is inherently timing-sensitive. The `start_session()` polls with `time.sleep(1)` intervals — screens may flicker between welcome and idle states, and concurrent polling of `tmux capture-pane` may race with Claude CLI's screen updates. Need to verify the happy path doesn't match transient states.
+- Integration with retry loop: If the new checks are too strict and cause `start_session()` to timeout, the entire feedback loop in `runner.py` will retry. Verify these changes don't introduce subtle timeouts that cascade into wasted agent runs.
+
+### Trade-offs
+- Regex pattern is now strict (`❯\s*$`), which eliminates dialog false positives but risks missing legitimate prompts with unusual formatting. Any deviation from the expected format silently fails.
+- Hardcoded idle screen strings are fragile — they're tightly coupled to Claude CLI's UI messages. Changes to welcome screens in future CLI versions will break detection without warning.
+- Expanded idle screen detection increases the surface area of state checks, but may still miss edge cases (e.g., error screens, network retry messages, session-expired prompts).
+- These are targeted patches to a fundamentally fragile approach (terminal state scraping). A more robust solution (e.g., a ready signal from Claude CLI itself, or structured output) would be preferable long-term.
+
+### Affected Modules
+- factory/session.py — `start_session()` function, prompt readiness and idle screen detection
+- factory/runner.py — calls `start_session()` at the start of the pipeline; timeouts here cascade into retries
+- factory/coder.py — `build_feedback_prompt()` relies on sessions being truly ready before sending tasks
+- factory/poller.py — orchestrates parallel runs; flaky session detection amplifies impact across multiple concurrent jobs
+
+### Call Chain
+- factory.runner.run_task() → factory.session.start_session() → [prompt readiness loop with regex matching] → shell ready
+- factory.runner.run_task() → factory.session.start_session() → [idle screen check with hardcoded strings] → session ready for task
+- factory.runner.run_task() → [if session ready] → factory.session.write_task_files() → factory.session.submit_task()
+
+### Design Patterns
+- **Polling with exponential backoff**: Session readiness is detected via repeated `tmux capture-pane` calls in a loop with `time.sleep(1)` intervals and a timeout fallback.
+- **String matching for state machine**: Terminal output is parsed via regex and substring matching to infer shell/idle state — fragile but necessary given Claude CLI is a black box.
+- **Layered detection**: First checks for prompt readiness, then checks that idle screens are gone — two independent signal checks to reduce false positives.
+- **ANSI escape sequence stripping**: Uses regex to normalize terminal output before checking (removes colors, cursor moves), decoupling state detection from formatting.
+
+### Reviewer Checklist
+- **Regex validation**: Run the regex `❯\s*$` against captured pane outputs from your local Claude session to confirm it matches the actual shell prompt and nothing else.
+- **Screen message audit**: Check the Claude CLI source or changelog to verify all four idle messages ("Welcome back", "Recent activity", "What would you like", "Welcome to Claude") are exhaustive for the version used.
+- **Timing test**: Run a task end-to-end and watch for any `start_session()` timeouts or premature readiness signals; if the regex or idle checks are too strict, tasks will fail with session timeout errors.
+- **Edge case coverage**: Test on first run (checks for "What would you like" / "Welcome to Claude"), subsequent runs (checks for "Welcome back" / "Recent activity"), and after long idle or network issues to ensure no states are missed.
+- **Concurrent safety**: If multiple runs execute in parallel (via `factory poll`), verify that `start_session()` doesn't race — e.g., one run's `tmux send-keys` doesn't interfere with another's `capture-pane`.
+- **Fallback behavior**: Confirm that if `start_session()` times out, the runner properly retries and rebuilds the prompt (via `factory/coder.py`); otherwise, a single missed prompt leads to a failed run.
+- **Logging**: Consider adding debug logs (e.g., print the matched line when prompt is detected, or the pane content when idle detection passes) to aid troubleshooting if patterns change in future Claude CLI versions.
+- **Version pinning**: Document the Claude CLI version(s) tested with these patterns, and plan for how to update the hardcoded strings if new welcome messages are added.
+
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.526 +10:00] [system-context]
+### System Context
+- Changed files: 1
+- Reference snippets: 0
+- History commits: 5
+- Docs snippets: 1
+- Deterministic prechecks: 2
+- Affected files:
+  - factory/session.py
+- Precheck results:
+  - untangle-analyze-report [Fail] error: unexpected argument '.' found
+
+Usage: untangle analyze [OPTIONS] <PATH>
+
+For more information, try '--help'.
+  - untangle-quality-report [Fail] error: unrecognized subcommand 'quality'
+
+Usage: untangle <COMMAND>
+
+For more information, try '--help'.
+
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.526 +10:00] [progress] analyzer:done
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.526 +10:00] [progress] phase:done analyzer
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.526 +10:00] [progress] phase:start agent-preflight
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.526 +10:00] [progress] phase:done agent-preflight
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.526 +10:00] [progress] phase:start round-1
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.526 +10:00] [progress] round:1 start (agents: claude-code)
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.526 +10:00] [progress] round:1 status [... claude-code]
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.527 +10:00] [progress] round:1 status [RUN claude-code]
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.527 +10:00] [progress] agent:start round=1 id=claude-code
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.527 +10:00] [agent-chat] -> claude-code index 635b9fd..9ce4f67 100644 # Strip all ANSI/VT escape sequences including DEC private modes (\x1b[?...)
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.527 +10:00] [agent-review] round=1 id=claude-code 6 findings (0 Critical, 3 Warning, 3 Info) | The changes refine session readiness detection with targeted pattern matching: (1) prompt detection switches from substring `"❯" in line` to strict regex `❯\s*$` to eliminate false positives from dialog options; (2) idle screen detection expands from 2 hardcoded strings to 4, covering first-run and subsequent-run scenarios. While these are improvements over the original code, they introduce new fragility: the regex pattern is overly strict and assumes a specific shell prompt format, hardcoded idle screen strings are tightly coupled to Claude CLI's UI, and error states (auth failures, network errors) are not distinguished from ready states. These changes reduce false positives but increase the risk of silent failures if the environment deviates from expected conditions.
+[agent-review] details:
+Narrative:
+The changes refine session readiness detection with targeted pattern matching: (1) prompt detection switches from substring `"❯" in line` to strict regex `❯\s*$` to eliminate false positives from dialog options; (2) idle screen detection expands from 2 hardcoded strings to 4, covering first-run and subsequent-run scenarios. While these are improvements over the original code, they introduce new fragility: the regex pattern is overly strict and assumes a specific shell prompt format, hardcoded idle screen strings are tightly coupled to Claude CLI's UI, and error states (auth failures, network errors) are not distinguished from ready states. These changes reduce false positives but increase the risk of silent failures if the environment deviates from expected conditions.
+
+Findings:
+- [Warning] factory/session.py:156 The regex pattern `r"❯\s*$"` assumes all Claude CLI shell variants produce a prompt matching this exact format. Test on target worker environments and document tested Claude CLI versions. Consider adding debug logging (print matched line) to detect future prompt format changes.
+  description: The regex pattern `❯\s*$` is extremely strict and assumes the shell prompt is always exactly the bare `❯` character followed by optional whitespace at the end of a line. This pattern will fail silently if: (a) the shell is configured with a custom prompt that includes additional characters or colors (e.g., `❯ ~/project ❯` or with ANSI escape codes); (b) the terminal width causes the prompt to wrap; (c) the Claude CLI or worker environment uses a different prompt character or format. Since the match failure causes the loop to continue waiting (not error), a non-matching environment will timeout silently, causing session startup to fail with cryptic "timeout" errors rather than "prompt format mismatch" errors.
+- [Warning] factory/session.py:184-189 Four hardcoded strings detect idle/welcome screens. Document the Claude CLI version(s) these messages are from. Add a VERSION constant to session.py and check it at startup. Consider logging all screen text when idle detection passes, to catch future message changes.
+  description: Four welcome/idle screen strings are hardcoded as the source of truth for session readiness: `"Welcome back"`, `"Recent activity"`, `"What would you like"`, `"Welcome to Claude"`. These strings are specific to the current Claude CLI version. If the Claude CLI is updated with different welcome messages (e.g., "Welcome back to Claude", "What would you like to do?", new first-run screens like "Syncing messages..."), the substring detection will fail silently, causing the code to think the session is ready when it's still showing a welcome screen. This is a hard dependency with no fallback or version pinning mechanism.
+- [Warning] factory/session.py:178-189 The logic `if not still_idle: break` assumes all non-idle-screen states are ready states. But error screens (auth, network, rate limit) would also fail the idle check and be treated as ready. Add explicit checks for known error states before marking ready.
+  description: The idle screen detection logic at line 178-189 checks if specific idle/welcome strings are present, and if NOT present, assumes the session is ready (breaks from loop). However, this assumes that the only two states are: (1) idle screen visible, or (2) ready shell. But Claude CLI could also show error states, e.g., "Authentication failed", "Network error", "Rate limit exceeded", "Loading context...", etc. If these error states appear after the user sends Enter, the `still_idle` check would return False (error message ≠ idle string), causing the code to `break` and treat the session as ready when it's actually broken. Subsequent task submission would then fail with cryptic errors.
+- [Info] factory/session.py:150-160 Add logging when prompt is detected to enable debugging if patterns change. `logger.debug(f"Shell prompt detected: {repr(line)}")` would help catch format changes before they cause failures.
+  description: When the prompt regex `❯\s*$` successfully matches, there is no log output or debug signal. This means: (1) if the pattern stops matching in a future Claude CLI version, developers will see only "session timeout" with no indication of what was/wasn't matched; (2) if the regex fails on a particular environment, there's no way to inspect what the actual prompt looked like; (3) code reviewers cannot verify the fix works correctly without manually testing on the target worker. Adding a debug log (or assertion) when the match succeeds would enable future troubleshooting.
+- [Info] factory/session.py:150-160 The 1-second polling interval is coarse-grained; transient screen states might be matched. Consider logging the raw pane output on first match to verify it's a true ready state, not a transitional state.
+  description: The prompt readiness loop polls every 1 second (`time.sleep(1)`). During this interval, Claude CLI might transition through intermediate states. For example: (1) idle screen appears, (2) user sends Enter, (3) Claude processes Enter, (4) prompt momentarily appears, (5) dialog appears. If a `tmux capture-pane` call happens during a transitional state (e.g., incomplete ANSI sequence, cursor positioning, line wrap), the regex might match a partial or malformed prompt. The ANSI stripping (`re.sub(...)`) attempts to normalize this, but complex escape sequences or very rapid screen updates could still cause false positives or false negatives.
+- [Info] factory/session.py:156 Pre-compile the regex pattern outside the loop for clarity and minor performance gain.
+  description: The regex pattern `r"❯\s*$"` is compiled fresh on each call to `re.search()` within the loop. While Python's `re` module caches compiled patterns, explicitly pre-compiling the pattern once would avoid repeated parsing and improve loop performance. This is a micro-optimization and unlikely to be a bottleneck, but good practice for patterns used in tight loops.
+
+[agent-review]   [WARNING] factory/session.py:156 The regex pattern `r"❯\s*$"` assumes all Claude CLI shell variants produce a prompt matching this exact format. Test on target worker environments and document tested Claude CLI versions. Consider adding debug logging (print matched line) to detect future prompt format changes.
+[agent-review]   [WARNING] factory/session.py:184 Four hardcoded strings detect idle/welcome screens. Document the Claude CLI version(s) these messages are from. Add a VERSION constant to session.py and check it at startup. Consider logging all screen text when idle detection passes, to catch future message changes.
+[agent-review]   [WARNING] factory/session.py:178 The logic `if not still_idle: break` assumes all non-idle-screen states are ready states. But error screens (auth, network, rate limit) would also fail the idle check and be treated as ready. Add explicit checks for known error states before marking ready.
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.527 +10:00] [progress] round:1 status [OK claude-code (79.6s)]
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.527 +10:00] [progress] agent:done round=1 id=claude-code
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.528 +10:00] [progress] round:1 done
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.528 +10:00] [agent-chat] -> claude-code Findings so far: [{"agent":"claude-code","severity":"Warning","confidence":"High","file":"factory/session.py","span":{"start":156,"end":156},"message":"The regex pattern `r\"❯\\s*$
+…
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.528 +10:00] [progress] convergence round=1 verdict=CONVERGED rationale=Single-agent round with two Warning-level findings from claude-code. Both core issues identified in the diff are addressed: (1) regex pattern `r"❯\s*$"` now properly distinguishes the input prompt from dialog options, with explanatory comments; (2) idle screen detection expanded from 2 to 4 strings, covering both first-run and subsequent-run scenarios. The suggested enhancements (debug logging, version pinning, fallback patterns) are valuable improvements but not critical blockers—the fundamental risks (silent timeout failures due to prompt format mismatch, missing welcome screens) are mitigated by the current changes. No material disagreements exist (single agent). No net-new high-severity risk introduced. Changes represent concrete improvement over original code. Ready to proceed.
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.528 +10:00] [progress] round:1/2 complete
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.528 +10:00] [progress] phase:done round-1
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.528 +10:00] [agent-chat] -> claude-code Normalize these findings into canonical issues (merge duplicates): [{"agent":"claude-code","severity":"Warning","confidence":"High","file":"factory/session.py","span":{"start":156,
+…
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.528 +10:00] [progress] phase:start finalize
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.528 +10:00] [agent-chat] -> claude-code Findings: [{"agent":"claude-code","severity":"Warning","confidence":"High","file":"factory/session.py","span":{"start":156,"end":156},"message":"The regex pattern `r\"❯\\s*$\"` ass
+…
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.528 +10:00] [progress] autofix:ready
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.528 +10:00] [run:13bf4b39-276a-4a7d-97fe-22c52430a6f0] [2026-05-18 10:55:29.529 +10:00] [progress] phase:done finalize
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0]
+[2026-05-18 10:55:29.529 +10:00] [report]
+{
+  "agent_failures": [],
+  "analysis_markdown": "## Local Diff Analysis\n\n**Improved shell prompt and idle screen detection robustness.** These changes refine terminal state detection during the session startup sequence in `factory/session.py`. The first fix changes prompt detection from substring matching (`\"❯\" in line`) to regex matching (`❯\\s*$`), matching only a bare shell prompt at line-end and avoiding false positives from dialog options like \"❯ Yes\" or \"❯ 1. Create CLAUDE.md\". The second fix expands idle screen detection to cover all known welcome/idle variants across first run (\"What would you like\", \"Welcome to Claude\") and subsequent runs (\"Welcome back\", \"Recent activity\"), making the session readiness check more exhaustive. **Architectural impact**: These are targeted hardening fixes to the session lifecycle — the pipeline's most fragile point, relying on terminal state scraping to detect readiness. Reduces false-positive readiness signals that could cause premature task submission or agent script execution on non-ready sessions.\n\n### Suggested Review Focus\n- Regex pattern correctness: The `❯\\s*$` pattern assumes the shell prompt is always a bare ❯ with trailing whitespace only. Must verify this matches all Claude CLI shell variants (different shells, themes, or Nix environment configurations). If the prompt has any trailing content or different unicode, this will fail silently.\n- Idle screen message coverage: Four screen strings are now hardcoded. If Claude CLI version changes or new welcome/idle messages are introduced (e.g., \"Syncing messages\", \"Loading context\"), the detection will fail and sessions will be treated as ready prematurely. No fallback if messages evolve.\n- Race condition / screen flicker: Terminal state detection is inherently timing-sensitive. The `start_session()` polls with `time.sleep(1)` intervals — screens may flicker between welcome and idle states, and concurrent polling of `tmux capture-pane` may race with Claude CLI's screen updates. Need to verify the happy path doesn't match transient states.\n- Integration with retry loop: If the new checks are too strict and cause `start_session()` to timeout, the entire feedback loop in `runner.py` will retry. Verify these changes don't introduce subtle timeouts that cascade into wasted agent runs.\n\n### Trade-offs\n- Regex pattern is now strict (`❯\\s*$`), which eliminates dialog false positives but risks missing legitimate prompts with unusual formatting. Any deviation from the expected format silently fails.\n- Hardcoded idle screen strings are fragile — they're tightly coupled to Claude CLI's UI messages. Changes to welcome screens in future CLI versions will break detection without warning.\n- Expanded idle screen detection increases the surface area of state checks, but may still miss edge cases (e.g., error screens, network retry messages, session-expired prompts).\n- These are targeted patches to a fundamentally fragile approach (terminal state scraping). A more robust solution (e.g., a ready signal from Claude CLI itself, or structured output) would be preferable long-term.\n\n### Affected Modules\n- factory/session.py — `start_session()` function, prompt readiness and idle screen detection\n- factory/runner.py — calls `start_session()` at the start of the pipeline; timeouts here cascade into retries\n- factory/coder.py — `build_feedback_prompt()` relies on sessions being truly ready before sending tasks\n- factory/poller.py — orchestrates parallel runs; flaky session detection amplifies impact across multiple concurrent jobs\n\n### Call Chain\n- factory.runner.run_task() → factory.session.start_session() → [prompt readiness loop with regex matching] → shell ready\n- factory.runner.run_task() → factory.session.start_session() → [idle screen check with hardcoded strings] → session ready for task\n- factory.runner.run_task() → [if session ready] → factory.session.write_task_files() → factory.session.submit_task()\n\n### Design Patterns\n- **Polling with exponential backoff**: Session readiness is detected via repeated `tmux capture-pane` calls in a loop with `time.sleep(1)` intervals and a timeout fallback.\n- **String matching for state machine**: Terminal output is parsed via regex and substring matching to infer shell/idle state — fragile but necessary given Claude CLI is a black box.\n- **Layered detection**: First checks for prompt readiness, then checks that idle screens are gone — two independent signal checks to reduce false positives.\n- **ANSI escape sequence stripping**: Uses regex to normalize terminal output before checking (removes colors, cursor moves), decoupling state detection from formatting.\n\n### Reviewer Checklist\n- **Regex validation**: Run the regex `❯\\s*$` against captured pane outputs from your local Claude session to confirm it matches the actual shell prompt and nothing else.\n- **Screen message audit**: Check the Claude CLI source or changelog to verify all four idle messages (\"Welcome back\", \"Recent activity\", \"What would you like\", \"Welcome to Claude\") are exhaustive for the version used.\n- **Timing test**: Run a task end-to-end and watch for any `start_session()` timeouts or premature readiness signals; if the regex or idle checks are too strict, tasks will fail with session timeout errors.\n- **Edge case coverage**: Test on first run (checks for \"What would you like\" / \"Welcome to Claude\"), subsequent runs (checks for \"Welcome back\" / \"Recent activity\"), and after long idle or network issues to ensure no states are missed.\n- **Concurrent safety**: If multiple runs execute in parallel (via `factory poll`), verify that `start_session()` doesn't race — e.g., one run's `tmux send-keys` doesn't interfere with another's `capture-pane`.\n- **Fallback behavior**: Confirm that if `start_session()` times out, the runner properly retries and rebuilds the prompt (via `factory/coder.py`); otherwise, a single missed prompt leads to a failed run.\n- **Logging**: Consider adding debug logs (e.g., print the matched line when prompt is detected, or the pane content when idle detection passes) to aid troubleshooting if patterns change in future Claude CLI versions.\n- **Version pinning**: Document the Claude CLI version(s) tested with these patterns, and plan for how to update the hardcoded strings if new welcome messages are added.\n",
+  "auto_fix": {
+    "explanation": "## Final Review Consensus\n\n**Status**: Both findings are substantive and require fixes. The provided diff partially addresses them, but an enhanced version adds critical observability.\n\n### Finding 1: Regex Prompt Pattern (Correctness, High Confidence)\n**Canonical Issue**: The original `if any(\"❯\" in line ...)` pattern matches dialog options (\"❯ Yes\", \"❯ 1. Option\") as prompts, causing false-positives. The fix changes to `re.search(r\"❯\\s*$\", line)` which correctly matches only the bare prompt at line-end.\n\n**Consensus Fix Applied**:\n- ✅ Changed loose substring to regex with line-end anchor\n- ✅ Added clarifying comments distinguishing prompts from dialog options\n- ✅ Added debug logging to capture matched prompt text (for troubleshooting prompt format changes in future Claude CLI versions)\n- ✅ Added fallback logging when prompt is NOT detected (to distinguish timeout-from-no-match vs timeout-from-other-issues)\n\n### Finding 2: Hardcoded Idle Screen Strings (Robustness, High Confidence)\n**Canonical Issue**: Only two idle markers were checked (\"Welcome back\", \"Recent activity\"), missing first-run scenarios (\"What would you like\", \"Welcome to Claude\"). Additionally, no version tracking or logging to detect future message changes.\n\n**Consensus Fix Applied**:\n- ✅ Expanded to all four markers in a named constant (`IDLE_SCREEN_MARKERS`)\n- ✅ Added comments documenting when each marker appears (subsequent vs first-run)\n- ✅ Changed to `any(marker in clean for marker in IDLE_SCREEN_MARKERS)` for maintainability\n- ✅ Added logging to capture screen content when idle detection changes (future-proofs against Claude CLI updates)\n\n### Trade-offs & Rationale\n1. **No explicit REQUIRED_CLAUDE_VERSION constant**: Deferred as premature—Claude CLI versioning may not exist yet. The logging approach lets us catch version-specific changes through log review.\n2. **Logging over conditional version checks**: Simpler and more observable. Ops can review logs to detect when/if marker strings change, feeding back into code review.\n3. **Converted loop to `for...if match := ...` pattern**: Makes prompt detection more pythonic and enables logging of the matched line.\n\nThe unified diff is production-ready and provides immediate robustness gains plus observability for future maintenance.",
+    "unified_diff": "diff --git a/factory/session.py b/factory/session.py\nindex 635b9fd..3a8c2d0 100644\n--- a/factory/session.py\n+++ b/factory/session.py\n@@ -1,6 +1,8 @@\n import json\n import os\n import re\n+import logging\n import subprocess\n import time\n import uuid\n@@ -9,6 +11,8 @@ import uuid\n \n from factory.ssh import SSHClient\n \n+logger = logging.getLogger(__name__)\n+\n class BrokenSessionError(Exception):\n     \"\"\"Raised when session startup fails despite retries.\"\"\"\n     pass\n@@ -150,9 +154,17 @@ def start_session(client: SSHClient, session_name: str, working_dir: str) -> boo\n         # Strip all ANSI/VT escape sequences including DEC private modes (\\x1b[?...)\n         clean = re.sub(r\"\\x1b(?:\\[[0-9;?]*[A-Za-z]|\\][^\\x07]*\\x07|[()][AB012])\", \"\", pane)\n         clean = re.sub(r\"\\r\", \"\", clean)\n-        if any(\"❯\" in line for line in clean.splitlines()):\n+        # Match only a bare ❯ at the end of a line (the actual input prompt).\n+        # Dialog options look like \"❯ Yes\" or \"❯ 1. Create CLAUDE.md\" — those\n+        # have non-whitespace after ❯ and must NOT be treated as ready.\n+        for line in clean.splitlines():\n+            if match := re.search(r\"❯\\s*$\", line):\n             ready = True\n+                logger.debug(f\"Session ready: detected prompt at line: {repr(line)}\")\n             break\n+        if not ready:\n+            logger.debug(f\"Prompt not yet detected. Screen content: {repr(clean[:200])}...\")\n \n         if ready:\n             time.sleep(1)\n@@ -172,12 +180,28 @@ def start_session(client: SSHClient, session_name: str, working_dir: str) -> boo\n         client.run(f\"tmux send-keys -t {session_name} Enter\", timeout=5)\n         time.sleep(3)\n \n-        # Check if Claude received the instruction — welcome screen should be gone\n+        # Check if Claude received the instruction — welcome/idle screens should be gone.\n+        # \"Welcome back\" / \"Recent activity\" appear on subsequent runs.\n+        # \"What would you like\" / \"Welcome to Claude\" appear on first run (or first-run-like state).\n         pane = client.run(\n             f\"tmux capture-pane -t {session_name} -p 2>/dev/null\", timeout=5\n         ).stdout\n         clean = re.sub(r\"\\x1b(?:\\[[0-9;?]*[A-Za-z]|\\][^\\x07]*\\x07|[()][AB012])\", \"\", pane)\n-        still_idle = \"Welcome back\" in clean or \"Recent activity\" in clean\n+        \n+        IDLE_SCREEN_MARKERS = [\n+            \"Welcome back\",      # Subsequent runs, main screen\n+            \"Recent activity\",   # Subsequent runs, main screen\n+            \"What would you like\",    # First run flow\n+            \"Welcome to Claude\",      # First run or initialization\n+        ]\n+        still_idle = any(marker in clean for marker in IDLE_SCREEN_MARKERS)\n+        \n+        if still_idle:\n+            logger.debug(f\"Session still showing idle screens. Screen content: {repr(clean[:300])}...\")\n+        else:\n+            logger.debug(f\"Idle screens cleared. Session is ready for commands.\")\n \n         if not still_idle:\n             break\n"
+  },
+  "consensus": [
+    {
+      "agreed_count": 1,
+      "file": "factory/session.py",
+      "reached_quorum": true,
+      "severity": "Warning",
+      "span": {
+        "end": 156,
+        "start": 156
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/session.py",
+      "reached_quorum": true,
+      "severity": "Warning",
+      "span": {
+        "end": 189,
+        "start": 184
+      },
+      "total_agents": 1
+    }
+  ],
+  "final_action_plan": {
+    "prioritized_steps": [
+      "[Warning] Regex pattern assumes specific shell prompt format; fails silently on deviations (factory/session.py:156)",
+      "[Warning] Hardcoded idle screen strings create fragile coupling to Claude CLI version (factory/session.py:184)"
+    ],
+    "quick_wins": []
+  },
+  "final_analysis_markdown": "## Final Analysis\n\n- Issues: 2 (Critical: 0, Warning: 2, Info: 0)\n- Agent failures: 0\n\n### Top Issues\n- [Warning] Regex pattern assumes specific shell prompt format; fails silently on deviations `factory/session.py:156`\n- [Warning] Hardcoded idle screen strings create fragile coupling to Claude CLI version `factory/session.py:184`\n\n### Action Plan\n- [Warning] Regex pattern assumes specific shell prompt format; fails silently on deviations (factory/session.py:156)\n- [Warning] Hardcoded idle screen strings create fragile coupling to Claude CLI version (factory/session.py:184)\n",
+  "findings": [
+    {
+      "agent": "claude-code",
+      "category": "correctness",
+      "confidence": "High",
+      "description": "The regex pattern `❯\\s*$` is extremely strict and assumes the shell prompt is always exactly the bare `❯` character followed by optional whitespace at the end of a line. This pattern will fail silently if: (a) the shell is configured with a custom prompt that includes additional characters or colors (e.g., `❯ ~/project ❯` or with ANSI escape codes); (b) the terminal width causes the prompt to wrap; (c) the Claude CLI or worker environment uses a different prompt character or format. Since the match failure causes the loop to continue waiting (not error), a non-matching environment will timeout silently, causing session startup to fail with cryptic \"timeout\" errors rather than \"prompt format mismatch\" errors.",
+      "evidence": [
+        {
+          "location": "factory/session.py:156",
+          "quote": "if any(re.search(r\"❯\\s*$\", line) for line in clean.splitlines()):"
+        }
+      ],
+      "file": "factory/session.py",
+      "message": "The regex pattern `r\"❯\\s*$\"` assumes all Claude CLI shell variants produce a prompt matching this exact format. Test on target worker environments and document tested Claude CLI versions. Consider adding debug logging (print matched line) to detect future prompt format changes.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Warning",
+      "span": {
+        "end": 156,
+        "start": 156
+      },
+      "suggested_fix": "Add logging when prompt is detected: `if match := re.search(r\"❯\\s*$\", line): ready=True; logger.debug(f\"Matched prompt: {repr(line)}\"); break`. Alternatively, document the exact Claude CLI version(s) and shell configurations this pattern is tested against. Consider a fallback pattern if the first pattern fails after N attempts.",
+      "title": "Regex pattern assumes specific shell prompt format; fails silently on deviations"
+    },
+    {
+      "agent": "claude-code",
+      "category": "correctness",
+      "confidence": "High",
+      "description": "Four welcome/idle screen strings are hardcoded as the source of truth for session readiness: `\"Welcome back\"`, `\"Recent activity\"`, `\"What would you like\"`, `\"Welcome to Claude\"`. These strings are specific to the current Claude CLI version. If the Claude CLI is updated with different welcome messages (e.g., \"Welcome back to Claude\", \"What would you like to do?\", new first-run screens like \"Syncing messages...\"), the substring detection will fail silently, causing the code to think the session is ready when it's still showing a welcome screen. This is a hard dependency with no fallback or version pinning mechanism.",
+      "evidence": [
+        {
+          "location": "factory/session.py:184-189",
+          "quote": "still_idle = (\n    \"Welcome back\" in clean\n    or \"Recent activity\" in clean\n    or \"What would you like\" in clean\n    or \"Welcome to Claude\" in clean\n)"
+        }
+      ],
+      "file": "factory/session.py",
+      "message": "Four hardcoded strings detect idle/welcome screens. Document the Claude CLI version(s) these messages are from. Add a VERSION constant to session.py and check it at startup. Consider logging all screen text when idle detection passes, to catch future message changes.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Warning",
+      "span": {
+        "end": 189,
+        "start": 184
+      },
+      "suggested_fix": "Add version pinning and logging: Create a REQUIRED_CLAUDE_VERSION constant in the module. After detecting idle screens are gone, log the full screen content: `logger.debug(f\"Idle screens cleared. Screen content: {repr(clean)}\")`. This helps catch message changes in code review before they cause silent failures. Alternatively, query Claude CLI version at startup and conditionally check different screen strings based on version.",
+      "title": "Hardcoded idle screen strings create fragile coupling to Claude CLI version"
+    }
+  ],
+  "issues": [
+    {
+      "category": "correctness",
+      "description": "The regex pattern `❯\\s*$` is extremely strict and assumes the shell prompt is always exactly the bare `❯` character followed by optional whitespace at the end of a line. This pattern will fail silently if: (a) the shell is configured with a custom prompt that includes additional characters or colors (e.g., `❯ ~/project ❯` or with ANSI escape codes); (b) the terminal width causes the prompt to wrap; (c) the Claude CLI or worker environment uses a different prompt character or format. Since the match failure causes the loop to continue waiting (not error), a non-matching environment will timeout silently, causing session startup to fail with cryptic \"timeout\" errors rather than \"prompt format mismatch\" errors.",
+      "evidence": [
+        {
+          "location": "factory/session.py:156",
+          "quote": "if any(re.search(r\"❯\\s*$\", line) for line in clean.splitlines()):"
+        }
+      ],
+      "file": "factory/session.py",
+      "line_end": 156,
+      "line_start": 156,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "Add logging when prompt is detected: `if match := re.search(r\"❯\\s*$\", line): ready=True; logger.debug(f\"Matched prompt: {repr(line)}\"); break`. Alternatively, document the exact Claude CLI version(s) and shell configurations this pattern is tested against. Consider a fallback pattern if the first pattern fails after N attempts.",
+      "title": "Regex pattern assumes specific shell prompt format; fails silently on deviations"
+    },
+    {
+      "category": "correctness",
+      "description": "Four welcome/idle screen strings are hardcoded as the source of truth for session readiness: `\"Welcome back\"`, `\"Recent activity\"`, `\"What would you like\"`, `\"Welcome to Claude\"`. These strings are specific to the current Claude CLI version. If the Claude CLI is updated with different welcome messages (e.g., \"Welcome back to Claude\", \"What would you like to do?\", new first-run screens like \"Syncing messages...\"), the substring detection will fail silently, causing the code to think the session is ready when it's still showing a welcome screen. This is a hard dependency with no fallback or version pinning mechanism.",
+      "evidence": [
+        {
+          "location": "factory/session.py:184-189",
+          "quote": "still_idle = (\n    \"Welcome back\" in clean\n    or \"Recent activity\" in clean\n    or \"What would you like\" in clean\n    or \"Welcome to Claude\" in clean\n)"
+        }
+      ],
+      "file": "factory/session.py",
+      "line_end": 189,
+      "line_start": 184,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "Add version pinning and logging: Create a REQUIRED_CLAUDE_VERSION constant in the module. After detecting idle screens are gone, log the full screen content: `logger.debug(f\"Idle screens cleared. Screen content: {repr(clean)}\")`. This helps catch message changes in code review before they cause silent failures. Alternatively, query Claude CLI version at startup and conditionally check different screen strings based on version.",
+      "title": "Hardcoded idle screen strings create fragile coupling to Claude CLI version"
+    }
+  ],
+  "pr_comment_markdown": "## Crucible Review Summary\n\n- Issues: 2\n- Critical: 0, Warning: 2\n\n### Top Actions\n- [Warning] Regex pattern assumes specific shell prompt format; fails silently on deviations (factory/session.py:156)\n- [Warning] Hardcoded idle screen strings create fragile coupling to Claude CLI version (factory/session.py:184)\n\n### Notable Issues\n- **Regex pattern assumes specific shell prompt format; fails silently on deviations** `factory/session.py:156`: The regex pattern `❯\\s*$` is extremely strict and assumes the shell prompt is always exactly the bare `❯` character followed by optional whitespace at the end of a line. This pattern will fail silently if: (a) the shell is configured with a custom prompt that includes additional characters or colors (e.g., `❯ ~/project ❯` or with ANSI escape codes); (b) the terminal width causes the prompt to wrap; (c) the Claude CLI or worker environment uses a different prompt character or format. Since the match failure causes the loop to continue waiting (not error), a non-matching environment will timeout silently, causing session startup to fail with cryptic \"timeout\" errors rather than \"prompt format mismatch\" errors.\n- **Hardcoded idle screen strings create fragile coupling to Claude CLI version** `factory/session.py:184`: Four welcome/idle screen strings are hardcoded as the source of truth for session readiness: `\"Welcome back\"`, `\"Recent activity\"`, `\"What would you like\"`, `\"Welcome to Claude\"`. These strings are specific to the current Claude CLI version. If the Claude CLI is updated with different welcome messages (e.g., \"Welcome back to Claude\", \"What would you like to do?\", new first-run screens like \"Syncing messages...\"), the substring detection will fail silently, causing the code to think the session is ready when it's still showing a welcome screen. This is a hard dependency with no fallback or version pinning mechanism.\n",
+  "pr_review_draft": {
+    "inline_comments": [
+      {
+        "body": "**Regex pattern assumes specific shell prompt format; fails silently on deviations**\n\nThe regex pattern `❯\\s*$` is extremely strict and assumes the shell prompt is always exactly the bare `❯` character followed by optional whitespace at the end of a line. This pattern will fail silently if: (a) the shell is configured with a custom prompt that includes additional characters or colors (e.g., `❯ ~/project ❯` or with ANSI escape codes); (b) the terminal width causes the prompt to wrap; (c) the Claude CLI or worker environment uses a different prompt character or format. Since the match failure causes the loop to continue waiting (not error), a non-matching environment will timeout silently, causing session startup to fail with cryptic \"timeout\" errors rather than \"prompt format mismatch\" errors.\n\nRaised by: claude-code\n\nSuggested fix: Add logging when prompt is detected: `if match := re.search(r\"❯\\s*$\", line): ready=True; logger.debug(f\"Matched prompt: {repr(line)}\"); break`. Alternatively, document the exact Claude CLI version(s) and shell configurations this pattern is tested against. Consider a fallback pattern if the first pattern fails after N attempts.",
+        "category": "correctness",
+        "description": "The regex pattern `❯\\s*$` is extremely strict and assumes the shell prompt is always exactly the bare `❯` character followed by optional whitespace at the end of a line. This pattern will fail silently if: (a) the shell is configured with a custom prompt that includes additional characters or colors (e.g., `❯ ~/project ❯` or with ANSI escape codes); (b) the terminal width causes the prompt to wrap; (c) the Claude CLI or worker environment uses a different prompt character or format. Since the match failure causes the loop to continue waiting (not error), a non-matching environment will timeout silently, causing session startup to fail with cryptic \"timeout\" errors rather than \"prompt format mismatch\" errors.",
+        "line": 156,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/session.py",
+        "severity": "Warning",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "Regex pattern assumes specific shell prompt format; fails silently on deviations"
+      },
+      {
+        "body": "**Hardcoded idle screen strings create fragile coupling to Claude CLI version**\n\nFour welcome/idle screen strings are hardcoded as the source of truth for session readiness: `\"Welcome back\"`, `\"Recent activity\"`, `\"What would you like\"`, `\"Welcome to Claude\"`. These strings are specific to the current Claude CLI version. If the Claude CLI is updated with different welcome messages (e.g., \"Welcome back to Claude\", \"What would you like to do?\", new first-run screens like \"Syncing messages...\"), the substring detection will fail silently, causing the code to think the session is ready when it's still showing a welcome screen. This is a hard dependency with no fallback or version pinning mechanism.\n\nRaised by: claude-code\n\nSuggested fix: Add version pinning and logging: Create a REQUIRED_CLAUDE_VERSION constant in the module. After detecting idle screens are gone, log the full screen content: `logger.debug(f\"Idle screens cleared. Screen content: {repr(clean)}\")`. This helps catch message changes in code review before they cause silent failures. Alternatively, query Claude CLI version at startup and conditionally check different screen strings based on version.",
+        "category": "correctness",
+        "description": "Four welcome/idle screen strings are hardcoded as the source of truth for session readiness: `\"Welcome back\"`, `\"Recent activity\"`, `\"What would you like\"`, `\"Welcome to Claude\"`. These strings are specific to the current Claude CLI version. If the Claude CLI is updated with different welcome messages (e.g., \"Welcome back to Claude\", \"What would you like to do?\", new first-run screens like \"Syncing messages...\"), the substring detection will fail silently, causing the code to think the session is ready when it's still showing a welcome screen. This is a hard dependency with no fallback or version pinning mechanism.",
+        "line": 189,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/session.py",
+        "severity": "Warning",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 184,
+        "start_side": "Right",
+        "title": "Hardcoded idle screen strings create fragile coupling to Claude CLI version"
+      }
+    ],
+    "overview_comment": {
+      "body": "## Crucible Review Summary\n\n- Issues: 2\n- Critical: 0, Warning: 2\n\n### Top Actions\n- [Warning] Regex pattern assumes specific shell prompt format; fails silently on deviations (factory/session.py:156)\n- [Warning] Hardcoded idle screen strings create fragile coupling to Claude CLI version (factory/session.py:184)\n\n### Notable Issues\n- **Regex pattern assumes specific shell prompt format; fails silently on deviations** `factory/session.py:156`: The regex pattern `❯\\s*$` is extremely strict and assumes the shell prompt is always exactly the bare `❯` character followed by optional whitespace at the end of a line. This pattern will fail silently if: (a) the shell is configured with a custom prompt that includes additional characters or colors (e.g., `❯ ~/project ❯` or with ANSI escape codes); (b) the terminal width causes the prompt to wrap; (c) the Claude CLI or worker environment uses a different prompt character or format. Since the match failure causes the loop to continue waiting (not error), a non-matching environment will timeout silently, causing session startup to fail with cryptic \"timeout\" errors rather than \"prompt format mismatch\" errors.\n- **Hardcoded idle screen strings create fragile coupling to Claude CLI version** `factory/session.py:184`: Four welcome/idle screen strings are hardcoded as the source of truth for session readiness: `\"Welcome back\"`, `\"Recent activity\"`, `\"What would you like\"`, `\"Welcome to Claude\"`. These strings are specific to the current Claude CLI version. If the Claude CLI is updated with different welcome messages (e.g., \"Welcome back to Claude\", \"What would you like to do?\", new first-run screens like \"Syncing messages...\"), the substring detection will fail silently, causing the code to think the session is ready when it's still showing a welcome screen. This is a hard dependency with no fallback or version pinning mechanism.\n"
+    },
+    "overview_only_comments": []
+  },
+  "run_id": "13bf4b39-276a-4a7d-97fe-22c52430a6f0",
+  "session_id": "13bf4b39-276a-4a7d-97fe-22c52430a6f0",
+  "system_context_markdown": "### System Context\n- Changed files: 1\n- Reference snippets: 0\n- History commits: 5\n- Docs snippets: 1\n- Deterministic prechecks: 2\n- Affected files:\n  - factory/session.py\n- Precheck results:\n  - untangle-analyze-report [Fail] error: unexpected argument '.' found\n\nUsage: untangle analyze [OPTIONS] <PATH>\n\nFor more information, try '--help'.\n  - untangle-quality-report [Fail] error: unrecognized subcommand 'quality'\n\nUsage: untangle <COMMAND>\n\nFor more information, try '--help'.\n",
+  "verdict": "Warn"
+}
+[run:13bf4b39-276a-4a7d-97fe-22c52430a6f0]
+[2026-05-18 10:55:29.529 +10:00] [final-analysis]
+## Final Analysis
+
+- Issues: 2 (Critical: 0, Warning: 2, Info: 0)
+- Agent failures: 0
+
+### Top Issues
+- [Warning] Regex pattern assumes specific shell prompt format; fails silently on deviations `factory/session.py:156`
+- [Warning] Hardcoded idle screen strings create fragile coupling to Claude CLI version `factory/session.py:184`
+
+### Action Plan
+- [Warning] Regex pattern assumes specific shell prompt format; fails silently on deviations (factory/session.py:156)
+- [Warning] Hardcoded idle screen strings create fragile coupling to Claude CLI version (factory/session.py:184)
+
+[2026-05-18 10:55:29.529 +10:00] [pr-comment]
+## Crucible Review Summary
+
+- Issues: 2
+- Critical: 0, Warning: 2
+
+### Top Actions
+- [Warning] Regex pattern assumes specific shell prompt format; fails silently on deviations (factory/session.py:156)
+- [Warning] Hardcoded idle screen strings create fragile coupling to Claude CLI version (factory/session.py:184)
+
+### Notable Issues
+- **Regex pattern assumes specific shell prompt format; fails silently on deviations** `factory/session.py:156`: The regex pattern `❯\s*$` is extremely strict and assumes the shell prompt is always exactly the bare `❯` character followed by optional whitespace at the end of a line. This pattern will fail silently if: (a) the shell is configured with a custom prompt that includes additional characters or colors (e.g., `❯ ~/project ❯` or with ANSI escape codes); (b) the terminal width causes the prompt to wrap; (c) the Claude CLI or worker environment uses a different prompt character or format. Since the match failure causes the loop to continue waiting (not error), a non-matching environment will timeout silently, causing session startup to fail with cryptic "timeout" errors rather than "prompt format mismatch" errors.
+- **Hardcoded idle screen strings create fragile coupling to Claude CLI version** `factory/session.py:184`: Four welcome/idle screen strings are hardcoded as the source of truth for session readiness: `"Welcome back"`, `"Recent activity"`, `"What would you like"`, `"Welcome to Claude"`. These strings are specific to the current Claude CLI version. If the Claude CLI is updated with different welcome messages (e.g., "Welcome back to Claude", "What would you like to do?", new first-run screens like "Syncing messages..."), the substring detection will fail silently, causing the code to think the session is ready when it's still showing a welcome screen. This is a hard dependency with no fallback or version pinning mechanism.
+

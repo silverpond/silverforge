@@ -641,6 +641,64 @@ def _run_untangle(client: SSHClient, working_dir: str, base_branch: str, head_br
     return "" if result.exit_code == 0 else (result.stdout or result.stderr)
 
 
+_CRUCIBLE_DIFF_LIMIT = 1500
+_CRUCIBLE_TRUNCATED_LINES_PER_FILE = 80
+_CRUCIBLE_TRUNCATED_TOTAL_LINES = 1200
+
+
+def _truncate_large_diff(client: SSHClient, working_dir: str, base_branch: str, diff_line_count: int) -> str:
+    """Generate a truncated diff summary for diffs that exceed the crucible line limit."""
+    import shlex as _shlex
+
+    stats = client.run(
+        f"git -C {working_dir} diff --stat {base_branch}",
+        timeout=15,
+    ).stdout.strip()
+
+    files_out = client.run(
+        f"git -C {working_dir} diff --name-only {base_branch}",
+        timeout=15,
+    ).stdout.strip()
+    changed_files = [f for f in files_out.splitlines() if f]
+
+    # Prioritise source code files; deprioritise generated/lock files
+    _low_priority = (
+        ".lock", "lock.json", "package-lock", "yarn.lock", "Cargo.lock",
+        "poetry.lock", "Gemfile.lock", ".min.js", ".min.css",
+        "dist/", "build/", "__pycache__", ".pyc", "_generated", ".generated.",
+        ".pb.go", ".pb.py", "vendor/",
+    )
+
+    def _priority(path: str) -> int:
+        return 1 if any(p in path for p in _low_priority) else 0
+
+    ordered = sorted(changed_files, key=_priority)
+
+    truncated_parts: list[str] = []
+    total_lines = 0
+    for fpath in ordered:
+        if total_lines >= _CRUCIBLE_TRUNCATED_TOTAL_LINES:
+            truncated_parts.append("... (remaining files omitted due to size limit) ...")
+            break
+        quoted = _shlex.quote(fpath)
+        file_diff = client.run(
+            f"git -C {working_dir} diff {base_branch} -- {quoted} | head -n {_CRUCIBLE_TRUNCATED_LINES_PER_FILE}",
+            timeout=15,
+        ).stdout
+        if file_diff.strip():
+            truncated_parts.append(file_diff.rstrip())
+            total_lines += file_diff.count("\n")
+
+    truncated = "\n".join(truncated_parts)
+    return (
+        f"[SKIPPED] Diff is {diff_line_count} lines (>= {_CRUCIBLE_DIFF_LIMIT} limit). "
+        f"Crucible review skipped to avoid timeout.\n\n"
+        f"=== Diff Stats ===\n{stats}\n\n"
+        f"=== Truncated Diff (source files first, up to {_CRUCIBLE_TRUNCATED_LINES_PER_FILE} lines each) ===\n"
+        f"{truncated}"
+    )
+
+
 def _run_crucible(client: SSHClient, working_dir: str, base_branch: str, config: "CrucibleConfig") -> tuple:
     import json as _json
     _wd = shlex.quote(working_dir)

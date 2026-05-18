@@ -9,6 +9,7 @@ Pipeline:
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -276,7 +277,7 @@ def watch_task(
 
                 captured = client.run(
                     f"tmux capture-pane -t {session_name} -p -S -200 2>/dev/null || "
-                    f"cat {working_dir}/.factory/output.log 2>/dev/null || true",
+                    f"cat {shlex.quote(working_dir)}/.factory/output.log 2>/dev/null || true",
                     timeout=10,
                 ).stdout
                 store.save_log(run_id, f"agent_output_iter{iteration}.txt", captured)
@@ -333,13 +334,13 @@ def watch_task(
 
                     if task.crucible is not None and task.crucible.rounds > 0 and run.worktree_path:
                         # Commit any uncommitted agent changes so crucible can see the diff
-                        import shlex as _shlex
-                        commit_msg = _shlex.quote(f"factory: agent changes (iter {iteration})")
+                        commit_msg = shlex.quote(f"factory: agent changes (iter {iteration})")
+                        _wd = shlex.quote(working_dir)
                         client.run(
-                            f"git -C {working_dir} add -A && "
-                            f"git -C {working_dir} reset HEAD -- .factory/ .claude/ .crucible/ 2>/dev/null || true && "
-                            f"git -C {working_dir} diff --cached --quiet || "
-                            f"git -C {working_dir} commit -m {commit_msg}",
+                            f"git -C {_wd} add -A && "
+                            f"git -C {_wd} reset HEAD -- .factory/ .claude/ .crucible/ 2>/dev/null || true && "
+                            f"git -C {_wd} diff --cached --quiet || "
+                            f"git -C {_wd} commit -m {commit_msg}",
                             timeout=30,
                         )
                         _log(run_id, f"  running crucible review...")
@@ -469,7 +470,7 @@ def watch_task(
                     _post_results(slack_client, run, results, passed=True)
                     if slack_client and run.slack_channel_id:
                         summary = client.run(
-                            f"cat {working_dir}/.factory/completion.md 2>/dev/null || true",
+                            f"cat {shlex.quote(working_dir)}/.factory/completion.md 2>/dev/null || true",
                             timeout=10,
                         ).stdout.strip()
                         if summary:
@@ -632,7 +633,7 @@ def _print_eval_results(run_id: str, results: list) -> None:
 
 
 def _run_untangle(client: SSHClient, working_dir: str, base_branch: str, head_branch: str, config: "UntangleConfig") -> str:
-    cmd = (f"cd {working_dir} && untangle diff"
+    cmd = (f"cd {shlex.quote(working_dir)} && untangle diff"
            f" --base {base_branch} --head {head_branch}"
            f" --lang {config.lang} --fail-on {config.fail_on} --format json")
     result = client.run(cmd, timeout=config.timeout)
@@ -641,8 +642,8 @@ def _run_untangle(client: SSHClient, working_dir: str, base_branch: str, head_br
 
 def _run_crucible(client: SSHClient, working_dir: str, base_branch: str, config: "CrucibleConfig") -> tuple:
     import json as _json
+    _wd = shlex.quote(working_dir)
     if config.model:
-        import shlex as _shlex
         patch_script = (
             "c = open('.crucible.toml').read(); "
             "c = c.replace("
@@ -656,15 +657,15 @@ def _run_crucible(client: SSHClient, working_dir: str, base_branch: str, config:
             "open('.crucible.toml', 'w').write(c.replace(old, new))"
         )
         client.run(
-            f"cd {working_dir} && rm -f .crucible.toml && crucible config init && "
-            f"python3 -c {_shlex.quote(patch_script)}",
+            f"cd {_wd} && rm -f .crucible.toml && crucible config init && "
+            f"python3 -c {shlex.quote(patch_script)}",
             timeout=15,
         )
-    cmd = f"cd {working_dir} && crucible review --branch {base_branch} --json --debug"
+    cmd = f"cd {_wd} && crucible review --branch {base_branch} --json --debug"
     result = client.run(cmd, timeout=config.timeout)
     errors = result.stderr or ""
     debug_log = client.run(
-        f"ls -t {working_dir}/.crucible/runs/*/debug.log 2>/dev/null | head -1 | xargs cat 2>/dev/null || true",
+        f"ls -t {_wd}/.crucible/runs/*/debug.log 2>/dev/null | head -1 | xargs cat 2>/dev/null || true",
         timeout=10,
     ).stdout
     if "timed out" in errors.lower():

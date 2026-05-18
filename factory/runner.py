@@ -28,6 +28,8 @@ from factory.slack import SlackClient, get_token as get_slack_token, get_cached_
 from factory.ssh import SSHClient
 
 
+_CRUCIBLE_DIFF_LIMIT = 1000  # lines; diffs larger than this skip crucible to avoid timeout
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def launch_task(task: TaskDefinition, workers_path: Path = Path("workers.yaml")) -> Run:

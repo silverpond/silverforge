@@ -41,7 +41,7 @@ class EvalConfig(BaseModel):
 class CoderConfig(BaseModel):
     prompt: str
     max_iterations: int = 3      # how many coder → eval cycles before giving up
-    session_timeout: int = 3600  # seconds to wait for the agent to finish per iteration
+    session_timeout: int = 1800  # seconds to wait for the agent to finish per iteration
     agents: List[str] = Field(default_factory=lambda: ["claude"])  # agents to try in order
     model: Optional[str] = None  # claude model alias e.g. "sonnet", "opus"; None = worker default
     effort: Optional[str] = None  # claude effort level: low, medium, high, max; None = worker default

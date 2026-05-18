@@ -188,7 +188,7 @@ def start_session(client: SSHClient, session_name: str, working_dir: str) -> boo
 def wait_for_status(
     client: SSHClient,
     working_dir: str,
-    timeout: int = 600,
+    timeout: int = 3600,
     poll_interval: int = 5,
     session_name: Optional[str] = None,
 ) -> str:

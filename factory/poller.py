@@ -62,7 +62,7 @@ def issue_to_task(issue: Dict, template: TaskDefinition) -> TaskDefinition:
     coder = CoderConfig(
         prompt=prompt,
         max_iterations=template.coder.max_iterations if template.coder else 3,
-        session_timeout=template.coder.session_timeout if template.coder else 600,
+        session_timeout=template.coder.session_timeout if template.coder else 3600,
         agents=template.coder.agents if template.coder else ["claude"],
         rate_limit_markers=template.coder.rate_limit_markers if template.coder else [],
         model=template.coder.model if template.coder else None,

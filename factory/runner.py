@@ -26,6 +26,8 @@ from factory.slack import SlackClient, get_token as get_slack_token, get_cached_
 from factory.ssh import SSHClient
 
 
+_CRUCIBLE_DIFF_LIMIT = 1000  # lines; diffs larger than this skip crucible to avoid timeout
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def launch_task(task: TaskDefinition, workers_path: Path = Path("workers.yaml")) -> Run:
@@ -621,6 +623,18 @@ def _run_crucible(client: SSHClient, working_dir: str, base_branch: str, config:
             f"python3 -c {_shlex.quote(patch_script)}",
             timeout=15,
         )
+    diff_result = client.run(
+        f"git -C {working_dir} diff {base_branch}...HEAD | wc -l",
+        timeout=30,
+    )
+    diff_line_count = int(diff_result.stdout.strip() or "0")
+    if diff_line_count > _CRUCIBLE_DIFF_LIMIT:
+        debug_output = client.run(
+            f"ls -t {working_dir}/.crucible/runs/*/debug.log 2>/dev/null | head -1 | xargs cat 2>/dev/null || true",
+            timeout=10,
+        ).stdout
+        return f"[Skipped] Diff is {diff_line_count} lines — crucible skipped to avoid timeout (limit: {_CRUCIBLE_DIFF_LIMIT})", "", debug_output
+
     cmd = f"cd {working_dir} && crucible review --branch {base_branch} --json --debug"
     result = client.run(cmd, timeout=config.timeout)
     errors = result.stderr or ""

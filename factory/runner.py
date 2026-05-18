@@ -346,32 +346,47 @@ def watch_task(
                             f"git -C {working_dir} commit -m {commit_msg}",
                             timeout=30,
                         )
-                        _log(run_id, f"  running crucible review...")
-                        _slack_post(slack_client, run, f":magnifying_glass_tilted_right: Running crucible review...")
-                        crucible_feedback, crucible_errors, crucible_debug = _run_crucible(client, working_dir, base_branch, task.crucible)
-                        store.save_log(run_id, f"crucible_iter{iteration}.json", crucible_feedback or "")
-                        if crucible_errors:
-                            store.save_log(run_id, f"crucible_iter{iteration}.stderr.txt", crucible_errors)
-                        if crucible_debug:
-                            store.save_log(run_id, f"crucible_iter{iteration}.debug.log", crucible_debug)
-                        if crucible_feedback:
-                            crucible_rounds_used += 1
-                            _log(run_id, f"  crucible blocked ({crucible_rounds_used}/{task.crucible.rounds} rounds used): {crucible_feedback[:120]}...")
-                            _slack_post(slack_client, run, f":x: Crucible found critical issues ({crucible_rounds_used}/{task.crucible.rounds} rounds used):\n```{crucible_feedback[:1000]}```")
-                            if crucible_rounds_used < task.crucible.rounds:
-                                feedback_message = f"Code review (crucible) found critical issues:\n{crucible_feedback}"
-                                _log(run_id, "  sending crucible feedback to coder")
+                        # Skip crucible if diff is too large — large diffs cause timeouts
+                        _diff_line_count = 0
+                        try:
+                            _diff_result = client.run(
+                                f"git -C {working_dir} diff {base_branch}...HEAD | wc -l",
+                                timeout=30,
+                            )
+                            _diff_line_count = int(_diff_result.stdout.strip())
+                        except (ValueError, AttributeError):
+                            pass
+                        if _diff_line_count >= 1500:
+                            _log(run_id, f"  crucible skipped — diff is {_diff_line_count} lines (≥1500 line limit)")
+                            _slack_post(slack_client, run, f":fast_forward: Crucible skipped — diff is {_diff_line_count} lines (too large to review)")
+                            store.save_log(run_id, f"crucible_iter{iteration}.json", "")
+                        else:
+                            _log(run_id, f"  running crucible review...")
+                            _slack_post(slack_client, run, f":magnifying_glass_tilted_right: Running crucible review...")
+                            crucible_feedback, crucible_errors, crucible_debug = _run_crucible(client, working_dir, base_branch, task.crucible)
+                            store.save_log(run_id, f"crucible_iter{iteration}.json", crucible_feedback or "")
+                            if crucible_errors:
+                                store.save_log(run_id, f"crucible_iter{iteration}.stderr.txt", crucible_errors)
+                            if crucible_debug:
+                                store.save_log(run_id, f"crucible_iter{iteration}.debug.log", crucible_debug)
+                            if crucible_feedback:
+                                crucible_rounds_used += 1
+                                _log(run_id, f"  crucible blocked ({crucible_rounds_used}/{task.crucible.rounds} rounds used): {crucible_feedback[:120]}...")
+                                _slack_post(slack_client, run, f":x: Crucible found critical issues ({crucible_rounds_used}/{task.crucible.rounds} rounds used):\n```{crucible_feedback[:1000]}```")
+                                if crucible_rounds_used < task.crucible.rounds:
+                                    feedback_message = f"Code review (crucible) found critical issues:\n{crucible_feedback}"
+                                    _log(run_id, "  sending crucible feedback to coder")
+                                    store.save_run(run)
+                                    continue
+                                run.state = RunState.failed
+                                run.notes = f"Crucible review blocked after {task.crucible.rounds} rounds"
                                 store.save_run(run)
-                                continue
-                            run.state = RunState.failed
-                            run.notes = f"Crucible review blocked after {task.crucible.rounds} rounds"
-                            store.save_run(run)
-                            sess.kill_session(client, session_name)
-                            if run.slack_thread_ts:
-                                sess.unregister_run(client, run.slack_thread_ts)
-                            return run
-                        _log(run_id, "  crucible passed")
-                        _slack_post(slack_client, run, ":white_check_mark: Crucible passed")
+                                sess.kill_session(client, session_name)
+                                if run.slack_thread_ts:
+                                    sess.unregister_run(client, run.slack_thread_ts)
+                                return run
+                            _log(run_id, "  crucible passed")
+                            _slack_post(slack_client, run, ":white_check_mark: Crucible passed")
 
                     if task.evaluator is not None and run.worktree_path:
                         _log(run_id, "  running evaluator agent...")

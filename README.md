@@ -95,6 +95,9 @@ factory run "Add input validation" --repo owner/my-repo --eval "pytest" --eval "
 # Override model and effort (haiku + low is cheapest)
 factory run "Refactor the auth module" --repo owner/my-repo --model haiku --effort low
 
+# Use codex as a fallback if claude hits a rate limit
+factory run "Add input validation" --repo owner/my-repo --agent claude --agent codex
+
 # Control how many Crucible review rounds run (0 = skip Crucible)
 factory run "Add a loading spinner" --repo owner/my-repo --crucible-rounds 2
 
@@ -116,6 +119,9 @@ factory poll owner/my-repo --eval "bundle exec rails test"
 
 # Override model/effort for all issues in this poll
 factory poll owner/my-repo --model haiku --effort low
+
+# Use codex as a fallback if claude hits a rate limit
+factory poll owner/my-repo --agent claude --agent codex
 
 # Control crucible rounds
 factory poll owner/my-repo --crucible-rounds 2

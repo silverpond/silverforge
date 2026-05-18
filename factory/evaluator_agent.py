@@ -103,6 +103,96 @@ def run_evaluator(
     return client.run(cmd, timeout=timeout)
 
 
+CRUCIBLE_REVIEW_PROMPT_TEMPLATE = """\
+You are a code quality gatekeeper in an automated software factory.
+
+Crucible code review has completed its maximum number of rounds and still found critical issues.
+Your job is to determine whether the pull request should still be opened despite these issues,
+or whether the issues are severe enough to block the PR entirely.
+
+## Task Description
+{task_description}
+
+## Crucible Feedback (critical issues found after all review rounds)
+```
+{crucible_feedback}
+```
+
+## Completion Summary
+{completion_summary}
+
+## Decision Criteria
+Consider opening the PR if:
+- The issues are minor style or formatting concerns despite being marked critical
+- The core task has been completed correctly and the issues don't affect functionality
+- The issues are in non-critical code paths or test/dev-only code
+
+Block the PR if:
+- The issues represent real security vulnerabilities
+- The issues indicate the task was not completed correctly
+- The issues would cause bugs or failures in production
+
+## Response Format
+Reply in EXACTLY this format, nothing else:
+
+VERDICT: OPEN_PR
+REASON: <explanation of why the PR should be opened despite crucible findings>
+
+or:
+
+VERDICT: BLOCK_PR
+REASON: <explanation of why the PR should be blocked>
+"""
+
+
+def run_crucible_evaluator(
+    client: SSHClient,
+    worktree_path: str,
+    task_description: str,
+    crucible_feedback: str,
+    completion_summary: str = "",
+    timeout: int = 120,
+    model: Optional[str] = None,
+    effort: Optional[str] = None,
+) -> SSHResult:
+    """Run claude -p to decide whether to open a PR despite crucible failures."""
+    prompt = CRUCIBLE_REVIEW_PROMPT_TEMPLATE.format(
+        task_description=task_description,
+        crucible_feedback=crucible_feedback,
+        completion_summary=completion_summary or "(no summary available)",
+    )
+
+    encoded = base64.b64encode(prompt.encode()).decode()
+    flags = "-p"
+    if model:
+        flags += f" --model {model}"
+    if effort:
+        flags += f" --effort {effort}"
+    cmd = f'claude {flags} "$(echo \'{encoded}\' | base64 -d)"'
+    return client.run(cmd, timeout=timeout)
+
+
+def parse_crucible_verdict(output: str) -> tuple[str, str]:
+    """
+    Parse the crucible evaluator's response.
+    Returns (verdict, reason) where verdict is 'open_pr' or 'block_pr'.
+    Falls back to 'block_pr' if the format is unexpected.
+    """
+    for line in output.splitlines():
+        line = line.strip()
+        if line.upper().startswith("VERDICT:"):
+            verdict_raw = line.split(":", 1)[1].strip().upper()
+            verdict = "open_pr" if "OPEN_PR" in verdict_raw else "block_pr"
+            reason = ""
+            for rline in output.splitlines():
+                if rline.strip().upper().startswith("REASON:"):
+                    reason = rline.split(":", 1)[1].strip()
+                    break
+            return verdict, reason
+
+    return "block_pr", "(evaluator response unparseable — defaulting to block)"
+
+
 def parse_verdict(output: str) -> tuple[str, str]:
     """
     Parse the evaluator's response.

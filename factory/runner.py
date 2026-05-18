@@ -9,6 +9,7 @@ Pipeline:
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -17,10 +18,11 @@ from typing import Optional
 import yaml as _yaml
 
 from factory import evaluator, session as sess, store
-from factory.evaluator_agent import parse_verdict, run_evaluator
+from factory.evaluator_agent import parse_verdict, run_evaluator, run_crucible_evaluator, parse_crucible_verdict
 from factory.gemini_review import run_gemini_review
 from factory.config import WorkerConfig, load_workers
 from factory.models import Run, RunState, TaskDefinition, UntangleConfig, CrucibleConfig, GeminiReviewConfig
+from factory.repo_inspector import get_or_create_repo_context, inject_repo_context
 from factory.slots import teardown_port
 from factory.slack import SlackClient, get_token as get_slack_token, get_cached_channel_id
 from factory.ssh import SSHClient
@@ -114,7 +116,17 @@ def launch_task(task: TaskDefinition, workers_path: Path = Path("workers.yaml"))
 
     # ── Launch first agent session ───────────────────────────────────────────
     session_name = sess.session_name_for_run(run.run_id)
-    prompt = _build_prompt(task)
+    prompt = _prepend_constitution(task.coder.prompt)
+
+    # Inject cached repo context so the agent doesn't analyse the repo from scratch
+    if task.repo is not None:
+        _log(run.run_id, "  fetching repo context (cached or generating)...")
+        repo_context = get_or_create_repo_context(
+            client, task.repo.path, shell_init=worker.shell_init
+        )
+        if repo_context:
+            prompt = inject_repo_context(prompt, repo_context)
+            _log(run.run_id, f"  repo context injected ({len(repo_context)} chars)")
     agent_commands = [worker.agents.get(name, name) for name in agent_names]
     agent_cmd = agent_commands[0]
     agent_name = agent_names[0]
@@ -196,7 +208,14 @@ def watch_task(
     try:
         # ── Coder → eval loop ────────────────────────────────────────────────
         if task.coder is not None:
-            original_prompt = _build_prompt(task)
+            original_prompt = _prepend_constitution(task.coder.prompt)
+            # Inject cached repo context (fast cat on subsequent runs)
+            if task.repo is not None:
+                repo_context = get_or_create_repo_context(
+                    client, task.repo.path, shell_init=worker.shell_init
+                )
+                if repo_context:
+                    original_prompt = inject_repo_context(original_prompt, repo_context)
             coder_model = task.coder.model or worker.model
             coder_effort = task.coder.effort or worker.effort
             agent_names = task.coder.agents or ["claude"]
@@ -207,6 +226,7 @@ def watch_task(
             needs_new_session = False  # True only when switching agents (rate limit)
             feedback_message = ""
             crucible_rounds_used = 0  # tracks how many crucible feedback cycles have been used
+            crucible_base: str | None = None  # updated to HEAD after each round to limit diff size
             max_iterations = (
                 task.crucible.rounds + 1 if task.crucible else task.coder.max_iterations
             )
@@ -257,35 +277,12 @@ def watch_task(
 
                 captured = client.run(
                     f"tmux capture-pane -t {session_name} -p -S -200 2>/dev/null || "
-                    f"cat {working_dir}/.factory/output.log 2>/dev/null || true",
+                    f"cat {shlex.quote(working_dir)}/.factory/output.log 2>/dev/null || true",
                     timeout=10,
                 ).stdout
                 store.save_log(run_id, f"agent_output_iter{iteration}.txt", captured)
                 _log(run_id, f"  agent status={agent_status}")
 
-                rate_limited = any(
-                    marker.lower() in captured.lower()
-                    for marker in task.coder.rate_limit_markers
-                )
-                if rate_limited:
-                    next_idx = current_agent_idx + 1
-                    if next_idx < len(agent_commands):
-                        next_name = agent_names[next_idx]
-                        _log(run_id, f"  rate limit detected on {agent_name} → switching to {next_name}")
-                        _slack_post(slack_client, run, f":warning: Rate limit hit on `{agent_name}` — switching to `{next_name}`")
-                        current_agent_idx = next_idx
-                        needs_new_session = True
-                        continue
-                    else:
-                        run.state = RunState.failed
-                        run.notes = f"All agents rate limited: {', '.join(agent_names)}"
-                        store.save_run(run)
-                        _log(run_id, "  all agents exhausted — giving up")
-                        _slack_post(slack_client, run, f":x: All agents rate limited — giving up")
-                        sess.kill_session(client, session_name)
-                        if run.slack_thread_ts:
-                            sess.unregister_run(client, run.slack_thread_ts)
-                        return run
 
                 if agent_status == "timeout":
                     run.state = RunState.failed
@@ -335,20 +332,25 @@ def watch_task(
                             return run
                         _log(run_id, "  untangle passed")
 
-                    if task.crucible is not None and run.worktree_path:
+                    if task.crucible is not None and task.crucible.rounds > 0 and run.worktree_path:
                         # Commit any uncommitted agent changes so crucible can see the diff
-                        import shlex as _shlex
-                        commit_msg = _shlex.quote(f"factory: agent changes (iter {iteration})")
+                        commit_msg = shlex.quote(f"factory: agent changes (iter {iteration})")
+                        _wd = shlex.quote(working_dir)
                         client.run(
-                            f"git -C {working_dir} add -A && "
-                            f"git -C {working_dir} reset HEAD -- .factory/ .claude/ .crucible/ 2>/dev/null || true && "
-                            f"git -C {working_dir} diff --cached --quiet || "
-                            f"git -C {working_dir} commit -m {commit_msg}",
+                            f"git -C {_wd} add -A && "
+                            f"git -C {_wd} reset HEAD -- .factory/ .claude/ .crucible/ 2>/dev/null || true && "
+                            f"git -C {_wd} diff --cached --quiet || "
+                            f"git -C {_wd} commit -m {commit_msg}",
                             timeout=30,
                         )
                         _log(run_id, f"  running crucible review...")
                         _slack_post(slack_client, run, f":magnifying_glass_tilted_right: Running crucible review...")
-                        crucible_feedback, crucible_errors, crucible_debug = _run_crucible(client, working_dir, base_branch, task.crucible)
+                        effective_crucible_base = crucible_base or base_branch
+                        crucible_feedback, crucible_errors, crucible_debug = _run_crucible(client, working_dir, effective_crucible_base, task.crucible)
+                        # Advance the base to current HEAD so the next round only reviews incremental changes
+                        _head = client.run(f"git -C {working_dir} rev-parse HEAD", timeout=10).stdout.strip()
+                        if _head:
+                            crucible_base = _head
                         store.save_log(run_id, f"crucible_iter{iteration}.json", crucible_feedback or "")
                         if crucible_errors:
                             store.save_log(run_id, f"crucible_iter{iteration}.stderr.txt", crucible_errors)
@@ -363,8 +365,46 @@ def watch_task(
                                 _log(run_id, "  sending crucible feedback to coder")
                                 store.save_run(run)
                                 continue
+                            _log(run_id, "  crucible exhausted rounds — running evaluator to decide on PR...")
+                            _slack_post(slack_client, run, ":thinking_face: Crucible exhausted all rounds — running evaluator to decide whether to open PR...")
+                            completion_summary = client.run(
+                                f"cat {working_dir}/.factory/completion.md 2>/dev/null || true",
+                                timeout=10,
+                            ).stdout.strip()
+                            eval_model = (task.evaluator.model or worker.model) if task.evaluator else worker.model
+                            eval_effort = (task.evaluator.effort or "low") if task.evaluator else "low"
+                            eval_timeout = task.evaluator.timeout if task.evaluator else 120
+                            ev_result = run_crucible_evaluator(
+                                client,
+                                worktree_path=working_dir,
+                                task_description=task.coder.prompt,
+                                crucible_feedback=crucible_feedback,
+                                completion_summary=completion_summary,
+                                timeout=eval_timeout,
+                                model=eval_model,
+                                effort=eval_effort,
+                            )
+                            store.save_log(run_id, f"crucible_evaluator_iter{iteration}.stdout", ev_result.stdout)
+                            crucible_verdict, crucible_reason = parse_crucible_verdict(ev_result.stdout)
+                            run.evaluator_verdict = crucible_verdict
+                            run.evaluator_reason = crucible_reason
+                            _log(run_id, f"  crucible evaluator verdict={crucible_verdict}: {crucible_reason}")
+                            _slack_post(slack_client, run, f":robot_face: Crucible evaluator: *{crucible_verdict}* — {crucible_reason}")
+
+                            if crucible_verdict == "open_pr":
+                                run.state = RunState.passed
+                                run.notes = f"Crucible found issues but evaluator approved PR: {crucible_reason}"
+                                store.save_run(run)
+                                _log(run_id, f"state=passed  (crucible evaluator approved PR opening)")
+                                _post_results(slack_client, run, results, passed=True)
+                                sess.kill_session(client, session_name)
+                                if run.slack_thread_ts:
+                                    sess.unregister_run(client, run.slack_thread_ts)
+                                _maybe_open_pr(run, task, worker, repo, issue_number, workers_path, slack_client)
+                                return run
+
                             run.state = RunState.failed
-                            run.notes = f"Crucible review blocked after {task.crucible.rounds} rounds"
+                            run.notes = f"Crucible review blocked after {task.crucible.rounds} rounds: {crucible_reason}"
                             store.save_run(run)
                             sess.kill_session(client, session_name)
                             if run.slack_thread_ts:
@@ -428,13 +468,13 @@ def watch_task(
                     store.save_run(run)
                     _log(run_id, f"state=passed  (iteration {iteration})")
                     _post_results(slack_client, run, results, passed=True)
-                    summary = client.run(
-                        f"cat {working_dir}/.factory/completion.md 2>/dev/null || true",
-                        timeout=10,
-                    ).stdout.strip()
-                    if slack_client and run.slack_channel_id and summary:
-                        _slack_post(slack_client, run, f":robot_face: {summary[:2000]}")
-                    _update_repo_context(run_id, task, client, working_dir, passed=True)
+                    if slack_client and run.slack_channel_id:
+                        summary = client.run(
+                            f"cat {shlex.quote(working_dir)}/.factory/completion.md 2>/dev/null || true",
+                            timeout=10,
+                        ).stdout.strip()
+                        if summary:
+                            _slack_post(slack_client, run, f":robot_face: {summary[:2000]}")
                     sess.kill_session(client, session_name)
                     if run.slack_thread_ts:
                         sess.unregister_run(client, run.slack_thread_ts)
@@ -594,7 +634,7 @@ def _print_eval_results(run_id: str, results: list) -> None:
 
 
 def _run_untangle(client: SSHClient, working_dir: str, base_branch: str, head_branch: str, config: "UntangleConfig") -> str:
-    cmd = (f"cd {working_dir} && untangle diff"
+    cmd = (f"cd {shlex.quote(working_dir)} && untangle diff"
            f" --base {base_branch} --head {head_branch}"
            f" --lang {config.lang} --fail-on {config.fail_on} --format json")
     result = client.run(cmd, timeout=config.timeout)
@@ -603,8 +643,8 @@ def _run_untangle(client: SSHClient, working_dir: str, base_branch: str, head_br
 
 def _run_crucible(client: SSHClient, working_dir: str, base_branch: str, config: "CrucibleConfig") -> tuple:
     import json as _json
+    _wd = shlex.quote(working_dir)
     if config.model:
-        import shlex as _shlex
         patch_script = (
             "c = open('.crucible.toml').read(); "
             "c = c.replace("
@@ -618,15 +658,15 @@ def _run_crucible(client: SSHClient, working_dir: str, base_branch: str, config:
             "open('.crucible.toml', 'w').write(c.replace(old, new))"
         )
         client.run(
-            f"cd {working_dir} && rm -f .crucible.toml && crucible config init && "
-            f"python3 -c {_shlex.quote(patch_script)}",
+            f"cd {_wd} && rm -f .crucible.toml && crucible config init && "
+            f"python3 -c {shlex.quote(patch_script)}",
             timeout=15,
         )
-    cmd = f"cd {working_dir} && crucible review --branch {base_branch} --json --debug"
+    cmd = f"cd {_wd} && crucible review --branch {base_branch} --json --debug"
     result = client.run(cmd, timeout=config.timeout)
     errors = result.stderr or ""
     debug_log = client.run(
-        f"ls -t {working_dir}/.crucible/runs/*/debug.log 2>/dev/null | head -1 | xargs cat 2>/dev/null || true",
+        f"ls -t {_wd}/.crucible/runs/*/debug.log 2>/dev/null | head -1 | xargs cat 2>/dev/null || true",
         timeout=10,
     ).stdout
     if "timed out" in errors.lower():

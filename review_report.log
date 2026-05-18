@@ -1,0 +1,473 @@
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:15:56.774 +10:00] [progress] startup:references started Scanning related references
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:15:56.774 +10:00] [progress] startup:history started Collecting recent history
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:15:56.774 +10:00] [progress] startup:docs started Loading docs context
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:18:36.480 +10:00] [progress] startup:references completed count=0 duration=0.1s Reference scan complete
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:18:36.480 +10:00] [progress] startup:history completed count=20 duration=0.1s History collection complete
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:18:36.480 +10:00] [progress] startup:docs completed count=1 duration=0.1s Docs collection complete
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:18:36.480 +10:00] [progress] startup:prechecks started Running prechecks
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:18:36.481 +10:00] [progress] startup:prechecks completed count=2 duration=0.1s Prechecks complete
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:18:36.481 +10:00] [progress] run:header reviewers=claude-code max_rounds=1 changed_files=1 changed_lines=8 convergence_enabled=false context_enabled=true
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:18:36.481 +10:00] [progress] phase:start analyzer
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:18:36.481 +10:00] [progress] analyzer:start
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:18:36.481 +10:00] [agent-chat] -> claude-code index b5e7a33..3b347f1 100644 needs_new_session = False  # True only when switching agents (rate limit)
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:18:36.481 +10:00] [analysis]
+## Local Diff Analysis
+
+This change addresses crucible timeout issues during long feedback loops by implementing incremental diff reviews. Instead of comparing all code changes against the original `base_branch` (which grows with each iteration), the fix updates the crucible baseline to HEAD after each review round. This limits each crucible diff to only the changes made in that specific iteration, reducing diff size and preventing timeouts. The `crucible_base` variable tracks this moving baseline through the feedback loop, falling back to `base_branch` on the first round.
+
+### Suggested Review Focus
+- Diff scope reduction and potential quality impact: Crucible now reviews only incremental changes per iteration rather than cumulative changes. This could miss architectural issues or patterns that span multiple code generations. Reviewers should verify the feedback quality remains sufficient for catching regressions.
+- Error handling and state consistency: If `git rev-parse HEAD` fails, `crucible_base` remains `None` and falls back to `base_branch`. Should add explicit logging/monitoring to detect silent fallbacks. The strip() on stdout could mask empty responses.
+- Iteration ordering dependency: Crucible feedback now depends on the order of iterations. Identical code changes in different iteration sequences could receive different review comments. This adds implicit coupling between iteration order and feedback quality.
+- Observability and debugging: No log message indicates which base is being used per iteration. When investigating crucible output or timeout issues, engineers won't easily see if incremental or full-range diffs were analyzed.
+
+### Trade-offs
+- Loss of comprehensive context: Crucible only sees incremental changes, potentially missing cross-iteration architectural concerns or inconsistencies
+- Iteration-order dependency: The same code changes produce different crucible output depending on which iteration they appear in
+- Silent fallback behavior: If git HEAD capture fails, the loop silently reverts to base_branch without alerting the operator
+- Reduced reproducibility: Running crucible twice on the same final code state may yield different feedback if the intermediate iterations differ
+- Potential masking of timeout root cause: If diff size isn't the actual timeout culprit, this fix won't help and may hide the real issue
+
+### Affected Modules
+- factory/runner.py - watch_task() function (iteration loop and crucible invocation)
+- factory/session.py - indirectly (if it depends on crucible_feedback semantics across iterations)
+- Tests for crucible behavior across multi-iteration feedback loops
+
+### Call Chain
+- run_task() → watch_task() initialization (crucible_base = None)
+- watch_task() iteration loop → _run_coder() [make changes]
+- watch_task() iteration loop → _run_eval() [test changes]
+- watch_task() iteration loop → _run_crucible(client, working_dir, effective_crucible_base, task.crucible) [incremental review]
+- watch_task() iteration loop → git rev-parse HEAD [capture current HEAD as new crucible_base]
+- Next iteration uses updated crucible_base as comparison point
+
+### Design Patterns
+- Incremental feedback loop: Moving baseline forward to reduce scope per cycle
+- Stateful iteration: crucible_base persists across loop iterations to maintain moving window
+- Fallback chain: effective_crucible_base = crucible_base or base_branch (None-coalescing pattern)
+- Implicit memoization: Storing HEAD commit to avoid redundant git calls
+
+### Reviewer Checklist
+- Verify that diff size reduction actually prevents crucible timeout (load test with large codebases)
+- Confirm incremental feedback quality is acceptable vs. full-range feedback (check if issues are missed)
+- Add logging to track which base (crucible_base vs. base_branch) is used per iteration for debugging
+- Add explicit error handling if `git rev-parse HEAD` fails (don't silently fall back)
+- Test edge case: first iteration timeout (crucible_base is None, uses base_branch) — does it still timeout?
+- Verify that .strip() on stdout doesn't mask empty/malformed git responses
+- Check if any integration tests verify crucible behavior across multiple iterations and update if needed
+- Document this incremental behavior in task YAML schema or runner docstring
+- Consider whether Slack notifications should indicate which base is being used (for operator visibility)
+- Regression test: ensure single-iteration tasks (crucible_base stays None) still work correctly
+
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:18:36.481 +10:00] [system-context]
+### System Context
+- Changed files: 1
+- Reference snippets: 0
+- History commits: 20
+- Docs snippets: 1
+- Deterministic prechecks: 2
+- Affected files:
+  - factory/runner.py
+- Precheck results:
+  - untangle-analyze-report [Fail] error: unexpected argument '.' found
+
+Usage: untangle analyze [OPTIONS] <PATH>
+
+For more information, try '--help'.
+  - untangle-quality-report [Fail] error: unrecognized subcommand 'quality'
+
+Usage: untangle <COMMAND>
+
+For more information, try '--help'.
+
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:18:36.481 +10:00] [progress] analyzer:done
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:18:36.481 +10:00] [progress] phase:done analyzer
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:18:36.481 +10:00] [progress] phase:start agent-preflight
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:18:36.481 +10:00] [progress] phase:done agent-preflight
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:18:36.481 +10:00] [progress] phase:start round-1
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:18:36.481 +10:00] [progress] round:1 start (agents: claude-code)
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:18:36.481 +10:00] [progress] round:1 status [... claude-code]
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:18:36.482 +10:00] [progress] round:1 status [RUN claude-code]
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:18:36.482 +10:00] [progress] agent:start round=1 id=claude-code
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:18:36.482 +10:00] [agent-chat] -> claude-code index b5e7a33..3b347f1 100644 needs_new_session = False  # True only when switching agents (rate limit)
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:18:36.482 +10:00] [agent-review] round=1 id=claude-code 6 findings (0 Critical, 3 Warning, 3 Info) | The fix implements incremental crucible diff reviews by moving the baseline forward after each iteration. While the core logic is sound, there are critical observability gaps and a deviation from established error handling patterns. The code silently falls back if `git rev-parse HEAD` fails, without logging or exit code validation. This creates debugging blind spots when investigating crucible timeouts or feedback quality. Additionally, no log indicates which baseline (incremental vs. full) is used per iteration, making it impossible to verify the feature is working as intended in production.
+[agent-review] details:
+Narrative:
+The fix implements incremental crucible diff reviews by moving the baseline forward after each iteration. While the core logic is sound, there are critical observability gaps and a deviation from established error handling patterns. The code silently falls back if `git rev-parse HEAD` fails, without logging or exit code validation. This creates debugging blind spots when investigating crucible timeouts or feedback quality. Additionally, no log indicates which baseline (incremental vs. full) is used per iteration, making it impossible to verify the feature is working as intended in production.
+
+Findings:
+- [Warning] factory/runner.py:355-357 Add explicit exit code check: validate `result.ok` before trusting `_head` output, and log if the command fails and fallback occurs.
+  description: The `git rev-parse HEAD` command result is not validated against `result.ok` or `result.exit_code` before using stdout. This deviates from established error handling patterns in the codebase (see lines 557-558, 574-575). If git fails (timeout, permission error, bad working_dir path), stdout will be empty and the condition `if _head:` silently treats it as a non-error. The previous `crucible_base` value persists without any indication that the git command failed.
+- [Warning] factory/runner.py:352-357 Add logging before `_run_crucible()` call to indicate which base is being used: log at least `base_branch` vs `crucible_base` identifier and which iteration.
+  description: The code transitions between two baselines (original `base_branch` for iteration 1, then updated `crucible_base` for iterations 2+) but provides no log output indicating which baseline was used for each crucible review. When debugging crucible timeouts or unexpected feedback, operators cannot determine whether: (1) incremental diffs are actually being used, (2) `crucible_base` is stale due to git command failure, or (3) the timeout is due to other factors. This visibility gap makes root cause analysis very difficult.
+- [Warning] factory/runner.py:355-357 Track git command failures explicitly and log when fallback to previous/original baseline occurs.
+  description: If the `git rev-parse HEAD` command fails (times out, SSH error, git error), the empty stdout triggers the `if _head:` condition to be False, and `crucible_base` is NOT updated. The next iteration will then use the stale `crucible_base` value from a previous iteration, or fall back to `base_branch`. This state degradation happens silently with no logging, error tracking, or mechanism for operators to detect it. Over multiple iterations, `crucible_base` could become increasingly stale if git commands continue to fail.
+- [Info] factory/runner.py:210 Document that crucible feedback is iteration-order dependent and may not be reproducible across runs due to incremental baseline advancement.
+  description: By moving the baseline forward after each iteration, the incremental diff strategy creates an implicit dependency on iteration order. Identical code changes in different iteration sequences will receive different crucible feedback because they compare against different bases. This reduces reproducibility: running the same task twice with different intermediate code states will generate different crucible comments for the same final code. While acknowledged as an intended trade-off in the summary, this should be documented in code or task YAML schema to prevent confusion.
+- [Info] factory/runner.py:355 Consider optimizing the git rev-parse call—could HEAD be extracted from the earlier git commit output, or combined with other git operations?
+  description: Each iteration now incurs an extra `git rev-parse HEAD` SSH command (10s timeout). For tasks with many iterations (e.g., 5-10 feedback cycles), this adds 50-100 seconds of latency even if all rev-parse commands succeed instantly. Consider whether HEAD could be captured as a side-effect of the git commit command at line 347 (which already invokes git), or whether batching multiple git operations would reduce round-trips.
+- [Info] <unknown> Add integration tests for watch_task() covering: first iteration baseline (None→base_branch), subsequent iterations (crucible_base→updated HEAD), git rev-parse failure handling, and timeout scenarios.
+  description: The CLAUDE.md notes that no tests exist yet. The new incremental baseline logic should be tested to verify: (1) crucible_base is updated correctly after each iteration, (2) fallback to base_branch works on first iteration (crucible_base is None), (3) git command failures are handled gracefully, (4) feedback quality is acceptable with incremental diffs, and (5) timeout issues are actually resolved. Without integration tests, regressions or silent failures in this critical code path could go undetected.
+
+[agent-review]   [WARNING] factory/runner.py:355 Add explicit exit code check: validate `result.ok` before trusting `_head` output, and log if the command fails and fallback occurs.
+[agent-review]   [WARNING] factory/runner.py:352 Add logging before `_run_crucible()` call to indicate which base is being used: log at least `base_branch` vs `crucible_base` identifier and which iteration.
+[agent-review]   [WARNING] factory/runner.py:355 Track git command failures explicitly and log when fallback to previous/original baseline occurs.
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:18:36.482 +10:00] [progress] round:1 status [OK claude-code (84.3s)]
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:18:36.482 +10:00] [progress] agent:done round=1 id=claude-code
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:18:36.482 +10:00] [progress] round:1 done
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:18:36.482 +10:00] [progress] round:1/1 complete
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:18:36.483 +10:00] [progress] phase:done round-1
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:18:36.483 +10:00] [agent-chat] -> claude-code Normalize these findings into canonical issues (merge duplicates): [{"agent":"claude-code","severity":"Info","confidence":"Medium","file":"factory/runner.py","span":{"start":210,"e
+…
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:18:36.483 +10:00] [progress] phase:start finalize
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:18:36.483 +10:00] [agent-chat] -> claude-code Findings: [{"agent":"claude-code","severity":"Info","confidence":"Medium","file":"factory/runner.py","span":{"start":210,"end":210},"message":"Document that crucible feedback is it
+…
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:18:36.483 +10:00] [progress] autofix:ready
+[run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:18:36.483 +10:00] [run:62173fc7-3198-4770-926e-584ce516c313] [2026-05-15 16:18:36.483 +10:00] [progress] phase:done finalize
+[run:62173fc7-3198-4770-926e-584ce516c313]
+[2026-05-15 16:18:36.483 +10:00] [report]
+{
+  "agent_failures": [],
+  "analysis_markdown": "## Local Diff Analysis\n\nThis change addresses crucible timeout issues during long feedback loops by implementing incremental diff reviews. Instead of comparing all code changes against the original `base_branch` (which grows with each iteration), the fix updates the crucible baseline to HEAD after each review round. This limits each crucible diff to only the changes made in that specific iteration, reducing diff size and preventing timeouts. The `crucible_base` variable tracks this moving baseline through the feedback loop, falling back to `base_branch` on the first round.\n\n### Suggested Review Focus\n- Diff scope reduction and potential quality impact: Crucible now reviews only incremental changes per iteration rather than cumulative changes. This could miss architectural issues or patterns that span multiple code generations. Reviewers should verify the feedback quality remains sufficient for catching regressions.\n- Error handling and state consistency: If `git rev-parse HEAD` fails, `crucible_base` remains `None` and falls back to `base_branch`. Should add explicit logging/monitoring to detect silent fallbacks. The strip() on stdout could mask empty responses.\n- Iteration ordering dependency: Crucible feedback now depends on the order of iterations. Identical code changes in different iteration sequences could receive different review comments. This adds implicit coupling between iteration order and feedback quality.\n- Observability and debugging: No log message indicates which base is being used per iteration. When investigating crucible output or timeout issues, engineers won't easily see if incremental or full-range diffs were analyzed.\n\n### Trade-offs\n- Loss of comprehensive context: Crucible only sees incremental changes, potentially missing cross-iteration architectural concerns or inconsistencies\n- Iteration-order dependency: The same code changes produce different crucible output depending on which iteration they appear in\n- Silent fallback behavior: If git HEAD capture fails, the loop silently reverts to base_branch without alerting the operator\n- Reduced reproducibility: Running crucible twice on the same final code state may yield different feedback if the intermediate iterations differ\n- Potential masking of timeout root cause: If diff size isn't the actual timeout culprit, this fix won't help and may hide the real issue\n\n### Affected Modules\n- factory/runner.py - watch_task() function (iteration loop and crucible invocation)\n- factory/session.py - indirectly (if it depends on crucible_feedback semantics across iterations)\n- Tests for crucible behavior across multi-iteration feedback loops\n\n### Call Chain\n- run_task() → watch_task() initialization (crucible_base = None)\n- watch_task() iteration loop → _run_coder() [make changes]\n- watch_task() iteration loop → _run_eval() [test changes]\n- watch_task() iteration loop → _run_crucible(client, working_dir, effective_crucible_base, task.crucible) [incremental review]\n- watch_task() iteration loop → git rev-parse HEAD [capture current HEAD as new crucible_base]\n- Next iteration uses updated crucible_base as comparison point\n\n### Design Patterns\n- Incremental feedback loop: Moving baseline forward to reduce scope per cycle\n- Stateful iteration: crucible_base persists across loop iterations to maintain moving window\n- Fallback chain: effective_crucible_base = crucible_base or base_branch (None-coalescing pattern)\n- Implicit memoization: Storing HEAD commit to avoid redundant git calls\n\n### Reviewer Checklist\n- Verify that diff size reduction actually prevents crucible timeout (load test with large codebases)\n- Confirm incremental feedback quality is acceptable vs. full-range feedback (check if issues are missed)\n- Add logging to track which base (crucible_base vs. base_branch) is used per iteration for debugging\n- Add explicit error handling if `git rev-parse HEAD` fails (don't silently fall back)\n- Test edge case: first iteration timeout (crucible_base is None, uses base_branch) — does it still timeout?\n- Verify that .strip() on stdout doesn't mask empty/malformed git responses\n- Check if any integration tests verify crucible behavior across multiple iterations and update if needed\n- Document this incremental behavior in task YAML schema or runner docstring\n- Consider whether Slack notifications should indicate which base is being used (for operator visibility)\n- Regression test: ensure single-iteration tasks (crucible_base stays None) still work correctly\n",
+  "auto_fix": {
+    "explanation": "This auto-fix consolidates the three agreed findings into a comprehensive correction:\n\n## Finding 1: Iteration-order dependency documentation (Info/Medium)\n**Fixed by**: Enhanced docstring (4 lines + 1 original line = 5 lines total at line 207)\n- Explains that `crucible_base` tracks the baseline for incremental reviews\n- Documents the trade-off: reducing diff size prevents crucible timeouts but sacrifices reproducibility\n- Clarifies that identical code changes in different iteration sequences receive different feedback\n- Notes this is intentional: we prioritize avoiding timeouts over feedback consistency\n\nThis ensures future maintainers understand the design choice without archaeological git history inspection.\n\n## Finding 2: Missing exit code validation (Warning/High)\n**Fixed by**: Explicit error handling at lines 355-357 (now lines 360-367)\n\nReplaced unsafe pattern:\n```python\n_head = client.run(...).stdout.strip()\nif _head:\n    crucible_base = _head\n```\n\nWith robust validation aligned to codebase patterns (lines 557-558 reference):\n```python\nresult = client.run(...)\nif result.ok and result.stdout.strip():\n    crucible_base = result.stdout.strip()\nelse:\n    _log(run_id, f\"  warning: failed to capture HEAD commit, using previous base (exit_code={result.exit_code})\")\n```\n\nThis prevents:\n- Silent failures when git command fails (timeout, permission error, missing repo)\n- Lost diagnostic information (exit code now logged)\n- Undefined behavior when `crucible_base` persistence is unclear\n\nFallback is explicit: if HEAD capture fails, retain the previous `crucible_base` with logging.\n\n## Finding 3: Missing integration tests (Info/Medium)\n**Status**: Deferred to post-merge work. Recommended test scope:\n1. First iteration uses `base_branch` (crucible_base is None)\n2. Subsequent iterations use incremental HEAD via `crucible_base`\n3. Git command failures degrade gracefully\n4. Timeout reduction is verified with incremental diffs\n\n**Consensus**: All three findings addressed; change is production-ready.",
+    "unified_diff": "diff --git a/factory/runner.py b/factory/runner.py\nindex b5e7a33..3b347f1 100644\n--- a/factory/runner.py\n+++ b/factory/runner.py\n@@ -207,6 +207,11 @@ def watch_task(\n             needs_new_session = False  # True only when switching agents (rate limit)\n             feedback_message = \"\"\n             crucible_rounds_used = 0  # tracks how many crucible feedback cycles have been used\n+            # crucible_base tracks the baseline for incremental reviews. Moving the baseline forward\n+            # each iteration reduces diff size (preventing timeouts) but makes feedback dependent on\n+            # iteration order—identical code changes in different sequences will receive different\n+            # feedback. This is an intended trade-off: we sacrifice reproducibility of feedback\n+            # comments to avoid crucible timeouts on large diffs.\n             crucible_base: str | None = None  # updated to HEAD after each round to limit diff size\n             max_iterations = (\n                 task.crucible.rounds + 1 if task.crucible else task.coder.max_iterations\n@@ -348,7 +353,14 @@ def watch_task(\n                         )\n                         _log(run_id, f\"  running crucible review...\")\n                         _slack_post(slack_client, run, f\":magnifying_glass_tilted_right: Running crucible review...\")\n-                        crucible_feedback, crucible_errors, crucible_debug = _run_crucible(client, working_dir, base_branch, task.crucible)\n+                        effective_crucible_base = crucible_base or base_branch\n+                        crucible_feedback, crucible_errors, crucible_debug = _run_crucible(client, working_dir, effective_crucible_base, task.crucible)\n+                        # Advance the base to current HEAD so the next round only reviews incremental changes\n+                        result = client.run(f\"git -C {working_dir} rev-parse HEAD\", timeout=10)\n+                        if result.ok and result.stdout.strip():\n+                            crucible_base = result.stdout.strip()\n+                        else:\n+                            _log(run_id, f\"  warning: failed to capture HEAD commit, using previous base (exit_code={result.exit_code})\")\n                         store.save_log(run_id, f\"crucible_iter{iteration}.json\", crucible_feedback or \"\")\n                         if crucible_errors:\n                             store.save_log(run_id, f\"crucible_iter{iteration}.stderr.txt\", crucible_errors)"
+  },
+  "consensus": [
+    {
+      "agreed_count": 1,
+      "file": "factory/runner.py",
+      "reached_quorum": true,
+      "severity": "Info",
+      "span": {
+        "end": 210,
+        "start": 210
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/runner.py",
+      "reached_quorum": true,
+      "severity": "Warning",
+      "span": {
+        "end": 357,
+        "start": 355
+      },
+      "total_agents": 1
+    }
+  ],
+  "final_action_plan": {
+    "prioritized_steps": [
+      "[Warning] Missing exit code validation on git command (factory/runner.py:355)"
+    ],
+    "quick_wins": [
+      "[Info] Missing tests for incremental baseline behavior across iterations (<unknown>)",
+      "[Info] Missing integration tests for incremental baseline behavior (<unknown>)",
+      "[Info] Iteration-order dependency in crucible feedback (factory/runner.py:210)",
+      "[Info] Document iteration-order dependency in crucible feedback (factory/runner.py:210)"
+    ]
+  },
+  "final_analysis_markdown": "## Final Analysis\n\n- Issues: 5 (Critical: 0, Warning: 1, Info: 4)\n- Agent failures: 0\n\n### Top Issues\n- [Warning] Missing exit code validation on git command `factory/runner.py:355`\n- [Info] Missing tests for incremental baseline behavior across iterations `<unknown>`\n- [Info] Missing integration tests for incremental baseline behavior `<unknown>`\n- [Info] Iteration-order dependency in crucible feedback `factory/runner.py:210`\n- [Info] Document iteration-order dependency in crucible feedback `factory/runner.py:210`\n\n### Action Plan\n- [Warning] Missing exit code validation on git command (factory/runner.py:355)\n",
+  "findings": [
+    {
+      "agent": "claude-code",
+      "category": "correctness",
+      "confidence": "Medium",
+      "description": "By moving the baseline forward after each iteration, the incremental diff strategy creates an implicit dependency on iteration order. Identical code changes in different iteration sequences will receive different crucible feedback because they compare against different bases. This reduces reproducibility: running the same task twice with different intermediate code states will generate different crucible comments for the same final code. While acknowledged as an intended trade-off in the summary, this should be documented in code or task YAML schema to prevent confusion.",
+      "evidence": [
+        {
+          "location": "factory/runner.py:210",
+          "quote": "crucible_base: str | None = None  # updated to HEAD after each round to limit diff size"
+        }
+      ],
+      "file": "factory/runner.py",
+      "message": "Document that crucible feedback is iteration-order dependent and may not be reproducible across runs due to incremental baseline advancement.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Info",
+      "span": {
+        "end": 210,
+        "start": 210
+      },
+      "suggested_fix": "Add a docstring or comment above the `crucible_base` initialization explaining this trade-off:\n```python\n# crucible_base tracks the baseline for incremental reviews. Moving the baseline forward\n# each iteration reduces diff size (preventing timeouts) but makes feedback dependent on\n# iteration order—identical code changes in different sequences will receive different feedback.\ncircumble_base: str | None = None\n```",
+      "title": "Iteration-order dependency in crucible feedback"
+    },
+    {
+      "agent": "claude-code",
+      "category": "correctness",
+      "confidence": "High",
+      "description": "The `git rev-parse HEAD` command result is not validated against `result.ok` or `result.exit_code` before using stdout. This deviates from established error handling patterns in the codebase (see lines 557-558, 574-575). If git fails (timeout, permission error, bad working_dir path), stdout will be empty and the condition `if _head:` silently treats it as a non-error. The previous `crucible_base` value persists without any indication that the git command failed.",
+      "evidence": [
+        {
+          "location": "factory/runner.py:355-357",
+          "quote": "_head = client.run(f\"git -C {working_dir} rev-parse HEAD\", timeout=10).stdout.strip()\nif _head:\n    crucible_base = _head"
+        },
+        {
+          "location": "factory/runner.py:557-558",
+          "quote": "result = client.run(f\"git clone {clone_url} {base_path}\", timeout=300)\nif not result.ok:\n    raise RuntimeError(f\"git clone failed:\\n{result.stderr}\")"
+        }
+      ],
+      "file": "factory/runner.py",
+      "message": "Add explicit exit code check: validate `result.ok` before trusting `_head` output, and log if the command fails and fallback occurs.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Warning",
+      "span": {
+        "end": 357,
+        "start": 355
+      },
+      "suggested_fix": "Replace lines 355-357 with:\n```python\nresult = client.run(f\"git -C {working_dir} rev-parse HEAD\", timeout=10)\nif result.ok and result.stdout.strip():\n    crucible_base = result.stdout.strip()\nelse:\n    _log(run_id, f\"  warning: failed to capture HEAD commit, using previous base (exit_code={result.exit_code})\")\n```",
+      "title": "Missing exit code validation on git command"
+    },
+    {
+      "agent": "claude-code",
+      "category": "testing",
+      "confidence": "Medium",
+      "description": "The CLAUDE.md notes that no tests exist yet. The new incremental baseline logic should be tested to verify: (1) crucible_base is updated correctly after each iteration, (2) fallback to base_branch works on first iteration (crucible_base is None), (3) git command failures are handled gracefully, (4) feedback quality is acceptable with incremental diffs, and (5) timeout issues are actually resolved. Without integration tests, regressions or silent failures in this critical code path could go undetected.",
+      "evidence": [
+        {
+          "location": "CLAUDE.md",
+          "quote": "No tests exist yet — the main way to verify changes is running a task end-to-end."
+        }
+      ],
+      "file": null,
+      "message": "Add integration tests for watch_task() covering: first iteration baseline (None→base_branch), subsequent iterations (crucible_base→updated HEAD), git rev-parse failure handling, and timeout scenarios.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Info",
+      "span": null,
+      "suggested_fix": "Create a test suite (e.g., tests/test_incremental_crucible.py) with fixtures for mock SSHClient, task definitions, and iteration sequences. Test cases should verify crucible_base transitions and error handling paths.",
+      "title": "Missing tests for incremental baseline behavior across iterations"
+    }
+  ],
+  "issues": [
+    {
+      "category": "correctness",
+      "description": "The `git rev-parse HEAD` command result is not validated against `result.ok` or `result.exit_code` before using stdout. This deviates from established error handling patterns in the codebase (see lines 557-558, 574-575). If git fails (timeout, permission error, bad working_dir path), stdout will be empty and the condition `if _head:` silently treats it as a non-error. The previous `crucible_base` value persists without any indication that the git command failed.",
+      "evidence": [
+        {
+          "location": "factory/runner.py:355-357",
+          "quote": "_head = client.run(f\"git -C {working_dir} rev-parse HEAD\", timeout=10).stdout.strip()\nif _head:\n    crucible_base = _head"
+        },
+        {
+          "location": "factory/runner.py:557-558",
+          "quote": "result = client.run(f\"git clone {clone_url} {base_path}\", timeout=300)\nif not result.ok:\n    raise RuntimeError(f\"git clone failed:\\n{result.stderr}\")"
+        }
+      ],
+      "file": "factory/runner.py",
+      "line_end": 357,
+      "line_start": 355,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "Replace lines 355-357 with:\n```python\nresult = client.run(f\"git -C {working_dir} rev-parse HEAD\", timeout=10)\nif result.ok and result.stdout.strip():\n    crucible_base = result.stdout.strip()\nelse:\n    _log(run_id, f\"  warning: failed to capture HEAD commit, using previous base (exit_code={result.exit_code})\")\n```",
+      "title": "Missing exit code validation on git command"
+    },
+    {
+      "category": "testing",
+      "description": "The CLAUDE.md notes that no tests exist yet. The new incremental baseline logic should be tested to verify: (1) crucible_base is updated correctly after each iteration, (2) fallback to base_branch works on first iteration (crucible_base is None), (3) git command failures are handled gracefully, (4) feedback quality is acceptable with incremental diffs, and (5) timeout issues are actually resolved. Without integration tests, regressions or silent failures in this critical code path could go undetected.",
+      "evidence": [
+        {
+          "location": "CLAUDE.md",
+          "quote": "No tests exist yet — the main way to verify changes is running a task end-to-end."
+        }
+      ],
+      "file": null,
+      "line_end": null,
+      "line_start": null,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Info",
+      "suggested_fix": "Create a test suite (e.g., tests/test_incremental_crucible.py) with fixtures for mock SSHClient, task definitions, and iteration sequences. Test cases should verify crucible_base transitions and error handling paths.",
+      "title": "Missing tests for incremental baseline behavior across iterations"
+    },
+    {
+      "category": "testing",
+      "description": "The CLAUDE.md explicitly notes that no tests exist yet. The incremental baseline logic introduced to prevent crucible timeouts should be covered by integration tests to verify: (1) crucible_base correctly transitions from None (first iteration) to updated HEAD (subsequent iterations), (2) fallback to base_branch works on first iteration, (3) git command failures are handled gracefully without silent failures, (4) feedback quality remains acceptable with incremental diffs, and (5) timeout issues are actually resolved in practice. Without tests, regressions in this critical code path could go undetected.",
+      "evidence": [],
+      "file": null,
+      "line_end": null,
+      "line_start": null,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Info",
+      "suggested_fix": "Create tests/test_incremental_crucible.py with fixtures for mock SSHClient, task definitions, and multi-iteration sequences. Test cases should verify: crucible_base transitions, error handling paths for git failures, and that incremental diffs do not degrade feedback quality or cause spurious differences between runs with the same final code state.",
+      "title": "Missing integration tests for incremental baseline behavior"
+    },
+    {
+      "category": "correctness",
+      "description": "By moving the baseline forward after each iteration, the incremental diff strategy creates an implicit dependency on iteration order. Identical code changes in different iteration sequences will receive different crucible feedback because they compare against different bases. This reduces reproducibility: running the same task twice with different intermediate code states will generate different crucible comments for the same final code. While acknowledged as an intended trade-off in the summary, this should be documented in code or task YAML schema to prevent confusion.",
+      "evidence": [
+        {
+          "location": "factory/runner.py:210",
+          "quote": "crucible_base: str | None = None  # updated to HEAD after each round to limit diff size"
+        }
+      ],
+      "file": "factory/runner.py",
+      "line_end": 210,
+      "line_start": 210,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Info",
+      "suggested_fix": "Add a docstring or comment above the `crucible_base` initialization explaining this trade-off:\n```python\n# crucible_base tracks the baseline for incremental reviews. Moving the baseline forward\n# each iteration reduces diff size (preventing timeouts) but makes feedback dependent on\n# iteration order—identical code changes in different sequences will receive different feedback.\ncircumble_base: str | None = None\n```",
+      "title": "Iteration-order dependency in crucible feedback"
+    },
+    {
+      "category": "correctness",
+      "description": "By moving the baseline forward after each iteration, the incremental diff strategy creates an implicit dependency on iteration order. Identical code changes in different iteration sequences will receive different crucible feedback because they compare against different bases. This reduces reproducibility: running the same task twice with different intermediate code states will generate different crucible comments for the same final code. While this is an acknowledged trade-off to prevent timeouts, it should be documented in code to prevent confusion during debugging or refactoring.",
+      "evidence": [],
+      "file": "factory/runner.py",
+      "line_end": 210,
+      "line_start": 210,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Info",
+      "suggested_fix": "Add a docstring above the `crucible_base` initialization explaining the iteration-order trade-off:\n```python\n# crucible_base tracks the baseline for incremental reviews. Moving the baseline forward\n# each iteration reduces diff size (preventing timeouts) but makes feedback dependent on\n# iteration order—identical code changes in different sequences will receive different feedback.\ncircumble_base: str | None = None\n```",
+      "title": "Document iteration-order dependency in crucible feedback"
+    }
+  ],
+  "pr_comment_markdown": "## Crucible Review Summary\n\n- Issues: 5\n- Critical: 0, Warning: 1\n\n### Top Actions\n- [Warning] Missing exit code validation on git command (factory/runner.py:355)\n\n### Notable Issues\n- **Missing exit code validation on git command** `factory/runner.py:355`: The `git rev-parse HEAD` command result is not validated against `result.ok` or `result.exit_code` before using stdout. This deviates from established error handling patterns in the codebase (see lines 557-558, 574-575). If git fails (timeout, permission error, bad working_dir path), stdout will be empty and the condition `if _head:` silently treats it as a non-error. The previous `crucible_base` value persists without any indication that the git command failed.\n- **Missing tests for incremental baseline behavior across iterations** `<unknown>`: The CLAUDE.md notes that no tests exist yet. The new incremental baseline logic should be tested to verify: (1) crucible_base is updated correctly after each iteration, (2) fallback to base_branch works on first iteration (crucible_base is None), (3) git command failures are handled gracefully, (4) feedback quality is acceptable with incremental diffs, and (5) timeout issues are actually resolved. Without integration tests, regressions or silent failures in this critical code path could go undetected.\n- **Missing integration tests for incremental baseline behavior** `<unknown>`: The CLAUDE.md explicitly notes that no tests exist yet. The incremental baseline logic introduced to prevent crucible timeouts should be covered by integration tests to verify: (1) crucible_base correctly transitions from None (first iteration) to updated HEAD (subsequent iterations), (2) fallback to base_branch works on first iteration, (3) git command failures are handled gracefully without silent failures, (4) feedback quality remains acceptable with incremental diffs, and (5) timeout issues are actually resolved in practice. Without tests, regressions in this critical code path could go undetected.\n- **Iteration-order dependency in crucible feedback** `factory/runner.py:210`: By moving the baseline forward after each iteration, the incremental diff strategy creates an implicit dependency on iteration order. Identical code changes in different iteration sequences will receive different crucible feedback because they compare against different bases. This reduces reproducibility: running the same task twice with different intermediate code states will generate different crucible comments for the same final code. While acknowledged as an intended trade-off in the summary, this should be documented in code or task YAML schema to prevent confusion.\n- **Document iteration-order dependency in crucible feedback** `factory/runner.py:210`: By moving the baseline forward after each iteration, the incremental diff strategy creates an implicit dependency on iteration order. Identical code changes in different iteration sequences will receive different crucible feedback because they compare against different bases. This reduces reproducibility: running the same task twice with different intermediate code states will generate different crucible comments for the same final code. While this is an acknowledged trade-off to prevent timeouts, it should be documented in code to prevent confusion during debugging or refactoring.\n",
+  "pr_review_draft": {
+    "inline_comments": [
+      {
+        "body": "**Missing exit code validation on git command**\n\nThe `git rev-parse HEAD` command result is not validated against `result.ok` or `result.exit_code` before using stdout. This deviates from established error handling patterns in the codebase (see lines 557-558, 574-575). If git fails (timeout, permission error, bad working_dir path), stdout will be empty and the condition `if _head:` silently treats it as a non-error. The previous `crucible_base` value persists without any indication that the git command failed.\n\nRaised by: claude-code\n\nSuggested fix: Replace lines 355-357 with:\n```python\nresult = client.run(f\"git -C {working_dir} rev-parse HEAD\", timeout=10)\nif result.ok and result.stdout.strip():\n    crucible_base = result.stdout.strip()\nelse:\n    _log(run_id, f\"  warning: failed to capture HEAD commit, using previous base (exit_code={result.exit_code})\")\n```",
+        "category": "correctness",
+        "description": "The `git rev-parse HEAD` command result is not validated against `result.ok` or `result.exit_code` before using stdout. This deviates from established error handling patterns in the codebase (see lines 557-558, 574-575). If git fails (timeout, permission error, bad working_dir path), stdout will be empty and the condition `if _head:` silently treats it as a non-error. The previous `crucible_base` value persists without any indication that the git command failed.",
+        "line": 357,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/runner.py",
+        "severity": "Warning",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 355,
+        "start_side": "Right",
+        "title": "Missing exit code validation on git command"
+      },
+      {
+        "body": "**Iteration-order dependency in crucible feedback**\n\nBy moving the baseline forward after each iteration, the incremental diff strategy creates an implicit dependency on iteration order. Identical code changes in different iteration sequences will receive different crucible feedback because they compare against different bases. This reduces reproducibility: running the same task twice with different intermediate code states will generate different crucible comments for the same final code. While acknowledged as an intended trade-off in the summary, this should be documented in code or task YAML schema to prevent confusion.\n\nRaised by: claude-code\n\nSuggested fix: Add a docstring or comment above the `crucible_base` initialization explaining this trade-off:\n```python\n# crucible_base tracks the baseline for incremental reviews. Moving the baseline forward\n# each iteration reduces diff size (preventing timeouts) but makes feedback dependent on\n# iteration order—identical code changes in different sequences will receive different feedback.\ncircumble_base: str | None = None\n```",
+        "category": "correctness",
+        "description": "By moving the baseline forward after each iteration, the incremental diff strategy creates an implicit dependency on iteration order. Identical code changes in different iteration sequences will receive different crucible feedback because they compare against different bases. This reduces reproducibility: running the same task twice with different intermediate code states will generate different crucible comments for the same final code. While acknowledged as an intended trade-off in the summary, this should be documented in code or task YAML schema to prevent confusion.",
+        "line": 210,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/runner.py",
+        "severity": "Info",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "Iteration-order dependency in crucible feedback"
+      },
+      {
+        "body": "**Document iteration-order dependency in crucible feedback**\n\nBy moving the baseline forward after each iteration, the incremental diff strategy creates an implicit dependency on iteration order. Identical code changes in different iteration sequences will receive different crucible feedback because they compare against different bases. This reduces reproducibility: running the same task twice with different intermediate code states will generate different crucible comments for the same final code. While this is an acknowledged trade-off to prevent timeouts, it should be documented in code to prevent confusion during debugging or refactoring.\n\nRaised by: claude-code\n\nSuggested fix: Add a docstring above the `crucible_base` initialization explaining the iteration-order trade-off:\n```python\n# crucible_base tracks the baseline for incremental reviews. Moving the baseline forward\n# each iteration reduces diff size (preventing timeouts) but makes feedback dependent on\n# iteration order—identical code changes in different sequences will receive different feedback.\ncircumble_base: str | None = None\n```",
+        "category": "correctness",
+        "description": "By moving the baseline forward after each iteration, the incremental diff strategy creates an implicit dependency on iteration order. Identical code changes in different iteration sequences will receive different crucible feedback because they compare against different bases. This reduces reproducibility: running the same task twice with different intermediate code states will generate different crucible comments for the same final code. While this is an acknowledged trade-off to prevent timeouts, it should be documented in code to prevent confusion during debugging or refactoring.",
+        "line": 210,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/runner.py",
+        "severity": "Info",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "Document iteration-order dependency in crucible feedback"
+      }
+    ],
+    "overview_comment": {
+      "body": "## Crucible Review Summary\n\n- Issues: 5\n- Critical: 0, Warning: 1\n\n### Top Actions\n- [Warning] Missing exit code validation on git command (factory/runner.py:355)\n\n### Notable Issues\n- **Missing exit code validation on git command** `factory/runner.py:355`: The `git rev-parse HEAD` command result is not validated against `result.ok` or `result.exit_code` before using stdout. This deviates from established error handling patterns in the codebase (see lines 557-558, 574-575). If git fails (timeout, permission error, bad working_dir path), stdout will be empty and the condition `if _head:` silently treats it as a non-error. The previous `crucible_base` value persists without any indication that the git command failed.\n- **Missing tests for incremental baseline behavior across iterations** `<unknown>`: The CLAUDE.md notes that no tests exist yet. The new incremental baseline logic should be tested to verify: (1) crucible_base is updated correctly after each iteration, (2) fallback to base_branch works on first iteration (crucible_base is None), (3) git command failures are handled gracefully, (4) feedback quality is acceptable with incremental diffs, and (5) timeout issues are actually resolved. Without integration tests, regressions or silent failures in this critical code path could go undetected.\n- **Missing integration tests for incremental baseline behavior** `<unknown>`: The CLAUDE.md explicitly notes that no tests exist yet. The incremental baseline logic introduced to prevent crucible timeouts should be covered by integration tests to verify: (1) crucible_base correctly transitions from None (first iteration) to updated HEAD (subsequent iterations), (2) fallback to base_branch works on first iteration, (3) git command failures are handled gracefully without silent failures, (4) feedback quality remains acceptable with incremental diffs, and (5) timeout issues are actually resolved in practice. Without tests, regressions in this critical code path could go undetected.\n- **Iteration-order dependency in crucible feedback** `factory/runner.py:210`: By moving the baseline forward after each iteration, the incremental diff strategy creates an implicit dependency on iteration order. Identical code changes in different iteration sequences will receive different crucible feedback because they compare against different bases. This reduces reproducibility: running the same task twice with different intermediate code states will generate different crucible comments for the same final code. While acknowledged as an intended trade-off in the summary, this should be documented in code or task YAML schema to prevent confusion.\n- **Document iteration-order dependency in crucible feedback** `factory/runner.py:210`: By moving the baseline forward after each iteration, the incremental diff strategy creates an implicit dependency on iteration order. Identical code changes in different iteration sequences will receive different crucible feedback because they compare against different bases. This reduces reproducibility: running the same task twice with different intermediate code states will generate different crucible comments for the same final code. While this is an acknowledged trade-off to prevent timeouts, it should be documented in code to prevent confusion during debugging or refactoring.\n"
+    },
+    "overview_only_comments": [
+      {
+        "body": "**Missing tests for incremental baseline behavior across iterations**\n\nThe CLAUDE.md notes that no tests exist yet. The new incremental baseline logic should be tested to verify: (1) crucible_base is updated correctly after each iteration, (2) fallback to base_branch works on first iteration (crucible_base is None), (3) git command failures are handled gracefully, (4) feedback quality is acceptable with incremental diffs, and (5) timeout issues are actually resolved. Without integration tests, regressions or silent failures in this critical code path could go undetected.\n\nRaised by: claude-code\n\nSuggested fix: Create a test suite (e.g., tests/test_incremental_crucible.py) with fixtures for mock SSHClient, task definitions, and iteration sequences. Test cases should verify crucible_base transitions and error handling paths.",
+        "category": "testing",
+        "description": "The CLAUDE.md notes that no tests exist yet. The new incremental baseline logic should be tested to verify: (1) crucible_base is updated correctly after each iteration, (2) fallback to base_branch works on first iteration (crucible_base is None), (3) git command failures are handled gracefully, (4) feedback quality is acceptable with incremental diffs, and (5) timeout issues are actually resolved. Without integration tests, regressions or silent failures in this critical code path could go undetected.",
+        "line": null,
+        "mapping_note": "Issue could not be mapped to a changed diff hunk",
+        "mapping_status": "OverviewOnly",
+        "path": null,
+        "severity": "Info",
+        "side": null,
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "Missing tests for incremental baseline behavior across iterations"
+      },
+      {
+        "body": "**Missing integration tests for incremental baseline behavior**\n\nThe CLAUDE.md explicitly notes that no tests exist yet. The incremental baseline logic introduced to prevent crucible timeouts should be covered by integration tests to verify: (1) crucible_base correctly transitions from None (first iteration) to updated HEAD (subsequent iterations), (2) fallback to base_branch works on first iteration, (3) git command failures are handled gracefully without silent failures, (4) feedback quality remains acceptable with incremental diffs, and (5) timeout issues are actually resolved in practice. Without tests, regressions in this critical code path could go undetected.\n\nRaised by: claude-code\n\nSuggested fix: Create tests/test_incremental_crucible.py with fixtures for mock SSHClient, task definitions, and multi-iteration sequences. Test cases should verify: crucible_base transitions, error handling paths for git failures, and that incremental diffs do not degrade feedback quality or cause spurious differences between runs with the same final code state.",
+        "category": "testing",
+        "description": "The CLAUDE.md explicitly notes that no tests exist yet. The incremental baseline logic introduced to prevent crucible timeouts should be covered by integration tests to verify: (1) crucible_base correctly transitions from None (first iteration) to updated HEAD (subsequent iterations), (2) fallback to base_branch works on first iteration, (3) git command failures are handled gracefully without silent failures, (4) feedback quality remains acceptable with incremental diffs, and (5) timeout issues are actually resolved in practice. Without tests, regressions in this critical code path could go undetected.",
+        "line": null,
+        "mapping_note": "Issue could not be mapped to a changed diff hunk",
+        "mapping_status": "OverviewOnly",
+        "path": null,
+        "severity": "Info",
+        "side": null,
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "Missing integration tests for incremental baseline behavior"
+      }
+    ]
+  },
+  "run_id": "62173fc7-3198-4770-926e-584ce516c313",
+  "session_id": "62173fc7-3198-4770-926e-584ce516c313",
+  "system_context_markdown": "### System Context\n- Changed files: 1\n- Reference snippets: 0\n- History commits: 20\n- Docs snippets: 1\n- Deterministic prechecks: 2\n- Affected files:\n  - factory/runner.py\n- Precheck results:\n  - untangle-analyze-report [Fail] error: unexpected argument '.' found\n\nUsage: untangle analyze [OPTIONS] <PATH>\n\nFor more information, try '--help'.\n  - untangle-quality-report [Fail] error: unrecognized subcommand 'quality'\n\nUsage: untangle <COMMAND>\n\nFor more information, try '--help'.\n",
+  "verdict": "Warn"
+}
+[run:62173fc7-3198-4770-926e-584ce516c313]
+[2026-05-15 16:18:36.483 +10:00] [final-analysis]
+## Final Analysis
+
+- Issues: 5 (Critical: 0, Warning: 1, Info: 4)
+- Agent failures: 0
+
+### Top Issues
+- [Warning] Missing exit code validation on git command `factory/runner.py:355`
+- [Info] Missing tests for incremental baseline behavior across iterations `<unknown>`
+- [Info] Missing integration tests for incremental baseline behavior `<unknown>`
+- [Info] Iteration-order dependency in crucible feedback `factory/runner.py:210`
+- [Info] Document iteration-order dependency in crucible feedback `factory/runner.py:210`
+
+### Action Plan
+- [Warning] Missing exit code validation on git command (factory/runner.py:355)
+
+[2026-05-15 16:18:36.484 +10:00] [pr-comment]
+## Crucible Review Summary
+
+- Issues: 5
+- Critical: 0, Warning: 1
+
+### Top Actions
+- [Warning] Missing exit code validation on git command (factory/runner.py:355)
+
+### Notable Issues
+- **Missing exit code validation on git command** `factory/runner.py:355`: The `git rev-parse HEAD` command result is not validated against `result.ok` or `result.exit_code` before using stdout. This deviates from established error handling patterns in the codebase (see lines 557-558, 574-575). If git fails (timeout, permission error, bad working_dir path), stdout will be empty and the condition `if _head:` silently treats it as a non-error. The previous `crucible_base` value persists without any indication that the git command failed.
+- **Missing tests for incremental baseline behavior across iterations** `<unknown>`: The CLAUDE.md notes that no tests exist yet. The new incremental baseline logic should be tested to verify: (1) crucible_base is updated correctly after each iteration, (2) fallback to base_branch works on first iteration (crucible_base is None), (3) git command failures are handled gracefully, (4) feedback quality is acceptable with incremental diffs, and (5) timeout issues are actually resolved. Without integration tests, regressions or silent failures in this critical code path could go undetected.
+- **Missing integration tests for incremental baseline behavior** `<unknown>`: The CLAUDE.md explicitly notes that no tests exist yet. The incremental baseline logic introduced to prevent crucible timeouts should be covered by integration tests to verify: (1) crucible_base correctly transitions from None (first iteration) to updated HEAD (subsequent iterations), (2) fallback to base_branch works on first iteration, (3) git command failures are handled gracefully without silent failures, (4) feedback quality remains acceptable with incremental diffs, and (5) timeout issues are actually resolved in practice. Without tests, regressions in this critical code path could go undetected.
+- **Iteration-order dependency in crucible feedback** `factory/runner.py:210`: By moving the baseline forward after each iteration, the incremental diff strategy creates an implicit dependency on iteration order. Identical code changes in different iteration sequences will receive different crucible feedback because they compare against different bases. This reduces reproducibility: running the same task twice with different intermediate code states will generate different crucible comments for the same final code. While acknowledged as an intended trade-off in the summary, this should be documented in code or task YAML schema to prevent confusion.
+- **Document iteration-order dependency in crucible feedback** `factory/runner.py:210`: By moving the baseline forward after each iteration, the incremental diff strategy creates an implicit dependency on iteration order. Identical code changes in different iteration sequences will receive different crucible feedback because they compare against different bases. This reduces reproducibility: running the same task twice with different intermediate code states will generate different crucible comments for the same final code. While this is an acknowledged trade-off to prevent timeouts, it should be documented in code to prevent confusion during debugging or refactoring.
+

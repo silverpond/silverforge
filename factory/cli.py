@@ -1088,6 +1088,8 @@ def slack_listen(
         # Always ACK immediately
         client.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
 
+        console.print(f"  [dim]DEBUG req.type={req.type} event={req.payload.get('event', {}).get('type')} subtype={req.payload.get('event', {}).get('subtype')} channel={req.payload.get('event', {}).get('channel')}[/dim]")
+
         if req.type != "events_api":
             return
 
@@ -1108,23 +1110,66 @@ def slack_listen(
         remainder = text[4:].strip()
         thread_ts = event.get("ts")
 
-        # Parse --repo flag out of the remainder
-        repo: Optional[str] = None
+        # Parse flags out of the remainder
         try:
             parts = shlex.split(remainder)
         except ValueError:
             parts = remainder.split()
 
         filtered = []
+        repo: Optional[str] = None
+        model: Optional[str] = None
+        effort: Optional[str] = None
+        crucible_rounds: Optional[int] = None
+        crucible_model: Optional[str] = None
         i = 0
+        _flag_map = {
+            "--repo": "repo",
+            "--model": "model",
+            "--effort": "effort",
+            "--crucible-rounds": "crucible_rounds",
+            "--crucible-model": "crucible_model",
+        }
         while i < len(parts):
-            if parts[i] == "--repo" and i + 1 < len(parts):
-                repo = parts[i + 1]
-                i += 2
-            elif parts[i].startswith("--repo="):
-                repo = parts[i][7:]
-                i += 1
-            else:
+            matched = False
+            for flag, varname in _flag_map.items():
+                if parts[i] == flag and i + 1 < len(parts):
+                    val = parts[i + 1]
+                    if varname == "crucible_rounds":
+                        try:
+                            crucible_rounds = int(val)
+                        except ValueError:
+                            pass
+                    elif varname == "repo":
+                        repo = val
+                    elif varname == "model":
+                        model = val
+                    elif varname == "effort":
+                        effort = val
+                    elif varname == "crucible_model":
+                        crucible_model = val
+                    i += 2
+                    matched = True
+                    break
+                elif parts[i].startswith(f"{flag}="):
+                    val = parts[i][len(flag) + 1:]
+                    if varname == "crucible_rounds":
+                        try:
+                            crucible_rounds = int(val)
+                        except ValueError:
+                            pass
+                    elif varname == "repo":
+                        repo = val
+                    elif varname == "model":
+                        model = val
+                    elif varname == "effort":
+                        effort = val
+                    elif varname == "crucible_model":
+                        crucible_model = val
+                    i += 1
+                    matched = True
+                    break
+            if not matched:
                 filtered.append(parts[i])
                 i += 1
         prompt = " ".join(filtered).strip()
@@ -1141,6 +1186,18 @@ def slack_listen(
 
         try:
             task = _build_inline_task(prompt, repo=repo, eval_commands=[], workers_path=workers)
+            if model and task.coder:
+                task.coder.model = model
+            if effort and task.coder:
+                task.coder.effort = effort
+            if crucible_rounds is not None:
+                if task.crucible:
+                    task.crucible.rounds = crucible_rounds
+                else:
+                    from factory.models import CrucibleConfig
+                    task.crucible = CrucibleConfig(rounds=crucible_rounds)
+            if crucible_model and task.crucible:
+                task.crucible.model = crucible_model
         except Exception as exc:
             slack_client.post(channel_id, f":x: Failed to build task: {exc}", thread_ts=thread_ts)
             return

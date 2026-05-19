@@ -89,6 +89,14 @@ def ping(
         raise typer.Exit(1)
 
 
+# ── hello ─────────────────────────────────────────────────────────────────────
+
+@app.command()
+def hello() -> None:
+    """Return a Hello, World! greeting."""
+    typer.echo("Hello, World!")
+
+
 # ── inline task helpers ───────────────────────────────────────────────────────
 
 def _infer_gh_repo_from_cwd() -> Optional[str]:

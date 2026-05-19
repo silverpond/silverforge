@@ -496,6 +496,18 @@ def deploy_bridge_daemon(client: SSHClient) -> None:
     )
 
 
+def save_active_runs(client: SSHClient, runs: dict) -> None:
+    """Persist the active runs dictionary to active-runs.json on the worker."""
+    import json as _json
+    import shlex as _shlex
+    json_str = _json.dumps(runs)
+    # Use base64 to avoid shell escaping issues
+    encoded = base64.b64encode(json_str.encode()).decode()
+    client.run(
+        f"echo '{encoded}' | base64 -d > ~/factory/active-runs.json"
+    )
+
+
 def register_run(client: SSHClient, run_id: str, session_name: str, thread_ts: str) -> None:
     """Add a run to the active-runs.json on the worker."""
     abs_path = client.run("echo ~/factory/active-runs.json", timeout=5).stdout.strip()

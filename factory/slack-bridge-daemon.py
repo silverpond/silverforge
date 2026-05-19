@@ -71,6 +71,11 @@ def run_daemon():
     bot_user_id = web_client.auth_test()["user_id"]
     print(f"[bridge-daemon] started, bot={bot_user_id}", flush=True)
 
+    # Load active-runs.json on startup to restore state from disk
+    active_runs = load_active_runs()
+    if active_runs:
+        print(f"[bridge-daemon] loaded {len(active_runs)} active runs from disk", flush=True)
+
     def handle(client: SocketModeClient, req: SocketModeRequest):
         client.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
 

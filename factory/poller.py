@@ -108,7 +108,11 @@ def _push_and_pr(
 
     worktree = run.worktree_path
 
-    commit_msg = f"factory: fix for issue #{number}" if number else f"factory: {task.name[:60]}"
+    issue_title = issue.get("title", "")
+    if number:
+        commit_msg = f"fix: {issue_title[:72]}" if issue_title else f"factory: fix issue #{number}"
+    else:
+        commit_msg = f"factory: {task.name[:72]}"
     # Exclude .factory/ and .claude/ (contain secrets and machine-specific config)
     client.run(
         f"git -C {worktree} add -A && "
@@ -127,11 +131,19 @@ def _push_and_pr(
         raise RuntimeError(f"git push failed: {result.stderr.strip()}")
 
     base_branch = gh.get_default_branch(repo)
-    verdict_line = f"\n\n**Evaluator:** {run.evaluator_reason}" if run.evaluator_verdict else ""
+    verdict_line = f"\n\n**Evaluator verdict:** {run.evaluator_reason}" if run.evaluator_verdict else ""
     service_line = f"\n\n**Preview:** http://{worker.host}:{run.service_port}" if run.service_port else ""
+
+    # Build a description explaining what was implemented
+    description_section = ""
+    if run.gemini_summary:
+        description_section = f"\n\n## Changes\n\n{run.gemini_summary}"
+    elif run.evaluator_reason and run.evaluator_verdict == "approved":
+        description_section = f"\n\n## Summary\n\n{run.evaluator_reason}"
+
     pr_body = (
         f"{'Fixes #' + str(number) + chr(10) + chr(10) if number else ''}"
-        f"Automated implementation by Silverpond Factory (run `{run.run_id}`).{verdict_line}{service_line}"
+        f"Automated implementation by Silverpond Factory (run `{run.run_id}`).{verdict_line}{service_line}{description_section}"
     )
     try:
         pr = gh.create_pr(

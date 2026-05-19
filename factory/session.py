@@ -195,6 +195,17 @@ def start_session(client: SSHClient, session_name: str, working_dir: str) -> boo
     return True
 
 
+def _poll_message_log(client: SSHClient, log_path: str, last_line: int) -> int:
+    """Read new lines from messages.log since last_line and display them. Returns new line count."""
+    result = client.run(
+        f"tail -n +{last_line + 1} {log_path} 2>/dev/null || true", timeout=5
+    )
+    content = result.stdout
+    if content.strip():
+        _console.print(Text(content.rstrip(), style="italic"))
+    return last_line + content.count('\n')
+
+
 def wait_for_status(
     client: SSHClient,
     working_dir: str,
@@ -204,15 +215,25 @@ def wait_for_status(
 ) -> str:
     """
     Poll .factory/status until it contains 'done' or 'failed'.
+    Also displays messages from .factory/messages.log as they arrive.
     Returns 'done', 'failed', or 'timeout'.
     """
     elapsed = 0
     last_heartbeat = 0
+    msg_log = f"{working_dir}/.factory/messages.log"
+    last_msg_line = 0
 
     while elapsed < timeout:
         result = client.run(f"cat {working_dir}/.factory/status 2>/dev/null")
         status = result.stdout.strip()
+
+        # Display any new messages Claude has posted via its Stop hook
+        last_msg_line = _poll_message_log(client, msg_log, last_msg_line)
+
         if status in ("done", "failed"):
+            # Grace period: allow the final Stop hook to fire and log its message
+            time.sleep(10)
+            _poll_message_log(client, msg_log, last_msg_line)
             return status
 
         # Fallback: if Claude wrote completion.md but missed writing status
@@ -222,6 +243,8 @@ def wait_for_status(
         ).stdout.strip()
         if completion == "yes":
             client.run(f"echo done > {working_dir}/.factory/status")
+            time.sleep(10)
+            _poll_message_log(client, msg_log, last_msg_line)
             return "done"
 
         if elapsed - last_heartbeat >= 60:
@@ -372,18 +395,22 @@ while True:
 def write_agent_hooks(
     client: SSHClient,
     working_dir: str,
-    slack_token: str,
-    channel_id: str,
+    slack_token: str = "",
+    channel_id: str = "",
     thread_ts: str = "",
 ) -> None:
     """
     Write Claude Stop/SessionStart hooks into the worktree.
 
+    Always writes hooks that append CLAUDE_LAST_ASSISTANT_MESSAGE to
+    .factory/messages.log so the controller can poll messages mid-session.
+    If Slack credentials are provided, also posts to Slack.
+
     SessionStart hook: records the top-level Claude session ID as a marker so
     nested invocations (e.g. crucible's inner claude) stay silent.
 
-    Stop hook: posts CLAUDE_LAST_ASSISTANT_MESSAGE to Slack, but only from the
-    top-level session (nested session guard via the marker file).
+    Stop hook: logs message to .factory/messages.log (always) and optionally
+    posts to Slack — only from the top-level session.
     """
     import json as _json
 
@@ -403,7 +430,7 @@ fi
 
     # ── Stop hook ────────────────────────────────────────────────────────────
     stop_hook = r'''#!/usr/bin/env bash
-# Nested session guard: only the top-level claude posts to Slack.
+# Nested session guard: only the top-level claude posts.
 FACTORY_DIR="$(cd "$(dirname "$0")" && pwd)"
 MARKER="$FACTORY_DIR/session-marker"
 [[ -f "$MARKER" ]] || exit 0
@@ -412,12 +439,16 @@ MARKER="$FACTORY_DIR/session-marker"
 MSG="$CLAUDE_LAST_ASSISTANT_MESSAGE"
 [[ -z "$MSG" ]] && exit 0
 
-source "$FACTORY_DIR/slack-env.sh"
+# Always append message to messages.log so the controller can poll it mid-session
+TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+printf '[%s]\n%s\n\n' "$TIMESTAMP" "$MSG" >> "$FACTORY_DIR/messages.log"
 
-# Write message to a temp file to avoid shell quoting issues.
-TMPFILE=$(mktemp)
-printf '%s' "$MSG" > "$TMPFILE"
-python3 - "$TMPFILE" <<'PYEOF'
+# Post to Slack if configured
+if [[ -f "$FACTORY_DIR/slack-env.sh" ]]; then
+    source "$FACTORY_DIR/slack-env.sh"
+    TMPFILE=$(mktemp)
+    printf '%s' "$MSG" > "$TMPFILE"
+    python3 - "$TMPFILE" <<'PYEOF'
 import json, os, sys, urllib.request
 token = os.environ["SLACK_BOT_TOKEN"]
 channel = os.environ["SLACK_CHANNEL_ID"]
@@ -438,6 +469,7 @@ try:
 except Exception as e:
     print(f"[stop-hook] Slack error: {e}", file=__import__("sys").stderr)
 PYEOF
+fi
 '''
     encoded_stop = base64.b64encode(stop_hook.encode()).decode()
     client.run(
@@ -448,17 +480,18 @@ PYEOF
     # Resolve ~ to absolute path so Claude's hook runner can find the scripts
     abs_dir = client.run(f"realpath {working_dir}", timeout=5).stdout.strip() or working_dir
 
-    # ── slack-env.sh (sourced by stop hook and bridge) ───────────────────────
-    env_content = (
-        f"export SLACK_BOT_TOKEN={slack_token}\n"
-        f"export SLACK_CHANNEL_ID={channel_id}\n"
-        f"export FACTORY_THREAD_TS={thread_ts}\n"
-    )
-    encoded_env = base64.b64encode(env_content.encode()).decode()
-    client.run(
-        f"echo '{encoded_env}' | base64 -d > {working_dir}/.factory/slack-env.sh && "
-        f"chmod 600 {working_dir}/.factory/slack-env.sh"
-    )
+    # ── slack-env.sh (sourced by stop hook and bridge, only when Slack is configured) ──
+    if slack_token and channel_id:
+        env_content = (
+            f"export SLACK_BOT_TOKEN={slack_token}\n"
+            f"export SLACK_CHANNEL_ID={channel_id}\n"
+            f"export FACTORY_THREAD_TS={thread_ts}\n"
+        )
+        encoded_env = base64.b64encode(env_content.encode()).decode()
+        client.run(
+            f"echo '{encoded_env}' | base64 -d > {working_dir}/.factory/slack-env.sh && "
+            f"chmod 600 {working_dir}/.factory/slack-env.sh"
+        )
 
     # ── .claude/settings.local.json ─────────────────────────────────────────
     factory_dir = f"{abs_dir}/.factory"

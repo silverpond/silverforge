@@ -139,8 +139,10 @@ def launch_task(task: TaskDefinition, workers_path: Path = Path("workers.yaml"))
 
     sess.setup_factory_dir(client, working_dir)
     sess.write_task(client, working_dir, prompt)
+    _hook_slack = {}
     if slack_client and run.slack_channel_id and slack_token:
-        sess.write_agent_hooks(client, working_dir, slack_token, run.slack_channel_id, thread_ts=run.slack_thread_ts)
+        _hook_slack = {"slack_token": slack_token, "channel_id": run.slack_channel_id, "thread_ts": run.slack_thread_ts}
+    sess.write_agent_hooks(client, working_dir, **_hook_slack)
     if run.service_port and task.service:
         sess.append_service_context(client, working_dir, run.service_port, task.service.port)
     sess.write_runner_script(
@@ -247,8 +249,10 @@ def watch_task(
                             sess.unregister_run(client, run.slack_thread_ts)
                         sess.setup_factory_dir(client, working_dir)
                         sess.write_task(client, working_dir, original_prompt)
+                        _hook_slack = {}
                         if slack_client and run.slack_channel_id and slack_token:
-                            sess.write_agent_hooks(client, working_dir, slack_token, run.slack_channel_id, thread_ts=run.slack_thread_ts)
+                            _hook_slack = {"slack_token": slack_token, "channel_id": run.slack_channel_id, "thread_ts": run.slack_thread_ts}
+                        sess.write_agent_hooks(client, working_dir, **_hook_slack)
                         if run.service_port and task.service:
                             sess.append_service_context(client, working_dir, run.service_port, task.service.port)
                         sess.write_runner_script(

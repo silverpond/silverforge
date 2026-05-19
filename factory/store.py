@@ -7,9 +7,12 @@ Layout:
         run.json          — serialised Run object
         eval_<cmd>.stdout — stdout from each eval command
         eval_<cmd>.stderr — stderr from each eval command
+    contexts/
+      <repo-slug>.md      — accumulated context for a repo, prepended to task prompts
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
@@ -17,6 +20,7 @@ from typing import List, Optional
 from factory.models import Run, RunState
 
 RUNS_DIR = Path("runs")
+CONTEXTS_DIR = Path("contexts")
 
 
 def _run_dir(run_id: str) -> Path:
@@ -66,3 +70,37 @@ def update_state(run_id: str, state: RunState) -> Optional[Run]:
     run.state = state
     save_run(run)
     return run
+
+
+# ── Repo context helpers ──────────────────────────────────────────────────────
+
+def repo_slug(repo_url: Optional[str], repo_path: Optional[str], task_id: str) -> str:
+    """Return a filesystem-safe slug identifying a repo."""
+    if repo_url:
+        m = re.search(r"[:/]([^/]+/[^/]+?)(?:\.git)?$", repo_url)
+        if m:
+            return re.sub(r"[^\w-]", "-", m.group(1))
+    if repo_path:
+        return Path(repo_path).expanduser().name
+    return re.sub(r"[^\w-]", "-", task_id)
+
+
+def load_repo_context(slug: str) -> str:
+    """Read the accumulated context for a repo. Returns empty string if none exists."""
+    path = CONTEXTS_DIR / f"{slug}.md"
+    return path.read_text() if path.exists() else ""
+
+
+def append_to_repo_context(slug: str, entry: str) -> None:
+    """Append a new entry (e.g. completion notes) to the repo context file."""
+    CONTEXTS_DIR.mkdir(parents=True, exist_ok=True)
+    path = CONTEXTS_DIR / f"{slug}.md"
+    if not path.exists():
+        path.write_text(
+            "## Repository Context\n\n"
+            "Accumulated learnings from previous factory runs.\n\n"
+            f"{entry}\n"
+        )
+    else:
+        existing = path.read_text()
+        path.write_text(existing.rstrip() + f"\n\n{entry}\n")

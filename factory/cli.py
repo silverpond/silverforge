@@ -130,11 +130,11 @@ def _build_inline_task(
         name=prompt[:80],
         worker=worker_name,
         repo=RepoConfig(path=repo_path, branch="main", url=f"git@github.com:{gh_repo}.git"),
-        coder=CoderConfig(prompt=prompt, max_iterations=3, session_timeout=600, agents=["claude"]),
-        crucible=CrucibleConfig(block_on="Critical", timeout=300),
+        coder=CoderConfig(prompt=prompt, max_iterations=3, session_timeout=1500, agents=["claude"]),
+        crucible=CrucibleConfig(block_on="Critical", timeout=600),
         gemini_review=GeminiReviewConfig(),
         slack=SlackConfig(reviewers=[r for r in os.environ.get("SLACK_DEFAULT_REVIEWERS", "").split(",") if r.strip()]),
-        eval=EvalConfig(commands=eval_commands, working_dir=repo_path, timeout=120),
+        eval=EvalConfig(commands=eval_commands, working_dir=repo_path, timeout=300),
     )
 
 
@@ -143,13 +143,14 @@ def _build_inline_task(
 @app.command(name="run")
 def run_cmd(
     task_or_file: str = typer.Argument(..., help="Task YAML file, or inline task description"),
-    agent: Optional[str] = typer.Option(None, "--agent", "-a", help="Override agent (e.g. claude, codex)"),
+    agent: Optional[List[str]] = typer.Option(None, "--agent", "-a", help="Agent(s) to use in order (e.g. --agent claude --agent codex for codex fallback)"),
     model: Optional[str] = typer.Option(None, "--model", "-m", help="Override model (e.g. sonnet, opus)"),
     effort: Optional[str] = typer.Option(None, "--effort", "-e", help="Override effort (low, medium, high, max)"),
     repo: Optional[str] = typer.Option(None, "--repo", "-r", help="GitHub repo (owner/repo) for inline tasks"),
     eval_cmd: Optional[List[str]] = typer.Option(None, "--eval", help="Eval command(s) for inline tasks"),
     crucible_rounds: Optional[int] = typer.Option(None, "--crucible-rounds", help="Number of crucible review rounds"),
     crucible_model: Optional[str] = typer.Option(None, "--crucible-model", help="Claude model for crucible reviewer (e.g. haiku)"),
+    timeout: Optional[int] = typer.Option(None, "--timeout", "-t", help="Agent session timeout in seconds (default: 1800)"),
     workers: Path = _WORKERS_OPT,
 ) -> None:
     """Run a task — pass a YAML file or an inline task description."""
@@ -163,7 +164,7 @@ def run_cmd(
         task = _build_inline_task(task_or_file, repo=repo, eval_commands=list(eval_cmd or []), workers_path=workers)
 
     if agent and task.coder:
-        task.coder.agents = [agent]
+        task.coder.agents = list(agent)
     if model and task.coder:
         task.coder.model = model
     if effort and task.coder:
@@ -172,6 +173,8 @@ def run_cmd(
         task.crucible.rounds = crucible_rounds
     if crucible_model and task.crucible:
         task.crucible.model = crucible_model
+    if timeout is not None and task.coder:
+        task.coder.session_timeout = timeout
 
     agents_display = ", ".join(task.coder.agents) if task.coder else "—"
     console.print()
@@ -953,6 +956,7 @@ def poll(
     template: Optional[Path] = typer.Option(None, "--template", "-t", help="Task YAML template (optional — inferred from repo if omitted)"),
     workers: Path = _WORKERS_OPT,
     max_concurrency: Optional[int] = typer.Option(None, "--max-concurrency", "-c", help="Max parallel runs (default: worker slot count)"),
+    agent: Optional[List[str]] = typer.Option(None, "--agent", "-a", help="Agent(s) to use in order (e.g. --agent claude --agent codex for codex fallback)"),
     model: Optional[str] = typer.Option(None, "--model", "-m", help="Override model (e.g. sonnet, opus)"),
     effort: Optional[str] = typer.Option(None, "--effort", "-e", help="Override effort (low, medium, high, max)"),
     eval_cmd: Optional[List[str]] = typer.Option(None, "--eval", help="Eval command(s) run after each agent iteration"),
@@ -981,6 +985,8 @@ def poll(
     else:
         task_template = _build_inline_task("", repo=repo, eval_commands=list(eval_cmd or []), workers_path=workers)
 
+    if agent and task_template.coder:
+        task_template.coder.agents = list(agent)
     if model and task_template.coder:
         task_template.coder.model = model
     if effort and task_template.coder:
@@ -1027,6 +1033,208 @@ def poll(
     console.print()
     console.print(f"  [dim]Watchers running in background. Use [bold]factory status[/bold] to check progress.[/dim]")
     console.print()
+
+
+# ── slack-listen ─────────────────────────────────────────────────────────────
+
+@app.command(name="slack-listen")
+def slack_listen(
+    worker: str = typer.Argument("ares", help="Worker name from workers.yaml"),
+    workers: Path = _WORKERS_OPT,
+) -> None:
+    """Listen for 'run:' messages in the factory Slack channel and launch tasks."""
+    import shlex
+    import time
+
+    slack_token = os.environ.get("SLACK_BOT_TOKEN")
+    app_token = os.environ.get("SLACK_APP_TOKEN")
+
+    if not slack_token:
+        typer.echo("SLACK_BOT_TOKEN not set", err=True)
+        raise typer.Exit(1)
+    if not app_token:
+        typer.echo("SLACK_APP_TOKEN not set", err=True)
+        raise typer.Exit(1)
+
+    try:
+        from slack_sdk import WebClient
+        from slack_sdk.socket_mode import SocketModeClient
+        from slack_sdk.socket_mode.request import SocketModeRequest
+        from slack_sdk.socket_mode.response import SocketModeResponse
+    except ImportError:
+        typer.echo("slack-sdk not installed. Run: pip install 'slack-sdk>=3.19'", err=True)
+        raise typer.Exit(1)
+
+    from factory.slack import SlackClient, get_cached_channel_id
+
+    config = load_workers(workers)
+    if worker not in config.workers:
+        typer.echo(f"Worker '{worker}' not found in {workers}", err=True)
+        raise typer.Exit(1)
+
+    w = config.workers[worker]
+
+    slack_client = SlackClient(slack_token)
+    channel_id = slack_client.find_or_create_channel(
+        f"factory-{w.user}",
+        cached_id=get_cached_channel_id(),
+    )
+
+    console.print(f"  Listening on channel [cyan]{channel_id}[/cyan] (factory-{w.user})")
+    console.print("  Watching for messages starting with [bold]run:[/bold]")
+    console.print("  Press Ctrl-C to stop\n")
+
+    def handle(client: SocketModeClient, req: SocketModeRequest) -> None:
+        # Always ACK immediately
+        client.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
+
+        console.print(f"  [dim]DEBUG req.type={req.type} event={req.payload.get('event', {}).get('type')} subtype={req.payload.get('event', {}).get('subtype')} channel={req.payload.get('event', {}).get('channel')}[/dim]")
+
+        if req.type != "events_api":
+            return
+
+        event = req.payload.get("event", {})
+
+        # Only handle plain messages in our channel
+        if event.get("type") != "message":
+            return
+        if event.get("channel") != channel_id:
+            return
+        if event.get("subtype"):  # skip edits, deletes, bot messages
+            return
+
+        text = event.get("text", "").strip()
+        if not text.lower().startswith("run:"):
+            return
+
+        remainder = text[4:].strip()
+        thread_ts = event.get("ts")
+
+        # Parse flags out of the remainder
+        try:
+            parts = shlex.split(remainder)
+        except ValueError:
+            parts = remainder.split()
+
+        filtered = []
+        repo: Optional[str] = None
+        model: Optional[str] = None
+        effort: Optional[str] = None
+        crucible_rounds: Optional[int] = None
+        crucible_model: Optional[str] = None
+        i = 0
+        _flag_map = {
+            "--repo": "repo",
+            "--model": "model",
+            "--effort": "effort",
+            "--crucible-rounds": "crucible_rounds",
+            "--crucible-model": "crucible_model",
+        }
+        while i < len(parts):
+            matched = False
+            for flag, varname in _flag_map.items():
+                if parts[i] == flag and i + 1 < len(parts):
+                    val = parts[i + 1]
+                    if varname == "crucible_rounds":
+                        try:
+                            crucible_rounds = int(val)
+                        except ValueError:
+                            pass
+                    elif varname == "repo":
+                        repo = val
+                    elif varname == "model":
+                        model = val
+                    elif varname == "effort":
+                        effort = val
+                    elif varname == "crucible_model":
+                        crucible_model = val
+                    i += 2
+                    matched = True
+                    break
+                elif parts[i].startswith(f"{flag}="):
+                    val = parts[i][len(flag) + 1:]
+                    if varname == "crucible_rounds":
+                        try:
+                            crucible_rounds = int(val)
+                        except ValueError:
+                            pass
+                    elif varname == "repo":
+                        repo = val
+                    elif varname == "model":
+                        model = val
+                    elif varname == "effort":
+                        effort = val
+                    elif varname == "crucible_model":
+                        crucible_model = val
+                    i += 1
+                    matched = True
+                    break
+            if not matched:
+                filtered.append(parts[i])
+                i += 1
+        prompt = " ".join(filtered).strip()
+
+        if not repo:
+            slack_client.post(
+                channel_id,
+                "Missing --repo flag. Usage: `run: task description --repo owner/repo`",
+                thread_ts=thread_ts,
+            )
+            return
+
+        console.print(f"  [cyan]run:[/cyan] {prompt!r}  --repo {repo}")
+
+        try:
+            task = _build_inline_task(prompt, repo=repo, eval_commands=[], workers_path=workers)
+            if model and task.coder:
+                task.coder.model = model
+            if effort and task.coder:
+                task.coder.effort = effort
+            if crucible_rounds is not None:
+                if task.crucible:
+                    task.crucible.rounds = crucible_rounds
+                else:
+                    from factory.models import CrucibleConfig
+                    task.crucible = CrucibleConfig(rounds=crucible_rounds)
+            if crucible_model and task.crucible:
+                task.crucible.model = crucible_model
+        except Exception as exc:
+            slack_client.post(channel_id, f":x: Failed to build task: {exc}", thread_ts=thread_ts)
+            return
+
+        try:
+            run = launch_task(task, workers)
+            if run.state == RunState.failed:
+                slack_client.post(
+                    channel_id,
+                    f":x: Run `{run.run_id}` failed to start: {run.notes}",
+                    thread_ts=thread_ts,
+                )
+                return
+
+            gh_repo = _parse_gh_repo(task.repo.url) if task.repo and task.repo.url else None
+            spawn_watcher(run, workers.resolve(), repo=gh_repo)
+
+            slack_client.post(
+                channel_id,
+                f":rocket: Started run `{run.run_id}` — _{prompt}_",
+                thread_ts=thread_ts,
+            )
+            console.print(f"  [green]started[/green] run {run.run_id}")
+        except Exception as exc:
+            slack_client.post(channel_id, f":x: Error launching run: {exc}", thread_ts=thread_ts)
+            console.print(f"  [red]error:[/red] {exc}")
+
+    sm_client = SocketModeClient(app_token=app_token, web_client=WebClient(token=slack_token))
+    sm_client.socket_mode_request_listeners.append(handle)
+    sm_client.connect()
+
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        console.print("\n  Stopped.")
+        sm_client.close()
 
 
 # ── entry point ───────────────────────────────────────────────────────────────

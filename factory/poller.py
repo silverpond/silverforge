@@ -129,9 +129,20 @@ def _push_and_pr(
     base_branch = gh.get_default_branch(repo)
     verdict_line = f"\n\n**Evaluator:** {run.evaluator_reason}" if run.evaluator_verdict else ""
     service_line = f"\n\n**Preview:** http://{worker.host}:{run.service_port}" if run.service_port else ""
+
+    # Fetch commit log to include in PR description
+    commit_log_result = client.run(
+        f"git -C {worktree} log {base_branch}..HEAD --oneline",
+        timeout=30,
+    )
+    commits_section = ""
+    if commit_log_result.ok and commit_log_result.stdout.strip():
+        commits = commit_log_result.stdout.strip().split('\n')
+        commits_section = f"\n\n## Changes\n```\n{commit_log_result.stdout.strip()}\n```"
+
     pr_body = (
         f"{'Fixes #' + str(number) + chr(10) + chr(10) if number else ''}"
-        f"Automated implementation by Silverpond Factory (run `{run.run_id}`).{verdict_line}{service_line}"
+        f"Automated implementation by Silverpond Factory (run `{run.run_id}`).{commits_section}{verdict_line}{service_line}"
     )
     try:
         pr = gh.create_pr(

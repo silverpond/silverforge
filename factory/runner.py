@@ -74,6 +74,8 @@ def launch_task(task: TaskDefinition, workers_path: Path = Path("workers.yaml"))
                 + (f"> {prompt_preview}" if prompt_preview else ""),
             )
             run.slack_thread_ts = result.get("ts", "")
+            if not run.slack_thread_ts:
+                _log(run.run_id, f"  WARNING: Slack post succeeded but returned no 'ts' — result={result!r}")
             store.save_run(run)
             _log(run.run_id, f"  slack #factory thread={run.slack_thread_ts}")
         except Exception as exc:
@@ -148,6 +150,7 @@ def launch_task(task: TaskDefinition, workers_path: Path = Path("workers.yaml"))
 
     _print_commands_panel(run.run_id, run.worktree_path, run.service_port, label=task.name)
 
+    _log(run.run_id, f"  [debug] register_run conditions: slack_client={bool(slack_client)} slack_channel_id={bool(run.slack_channel_id)!r}({run.slack_channel_id!r}) slack_token={bool(slack_token)} slack_thread_ts={bool(run.slack_thread_ts)!r}({run.slack_thread_ts!r})")
     if slack_client and run.slack_channel_id and slack_token and run.slack_thread_ts:
         slack_app_token = os.environ.get("SLACK_APP_TOKEN", "")
         if slack_app_token:

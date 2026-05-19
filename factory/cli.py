@@ -1029,6 +1029,151 @@ def poll(
     console.print()
 
 
+# ── slack-listen ─────────────────────────────────────────────────────────────
+
+@app.command(name="slack-listen")
+def slack_listen(
+    worker: str = typer.Argument("ares", help="Worker name from workers.yaml"),
+    workers: Path = _WORKERS_OPT,
+) -> None:
+    """Listen for 'run:' messages in the factory Slack channel and launch tasks."""
+    import shlex
+    import time
+
+    slack_token = os.environ.get("SLACK_BOT_TOKEN")
+    app_token = os.environ.get("SLACK_APP_TOKEN")
+
+    if not slack_token:
+        typer.echo("SLACK_BOT_TOKEN not set", err=True)
+        raise typer.Exit(1)
+    if not app_token:
+        typer.echo("SLACK_APP_TOKEN not set", err=True)
+        raise typer.Exit(1)
+
+    try:
+        from slack_sdk import WebClient
+        from slack_sdk.socket_mode import SocketModeClient
+        from slack_sdk.socket_mode.request import SocketModeRequest
+        from slack_sdk.socket_mode.response import SocketModeResponse
+    except ImportError:
+        typer.echo("slack-sdk not installed. Run: pip install 'slack-sdk>=3.19'", err=True)
+        raise typer.Exit(1)
+
+    from factory.slack import SlackClient, get_cached_channel_id
+
+    config = load_workers(workers)
+    if worker not in config.workers:
+        typer.echo(f"Worker '{worker}' not found in {workers}", err=True)
+        raise typer.Exit(1)
+
+    w = config.workers[worker]
+
+    slack_client = SlackClient(slack_token)
+    channel_id = slack_client.find_or_create_channel(
+        f"factory-{w.user}",
+        cached_id=get_cached_channel_id(),
+    )
+
+    console.print(f"  Listening on channel [cyan]{channel_id}[/cyan] (factory-{w.user})")
+    console.print("  Watching for messages starting with [bold]run:[/bold]")
+    console.print("  Press Ctrl-C to stop\n")
+
+    def handle(client: SocketModeClient, req: SocketModeRequest) -> None:
+        # Always ACK immediately
+        client.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
+
+        if req.type != "events_api":
+            return
+
+        event = req.payload.get("event", {})
+
+        # Only handle plain messages in our channel
+        if event.get("type") != "message":
+            return
+        if event.get("channel") != channel_id:
+            return
+        if event.get("subtype"):  # skip edits, deletes, bot messages
+            return
+
+        text = event.get("text", "").strip()
+        if not text.lower().startswith("run:"):
+            return
+
+        remainder = text[4:].strip()
+        thread_ts = event.get("ts")
+
+        # Parse --repo flag out of the remainder
+        repo: Optional[str] = None
+        try:
+            parts = shlex.split(remainder)
+        except ValueError:
+            parts = remainder.split()
+
+        filtered = []
+        i = 0
+        while i < len(parts):
+            if parts[i] == "--repo" and i + 1 < len(parts):
+                repo = parts[i + 1]
+                i += 2
+            elif parts[i].startswith("--repo="):
+                repo = parts[i][7:]
+                i += 1
+            else:
+                filtered.append(parts[i])
+                i += 1
+        prompt = " ".join(filtered).strip()
+
+        if not repo:
+            slack_client.post(
+                channel_id,
+                "Missing --repo flag. Usage: `run: task description --repo owner/repo`",
+                thread_ts=thread_ts,
+            )
+            return
+
+        console.print(f"  [cyan]run:[/cyan] {prompt!r}  --repo {repo}")
+
+        try:
+            task = _build_inline_task(prompt, repo=repo, eval_commands=[], workers_path=workers)
+        except Exception as exc:
+            slack_client.post(channel_id, f":x: Failed to build task: {exc}", thread_ts=thread_ts)
+            return
+
+        try:
+            run = launch_task(task, workers)
+            if run.state == RunState.failed:
+                slack_client.post(
+                    channel_id,
+                    f":x: Run `{run.run_id}` failed to start: {run.notes}",
+                    thread_ts=thread_ts,
+                )
+                return
+
+            gh_repo = _parse_gh_repo(task.repo.url) if task.repo and task.repo.url else None
+            spawn_watcher(run, workers.resolve(), repo=gh_repo)
+
+            slack_client.post(
+                channel_id,
+                f":rocket: Started run `{run.run_id}` — _{prompt}_",
+                thread_ts=thread_ts,
+            )
+            console.print(f"  [green]started[/green] run {run.run_id}")
+        except Exception as exc:
+            slack_client.post(channel_id, f":x: Error launching run: {exc}", thread_ts=thread_ts)
+            console.print(f"  [red]error:[/red] {exc}")
+
+    sm_client = SocketModeClient(app_token=app_token, web_client=WebClient(token=slack_token))
+    sm_client.socket_mode_request_listeners.append(handle)
+    sm_client.connect()
+
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        console.print("\n  Stopped.")
+        sm_client.close()
+
+
 # ── entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

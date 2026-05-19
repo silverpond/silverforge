@@ -1029,6 +1029,14 @@ def poll(
     console.print()
 
 
+# ── hello ─────────────────────────────────────────────────────────────────────
+
+@app.command()
+def hello() -> None:
+    """Say hello."""
+    typer.echo("Hello, World!")
+
+
 # ── entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

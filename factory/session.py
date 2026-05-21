@@ -554,13 +554,16 @@ def save_active_runs(client: SSHClient, runs: dict) -> None:
 def register_run(client: SSHClient, run_id: str, session_name: str, thread_ts: str) -> None:
     """Add a run to the active-runs.json on the worker."""
     abs_path = client.run("echo ~/factory/active-runs.json", timeout=5).stdout.strip()
-    client.run(
+    result = client.run(
         f"python3 -c \"import json,os; "
         f"f='{abs_path}'; "
         f"d=json.load(open(f)) if os.path.exists(f) else {{}}; "
         f"d['{thread_ts}']={{'run_id':'{run_id}','session':'{session_name}'}}; "
-        f"json.dump(d,open(f,'w'))\""
+        f"json.dump(d,open(f,'w'))\" && echo ok",
+        timeout=10,
     )
+    status = "ok" if result.stdout.strip() == "ok" else f"FAILED exit={result.exit_code} err={result.stderr.strip()!r}"
+    _console.print(Text(f"  [register_run] path={abs_path!r} {status}", style="dim"))
 
 
 def unregister_run(client: SSHClient, thread_ts: str) -> None:

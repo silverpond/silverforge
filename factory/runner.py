@@ -171,6 +171,9 @@ def launch_task(task: TaskDefinition, workers_path: Path = Path("workers.yaml"))
         slack_app_token = os.environ.get("SLACK_APP_TOKEN", "")
         if slack_app_token:
             sess.register_run(client, run.run_id, session_name, run.slack_thread_ts)
+            _log(run.run_id, f"  register_run done — checking active-runs.json...")
+            verify = client.run("cat ~/factory/active-runs.json", timeout=5)
+            _log(run.run_id, f"  active-runs.json: {verify.stdout.strip()}")
             ok = sess.ensure_bridge_daemon(client, slack_app_token, slack_token, run.slack_channel_id)
             _log(run.run_id, f"  slack bridge daemon {'started' if ok else 'failed to start'}")
 

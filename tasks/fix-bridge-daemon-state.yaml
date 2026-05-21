@@ -1,0 +1,33 @@
+id: fix-bridge-daemon-state
+name: Fix bridge daemon losing active-runs state on restart
+worker: ares
+
+repo:
+  url: git@github.com:silverpond/silverforge.git
+  path: ~/factory/projects/silverforge
+  branch: master
+
+eval:
+  commands: []
+  working_dir: ~/factory/projects/silverforge
+  timeout: 120
+
+slack:
+  reviewers:
+    - U0ALFSY45E0
+
+coder:
+  prompt: |
+    The slack bridge daemon (factory/slack-bridge-daemon.py) loses active-runs.json
+    state when it restarts. Fix it so that:
+    1. On startup it reloads active-runs.json from disk so registered runs survive restarts
+    2. active-runs.json is already persisted on every write via load_active_runs/save_active_runs
+       so check if save_active_runs is being called correctly after register_run adds entries
+  model: haiku
+  effort: low
+  agents:
+    - claude
+
+crucible:
+  rounds: 2
+  model: claude-haiku-4-5-20251001

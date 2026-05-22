@@ -798,56 +798,90 @@ def _pause_for_review(
     run_id: str,
 ) -> bool:
     """
-    Post an approval prompt to Slack and poll for a reply up to `timeout` seconds.
-    Returns True if a user approves, False if rejected or timed out.
-    If Slack is not configured, returns True immediately (auto-approve).
+    Post an approval prompt to Slack and wait for a reply via Socket Mode.
+    Returns True if approved or timed out (auto-approve). Returns False if rejected.
+    Falls back to auto-approve if Slack or SLACK_APP_TOKEN is not configured.
     """
-    import time as _time
+    import os as _os
+    import threading
 
     if not slack_client or not run.slack_channel_id or not run.slack_thread_ts:
-        return True  # no Slack — auto-approve
+        return True
 
     try:
-        ask_result = slack_client.post(
+        slack_client.post(
             run.slack_channel_id,
             ":pause_button: *Agent finished.* Reply `approve` (or `yes`) to open a pull request, or `reject` to skip.",
             thread_ts=run.slack_thread_ts,
         )
-        asked_at = ask_result.get("ts", "")
     except Exception as exc:
         _log(run_id, f"  pause-and-review: failed to post approval request: {exc} — auto-approving")
         return True
 
+    app_token = _os.environ.get("SLACK_APP_TOKEN")
+    bot_token = _os.environ.get("SLACK_BOT_TOKEN")
+    if not app_token or not bot_token:
+        _log(run_id, "  pause-and-review: SLACK_APP_TOKEN not set — auto-approving")
+        return True
+
     _log(run_id, f"  pause-and-review: waiting up to {timeout}s for Slack approval...")
-    deadline = _time.time() + timeout
-    poll_interval = 5
 
-    while _time.time() < deadline:
-        _time.sleep(poll_interval)
+    verdict: list[str] = []  # ["approve"] or ["reject"] — set by handler
+    done = threading.Event()
+
+    try:
+        from slack_sdk.socket_mode import SocketModeClient
+        from slack_sdk.socket_mode.request import SocketModeRequest
+        from slack_sdk.socket_mode.response import SocketModeResponse
+        from slack_sdk import WebClient
+
+        def handle(sm: SocketModeClient, req: SocketModeRequest) -> None:
+            sm.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
+            if req.type != "events_api":
+                return
+            event = req.payload.get("event", {})
+            if event.get("type") != "message" or event.get("subtype"):
+                return
+            if event.get("channel") != run.slack_channel_id:
+                return
+            if event.get("thread_ts") != run.slack_thread_ts:
+                return
+            text = event.get("text", "").lower().strip()
+            if any(w in text for w in ("approve", "yes", "lgtm", "ok", "ship it", "ship")):
+                verdict.append("approve")
+                done.set()
+            elif any(w in text for w in ("reject", "no", "skip", "cancel", "abort")):
+                verdict.append("reject")
+                done.set()
+
+        sm_client = SocketModeClient(app_token=app_token, web_client=WebClient(token=bot_token))
+        sm_client.socket_mode_request_listeners.append(handle)
+        sm_client.connect()
+    except Exception as exc:
+        _log(run_id, f"  pause-and-review: failed to open Socket Mode — auto-approving: {exc}")
+        return True
+
+    try:
+        done.wait(timeout=timeout)
+    finally:
         try:
-            replies = slack_client.get_thread_replies(
-                run.slack_channel_id,
-                run.slack_thread_ts,
-                oldest=asked_at,
-            )
-            for msg in replies:
-                if msg.get("ts") == asked_at:
-                    continue  # skip the question itself
-                text = msg.get("text", "").lower().strip()
-                if any(w in text for w in ("approve", "yes", "lgtm", "ok", "ship it", "ship")):
-                    _log(run_id, "  pause-and-review: approved by user")
-                    _slack_post(slack_client, run, ":white_check_mark: Approved — opening pull request...")
-                    return True
-                if any(w in text for w in ("reject", "no", "skip", "cancel", "abort")):
-                    _log(run_id, "  pause-and-review: rejected by user")
-                    _slack_post(slack_client, run, ":x: Rejected — skipping pull request.")
-                    return False
-        except Exception as exc:
-            _log(run_id, f"  pause-and-review: error polling replies: {exc}")
+            sm_client.close()
+        except Exception:
+            pass
 
-    _log(run_id, f"  pause-and-review: timed out after {timeout}s — auto-approving")
-    _slack_post(slack_client, run, f":hourglass: No response after {timeout}s — auto-approving and opening pull request.")
-    return True
+    if not verdict:
+        _log(run_id, f"  pause-and-review: timed out after {timeout}s — auto-approving")
+        _slack_post(slack_client, run, f":hourglass: No response after {timeout}s — auto-approving and opening pull request.")
+        return True
+
+    if verdict[0] == "approve":
+        _log(run_id, "  pause-and-review: approved by user")
+        _slack_post(slack_client, run, ":white_check_mark: Approved — opening pull request...")
+        return True
+
+    _log(run_id, "  pause-and-review: rejected by user")
+    _slack_post(slack_client, run, ":x: Rejected — skipping pull request.")
+    return False
 
 
 def _maybe_open_pr(

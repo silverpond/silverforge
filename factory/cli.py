@@ -72,6 +72,16 @@ def _client(worker_name: str, workers_path: Path) -> SSHClient:
     return SSHClient(host=w.host, user=w.user, port=w.port, identity_file=w.identity_file, shell_init=w.shell_init)
 
 
+# ── hello ────────────────────────────────────────────────────────────────────
+
+@app.command()
+def hello(
+    name: str = typer.Option("World", "--name", "-n", help="Name to greet"),
+) -> None:
+    """A simple hello endpoint."""
+    console.print(f"Hello, {name}! 👋")
+
+
 # ── ping ─────────────────────────────────────────────────────────────────────
 
 @app.command()

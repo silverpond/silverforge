@@ -840,6 +840,7 @@ def _pause_for_review(
             if req.type != "events_api":
                 return
             event = req.payload.get("event", {})
+            _log(run_id, f"  pause-and-review: event type={event.get('type')} subtype={event.get('subtype')} channel={event.get('channel')} thread_ts={event.get('thread_ts')} text={event.get('text', '')[:40]!r}")
             if event.get("type") != "message" or event.get("subtype"):
                 return
             if event.get("channel") != run.slack_channel_id:

@@ -156,7 +156,7 @@ def launch_task(task: TaskDefinition, workers_path: Path = Path("workers.yaml"))
         effort=coder_effort if agent_cmd == "claude" else None,
     )
 
-    if not sess.start_session(client, session_name, working_dir):
+    if not sess.start_session(client, session_name, working_dir, agent_cmd=agent_cmd):
         run.state = RunState.failed
         run.notes = "Failed to start tmux session"
         store.save_run(run)
@@ -266,7 +266,7 @@ def watch_task(
                             model=coder_model if agent_cmd == "claude" else None,
                             effort=coder_effort if agent_cmd == "claude" else None,
                         )
-                        if not sess.start_session(client, session_name, working_dir):
+                        if not sess.start_session(client, session_name, working_dir, agent_cmd=agent_cmd):
                             run.state = RunState.failed
                             run.notes = "Failed to start tmux session"
                             store.save_run(run)
@@ -292,6 +292,18 @@ def watch_task(
                 store.save_log(run_id, f"agent_output_iter{iteration}.txt", captured)
                 _log(run_id, f"  agent status={agent_status}")
 
+                # Rate limit detection — switch to next agent if markers found in output
+                if (
+                    task.coder.rate_limit_markers
+                    and current_agent_idx + 1 < len(agent_commands)
+                    and any(marker.lower() in captured.lower() for marker in task.coder.rate_limit_markers)
+                ):
+                    next_agent_name = agent_names[current_agent_idx + 1]
+                    _log(run_id, f"  rate limit detected in {agent_name} output — switching to {next_agent_name}")
+                    _slack_post(slack_client, run, f":warning: Rate limit on `{agent_name}` — switching to `{next_agent_name}`")
+                    current_agent_idx += 1
+                    needs_new_session = True
+                    continue
 
                 if agent_status == "timeout":
                     run.state = RunState.failed

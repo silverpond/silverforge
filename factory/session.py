@@ -112,10 +112,14 @@ def append_service_context(client: SSHClient, working_dir: str, port: int, nativ
     client.run(f"echo '{encoded}' | base64 -d >> {working_dir}/.factory/task.md")
 
 
-def start_session(client: SSHClient, session_name: str, working_dir: str) -> bool:
+def start_session(client: SSHClient, session_name: str, working_dir: str, agent_cmd: str = "claude") -> bool:
     """
     Create a tmux session, launch run.sh, enable output logging, and send the
     initial task instruction to the interactive agent.
+
+    For claude, polls for the ❯ prompt and sends the task instruction interactively.
+    For other agents (e.g. codex), the task is already embedded in run.sh so no
+    interactive instruction is needed.
     """
     client.run(f"tmux kill-session -t {session_name} 2>/dev/null; true")
     result = client.run(f"tmux new-session -d -s {session_name} -c {working_dir}")
@@ -128,6 +132,11 @@ def start_session(client: SSHClient, session_name: str, working_dir: str) -> boo
     )
     if not result.ok:
         return False
+
+    if agent_cmd != "claude":
+        # Non-interactive agents (e.g. codex) embed the task in their command line.
+        # No need to poll for a prompt or send an instruction.
+        return True
 
     # Give the session a moment to start before polling for readiness
     time.sleep(2)

@@ -1237,6 +1237,18 @@ def slack_listen(
         sm_client.close()
 
 
+# ── serve ─────────────────────────────────────────────────────────────────────
+
+@app.command()
+def serve(
+    host: str = typer.Option("0.0.0.0", "--host", help="Host to bind"),
+    port: int = typer.Option(8080, "--port", "-p", help="Port to listen on"),
+) -> None:
+    """Start the factory HTTP server (exposes /hello endpoint)."""
+    from factory.server import run
+    run(host=host, port=port)
+
+
 # ── entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

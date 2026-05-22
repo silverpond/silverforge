@@ -409,6 +409,12 @@ def watch_task(
                                 sess.kill_session(client, session_name)
                                 if run.slack_thread_ts:
                                     sess.unregister_run(client, run.slack_thread_ts)
+                                if task.slack and task.slack.pause_for_review > 0:
+                                    if not _pause_for_review(slack_client, run, task.slack.pause_for_review, run_id):
+                                        run.state = RunState.human_review
+                                        store.save_run(run)
+                                        _log(run_id, "  state=human_review (pause-and-review: not approved)")
+                                        return run
                                 _maybe_open_pr(run, task, worker, repo, issue_number, workers_path, slack_client)
                                 return run
 
@@ -487,6 +493,12 @@ def watch_task(
                     sess.kill_session(client, session_name)
                     if run.slack_thread_ts:
                         sess.unregister_run(client, run.slack_thread_ts)
+                    if task.slack and task.slack.pause_for_review > 0:
+                        if not _pause_for_review(slack_client, run, task.slack.pause_for_review, run_id):
+                            run.state = RunState.human_review
+                            store.save_run(run)
+                            _log(run_id, "  state=human_review (pause-and-review: not approved)")
+                            return run
                     _maybe_open_pr(run, task, worker, repo, issue_number, workers_path, slack_client)
                     return run
 
@@ -774,6 +786,65 @@ def _post_results(slack_client, run: "Run", results: list, passed: bool) -> None
             output = (r.stdout + r.stderr).strip()[:500]
             lines.append(f"```\n{output}\n```")
     _slack_post(slack_client, run, "\n".join(lines))
+
+
+def _pause_for_review(
+    slack_client,
+    run: "Run",
+    timeout: int,
+    run_id: str,
+) -> bool:
+    """
+    Post an approval prompt to Slack and poll for a reply up to `timeout` seconds.
+    Returns True if a user approves, False if rejected or timed out.
+    If Slack is not configured, returns True immediately (auto-approve).
+    """
+    import time as _time
+
+    if not slack_client or not run.slack_channel_id or not run.slack_thread_ts:
+        return True  # no Slack — auto-approve
+
+    try:
+        ask_result = slack_client.post(
+            run.slack_channel_id,
+            ":pause_button: *Agent finished.* Reply `approve` (or `yes`) to open a pull request, or `reject` to skip.",
+            thread_ts=run.slack_thread_ts,
+        )
+        asked_at = ask_result.get("ts", "")
+    except Exception as exc:
+        _log(run_id, f"  pause-and-review: failed to post approval request: {exc} — auto-approving")
+        return True
+
+    _log(run_id, f"  pause-and-review: waiting up to {timeout}s for Slack approval...")
+    deadline = _time.time() + timeout
+    poll_interval = 5
+
+    while _time.time() < deadline:
+        _time.sleep(poll_interval)
+        try:
+            replies = slack_client.get_thread_replies(
+                run.slack_channel_id,
+                run.slack_thread_ts,
+                oldest=asked_at,
+            )
+            for msg in replies:
+                if msg.get("ts") == asked_at:
+                    continue  # skip the question itself
+                text = msg.get("text", "").lower().strip()
+                if any(w in text for w in ("approve", "yes", "lgtm", "ok", "ship it", "ship")):
+                    _log(run_id, "  pause-and-review: approved by user")
+                    _slack_post(slack_client, run, ":white_check_mark: Approved — opening pull request...")
+                    return True
+                if any(w in text for w in ("reject", "no", "skip", "cancel", "abort")):
+                    _log(run_id, "  pause-and-review: rejected by user")
+                    _slack_post(slack_client, run, ":x: Rejected — skipping pull request.")
+                    return False
+        except Exception as exc:
+            _log(run_id, f"  pause-and-review: error polling replies: {exc}")
+
+    _log(run_id, f"  pause-and-review: timed out after {timeout}s — skipping PR")
+    _slack_post(slack_client, run, f":hourglass: Review timed out after {timeout}s — skipping pull request.")
+    return False
 
 
 def _maybe_open_pr(

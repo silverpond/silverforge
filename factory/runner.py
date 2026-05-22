@@ -808,23 +808,11 @@ def _pause_for_review(
     if not slack_client or not run.slack_channel_id or not run.slack_thread_ts:
         return True
 
-    try:
-        slack_client.post(
-            run.slack_channel_id,
-            ":pause_button: *Agent finished.* Reply `approve` (or `yes`) to open a pull request, or `reject` to skip.",
-            thread_ts=run.slack_thread_ts,
-        )
-    except Exception as exc:
-        _log(run_id, f"  pause-and-review: failed to post approval request: {exc} — auto-approving")
-        return True
-
     app_token = _os.environ.get("SLACK_APP_TOKEN")
     bot_token = _os.environ.get("SLACK_BOT_TOKEN")
     if not app_token or not bot_token:
         _log(run_id, "  pause-and-review: SLACK_APP_TOKEN not set — auto-approving")
         return True
-
-    _log(run_id, f"  pause-and-review: waiting up to {timeout}s for Slack approval...")
 
     verdict: list[str] = []  # ["approve"] or ["reject"] — set by handler
     done = threading.Event()
@@ -858,9 +846,28 @@ def _pause_for_review(
         sm_client = SocketModeClient(app_token=app_token, web_client=WebClient(token=bot_token))
         sm_client.socket_mode_request_listeners.append(handle)
         sm_client.connect()
+        # Wait for connection before posting the question so we don't miss fast replies
+        import time as _time
+        _time.sleep(1)
     except Exception as exc:
         _log(run_id, f"  pause-and-review: failed to open Socket Mode — auto-approving: {exc}")
         return True
+
+    try:
+        slack_client.post(
+            run.slack_channel_id,
+            ":pause_button: *Agent finished.* Reply `approve` (or `yes`) to open a pull request, or `reject` to skip.",
+            thread_ts=run.slack_thread_ts,
+        )
+    except Exception as exc:
+        _log(run_id, f"  pause-and-review: failed to post approval request: {exc} — auto-approving")
+        try:
+            sm_client.close()
+        except Exception:
+            pass
+        return True
+
+    _log(run_id, f"  pause-and-review: waiting up to {timeout}s for Slack approval...")
 
     try:
         done.wait(timeout=timeout)

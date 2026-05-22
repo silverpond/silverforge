@@ -89,6 +89,14 @@ def ping(
         raise typer.Exit(1)
 
 
+# ── hello ─────────────────────────────────────────────────────────────────────
+
+@app.command()
+def hello() -> None:
+    """Say hello — confirm the factory CLI is working."""
+    console.print("Hello from [bold]Silverpond Factory[/bold]!")
+
+
 # ── inline task helpers ───────────────────────────────────────────────────────
 
 def _infer_gh_repo_from_cwd() -> Optional[str]:

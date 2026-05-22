@@ -82,7 +82,7 @@ class GeminiReviewConfig(BaseModel):
 
 class SlackConfig(BaseModel):
     reviewers: List[str] = Field(default_factory=list)  # Slack user IDs to invite
-    pause_for_review: int = 0  # seconds to wait for Slack approval before opening PR; 0 = disabled
+    pause_for_review: int = 300  # seconds to wait for Slack approval before opening PR; auto-approves on timeout
 
 
 class ServiceConfig(BaseModel):

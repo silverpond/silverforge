@@ -845,9 +845,9 @@ def _pause_for_review(
         except Exception as exc:
             _log(run_id, f"  pause-and-review: error polling replies: {exc}")
 
-    _log(run_id, f"  pause-and-review: timed out after {timeout}s — skipping PR")
-    _slack_post(slack_client, run, f":hourglass: Review timed out after {timeout}s — skipping pull request.")
-    return False
+    _log(run_id, f"  pause-and-review: timed out after {timeout}s — auto-approving")
+    _slack_post(slack_client, run, f":hourglass: No response after {timeout}s — auto-approving and opening pull request.")
+    return True
 
 
 def _maybe_open_pr(

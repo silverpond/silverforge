@@ -151,6 +151,7 @@ def run_cmd(
     crucible_rounds: Optional[int] = typer.Option(None, "--crucible-rounds", help="Number of crucible review rounds"),
     crucible_model: Optional[str] = typer.Option(None, "--crucible-model", help="Claude model for crucible reviewer (e.g. haiku)"),
     timeout: Optional[int] = typer.Option(None, "--timeout", "-t", help="Agent session timeout in seconds (default: 1800)"),
+    pause_for_review: Optional[int] = typer.Option(None, "--pause-for-review", help="Seconds to wait for Slack approve/reject before opening PR"),
     workers: Path = _WORKERS_OPT,
 ) -> None:
     """Run a task — pass a YAML file or an inline task description."""
@@ -175,6 +176,11 @@ def run_cmd(
         task.crucible.model = crucible_model
     if timeout is not None and task.coder:
         task.coder.session_timeout = timeout
+    if pause_for_review is not None and task.slack:
+        task.slack.pause_for_review = pause_for_review
+    elif pause_for_review is not None:
+        from factory.models import SlackConfig
+        task.slack = SlackConfig(pause_for_review=pause_for_review)
 
     agents_display = ", ".join(task.coder.agents) if task.coder else "—"
     console.print()

@@ -9,7 +9,7 @@ An automated software factory that runs Claude AI agents on a remote worker mach
 ### 1. One-off task
 
 ```bash
-factory run "Add a health check endpoint that returns {\"status\": \"ok\"}" --repo owner/my-repo
+factory run "Add a hello endpoint that returns {\"message\": \"hello\"}" --repo owner/my-repo
 ```
 
 Claude runs on the worker, implements the task, Crucible reviews the result, and if anything needs fixing it retries automatically. A PR is opened on pass.
@@ -103,7 +103,7 @@ factory run "Add a loading spinner" --repo owner/my-repo --crucible-rounds 2
 
 # If you're inside a git repo, --repo is inferred automatically
 cd ~/projects/my-repo
-factory run "Add a health check endpoint"
+factory run "Add a hello endpoint"
 ```
 
 Without `--eval`, Crucible is the only quality gate — it reviews the diff and sends feedback to Claude if it finds critical issues.

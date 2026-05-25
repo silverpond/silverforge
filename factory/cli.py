@@ -2,6 +2,7 @@
 Silverpond Factory CLI.
 
 Commands:
+  hello  —                  — simple greeting
   ping   [worker]           — verify SSH connectivity
   run    <task.yaml>        — execute a task end-to-end
   status [run_id]           — show run(s) status
@@ -87,6 +88,14 @@ def ping(
     else:
         console.print(f"  [red]UNREACHABLE[/red] — {worker} did not respond")
         raise typer.Exit(1)
+
+
+# ── hello ────────────────────────────────────────────────────────────────────
+
+@app.command()
+def hello() -> None:
+    """Return a simple greeting."""
+    console.print("[green]Hello from Silverforge![/green]")
 
 
 # ── inline task helpers ───────────────────────────────────────────────────────

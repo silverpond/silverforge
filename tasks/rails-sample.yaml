@@ -9,9 +9,9 @@ repo:
 
 coder:
   prompt: |
-    Add a simple health check endpoint to the Rails app.
+    Add a simple hello endpoint to the Rails app.
 
-    Create a GET /health route that returns JSON: {"status": "ok"}
+    Create a GET /hello route that returns JSON: {"message": "hello"}
     Write a controller test for it.
     All existing tests must continue to pass.
   max_iterations: 3

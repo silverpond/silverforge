@@ -78,19 +78,29 @@ def write_runner_script(
         ]
     else:
         if agent_cmd == "codex":
-            agent_invocation = 'codex --full-auto -q "$(cat .factory/task.md)"'
+            # codex requires a TTY; script provides one and logs output to the file
+            lines += [
+                f"cd {working_dir}",
+                "rm -f .factory/status",
+                'script -q --return -c \'codex --full-auto "$(cat .factory/task.md)"\' .factory/output.log',
+                "if [ $? -eq 0 ]; then",
+                "    echo done > .factory/status",
+                "else",
+                "    echo failed > .factory/status",
+                "fi",
+            ]
         else:
             agent_invocation = f'{agent_cmd} "$(cat .factory/task.md)"'
-        lines += [
-            f"cd {working_dir}",
-            "rm -f .factory/status",
-            f"{agent_invocation} 2>&1 | tee .factory/output.log",
-            "if [ ${PIPESTATUS[0]} -eq 0 ]; then",
-            "    echo done > .factory/status",
-            "else",
-            "    echo failed > .factory/status",
-            "fi",
-        ]
+            lines += [
+                f"cd {working_dir}",
+                "rm -f .factory/status",
+                f"{agent_invocation} 2>&1 | tee .factory/output.log",
+                "if [ ${PIPESTATUS[0]} -eq 0 ]; then",
+                "    echo done > .factory/status",
+                "else",
+                "    echo failed > .factory/status",
+                "fi",
+            ]
     script = "\n".join(lines) + "\n"
     encoded = base64.b64encode(script.encode()).decode()
     client.run(

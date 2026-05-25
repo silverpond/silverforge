@@ -816,6 +816,7 @@ def _pause_for_review(
 
     verdict: list[str] = []  # ["approve"] or ["reject"] — set by handler
     done = threading.Event()
+    connected = threading.Event()
 
     try:
         from slack_sdk.socket_mode import SocketModeClient
@@ -824,31 +825,41 @@ def _pause_for_review(
         from slack_sdk import WebClient
 
         def handle(sm: SocketModeClient, req: SocketModeRequest) -> None:
-            sm.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
-            if req.type != "events_api":
-                return
-            event = req.payload.get("event", {})
-            _log(run_id, f"  pause-and-review: event type={event.get('type')} subtype={event.get('subtype')} channel={event.get('channel')} thread_ts={event.get('thread_ts')} text={event.get('text', '')[:40]!r}")
-            if event.get("type") != "message" or event.get("subtype") or event.get("bot_id"):
-                return
-            if event.get("channel") != run.slack_channel_id:
-                return
-            if event.get("thread_ts") != run.slack_thread_ts:
-                return
-            text = event.get("text", "").lower().strip()
-            if any(w in text for w in ("approve", "yes", "lgtm", "ok", "ship it", "ship")):
-                verdict.append("approve")
-                done.set()
-            elif any(w in text for w in ("reject", "no", "skip", "cancel", "abort")):
-                verdict.append("reject")
-                done.set()
+            try:
+                if req.type == "hello":
+                    connected.set()
+                    return
+                if req.envelope_id:
+                    sm.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
+                if req.type != "events_api":
+                    return
+                event = req.payload.get("event", {})
+                _log(run_id, f"  pause-and-review: event type={event.get('type')} subtype={event.get('subtype')} channel={event.get('channel')} thread_ts={event.get('thread_ts')} text={event.get('text', '')[:40]!r}")
+                if event.get("type") != "message" or event.get("subtype") or event.get("bot_id"):
+                    return
+                if event.get("channel") != run.slack_channel_id:
+                    return
+                if event.get("thread_ts") != run.slack_thread_ts:
+                    return
+                text = event.get("text", "").lower().strip()
+                if any(w in text for w in ("approve", "yes", "lgtm", "ok", "ship it", "ship")):
+                    verdict.append("approve")
+                    done.set()
+                elif any(w in text for w in ("reject", "no", "skip", "cancel", "abort")):
+                    verdict.append("reject")
+                    done.set()
+            except Exception as exc:
+                _log(run_id, f"  pause-and-review: handler error: {exc}")
+
+        def on_message(client, message: dict, raw: str) -> None:
+            if message.get("type") == "hello":
+                connected.set()
 
         sm_client = SocketModeClient(app_token=app_token, web_client=WebClient(token=bot_token))
+        sm_client.message_listeners.append(on_message)
         sm_client.socket_mode_request_listeners.append(handle)
         sm_client.connect()
-        # Wait for connection before posting the question so we don't miss fast replies
-        import time as _time
-        _time.sleep(1)
+        connected.wait(timeout=10)  # wait for Slack's hello before posting the question
     except Exception as exc:
         _log(run_id, f"  pause-and-review: failed to open Socket Mode — auto-approving: {exc}")
         return True

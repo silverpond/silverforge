@@ -7,6 +7,7 @@ Commands:
   status [run_id]           — show run(s) status
   eval   <run_id>           — re-run eval commands for an existing run
   attach <run_id>           — SSH into the remote tmux session for a run
+  hello  [--port PORT]      — start a hello HTTP endpoint server
 """
 from __future__ import annotations
 
@@ -1033,6 +1034,23 @@ def poll(
     console.print()
     console.print(f"  [dim]Watchers running in background. Use [bold]factory status[/bold] to check progress.[/dim]")
     console.print()
+
+
+# ── hello ─────────────────────────────────────────────────────────────────────
+
+@app.command()
+def hello(
+    port: int = typer.Option(8000, "--port", "-p", help="Port to listen on"),
+    host: str = typer.Option("0.0.0.0", "--host", "-h", help="Host to bind to"),
+) -> None:
+    """Start a simple HTTP server with a /hello endpoint that returns JSON."""
+    from factory.hello_server import run_server
+
+    console.print(f"[green]✓[/green] Starting hello server on http://{host}:{port}/hello")
+    try:
+        run_server(host=host, port=port)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Shutting down...[/yellow]")
 
 
 # ── slack-listen ─────────────────────────────────────────────────────────────

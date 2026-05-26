@@ -136,6 +136,33 @@ Individual issues can override model/effort via labels:
 
 ---
 
+## Slack integration
+
+If `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` are set, each run gets a Slack thread with live status updates.
+
+### Mid-session messaging
+
+Send messages to the running Claude agent directly from Slack. Start the bridge listener on your local machine:
+
+```bash
+factory slack-listen
+```
+
+Any message posted in the factory Slack channel that starts with `run:` launches a new task:
+
+```
+run: Add a health check endpoint --repo owner/my-repo
+run: Fix the login bug --repo owner/my-repo --model haiku --effort low --crucible-rounds 2
+```
+
+Messages posted in an existing run's thread are forwarded to the Claude session on the worker — useful for giving the agent mid-task guidance.
+
+### Pause-and-review
+
+When Slack is configured, pause-and-review is on by default. After the agent finishes, a prompt appears in the run's Slack thread asking you to approve before the PR is opened. Reply `approve` (or `yes`) to open it, or `reject` to skip. If no reply arrives within 5 minutes, the PR is opened automatically.
+
+---
+
 ## Monitoring
 
 The terminal frees up immediately after launch. Use these to check on runs:
@@ -183,7 +210,7 @@ YAML files let you configure the full pipeline — eval commands, crucible round
 ## Pipeline
 
 ```
-worktree → agent → eval → crucible (N rounds) → evaluator → PR
+worktree → agent → eval → crucible (N rounds) → evaluator → pause-and-review → PR
 ```
 
 Any stage that fails sends feedback back to the agent for another iteration (up to `max_iterations`, default 3). Stages not configured are skipped.

@@ -1289,6 +1289,22 @@ def slack_listen(
         sm_client.close()
 
 
+# ── internal: background watcher ─────────────────────────────────────────────
+
+@app.command(name="_watch", hidden=True)
+def _watch_cmd(
+    run_id: str = typer.Argument(...),
+    task: Path = typer.Option(..., "--task"),
+    workers: Path = typer.Option(Path("workers.yaml"), "--workers"),
+    repo: Optional[str] = typer.Option(None, "--repo"),
+    issue: Optional[int] = typer.Option(None, "--issue"),
+) -> None:
+    """Internal: run watch_task() for a previously launched run."""
+    from factory.runner import watch_task
+    task_def = load_task(task)
+    watch_task(run_id, task_def, workers, repo=repo, issue_number=issue)
+
+
 # ── entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

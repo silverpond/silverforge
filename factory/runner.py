@@ -557,24 +557,18 @@ def spawn_watcher(
     log_path = store.RUNS_DIR / run.run_id / "watch.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
-    cmd = [sys.executable, "-m", "factory._watcher", run.run_id,
+    import shutil
+    factory_bin = shutil.which("factory") or sys.executable
+    cmd = [factory_bin, "_watch", run.run_id,
            "--task", run.task_file, "--workers", str(workers_path.resolve())]
     if repo:
         cmd += ["--repo", repo]
     if issue_number is not None:
         cmd += ["--issue", str(issue_number)]
 
-    # Inherit env and ensure factory is importable — needed when installed via Nix,
-    # where sys.executable is a bare Python with no package paths set up.
-    env = os.environ.copy()
-    import factory as _pkg
-    site_packages = str(Path(_pkg.__file__).parent.parent)
-    existing = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = site_packages + (":" + existing if existing else "")
-
     with open(log_path, "w") as log_fh:
         subprocess.Popen(cmd, stdout=log_fh, stderr=subprocess.STDOUT,
-                         start_new_session=True, close_fds=True, env=env)
+                         start_new_session=True, close_fds=True)
 
 
 def run_task(task: TaskDefinition, workers_path: Path = Path("workers.yaml")) -> Run:

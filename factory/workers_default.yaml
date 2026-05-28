@@ -1,0 +1,18 @@
+# Worker machine configuration.
+# Add more workers here as the fleet grows (zeus, artemis, ...).
+
+workers:
+  ares:
+    host: ares.silverpond.com.au
+    port: 22
+    aoe_available: true
+    default_worktree_base: ~/factory/worktrees
+    slots: 4
+    slot_port_base: 12001
+    model: sonnet
+    effort: medium
+    shell_init: "source ~/.factory-secrets 2>/dev/null || true && export PATH=$HOME/.local/share/gem/ruby/3.3.0/bin:$HOME/.npm-global/bin:$HOME/.nix-profile/bin:$HOME/.cargo/bin:$PATH"
+    agents:
+      claude: claude
+      codex: codex
+      # gemini: gemini-cli  # uncomment once gemini-cli is installed on ares

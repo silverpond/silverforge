@@ -18,5 +18,8 @@ dependencies = [
 [tool.setuptools.packages.find]
 include = ["factory*"]
 
+[tool.setuptools.package-data]
+factory = ["workers_default.yaml"]
+
 [project.scripts]
 factory = "factory.cli:app"

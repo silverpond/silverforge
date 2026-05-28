@@ -32,7 +32,10 @@ def _is_local(host: str) -> bool:
         return True
     try:
         local = socket.gethostname()
-        return host == local or host == socket.getfqdn(local)
+        if host == local or host == socket.getfqdn(local) or host == socket.getfqdn():
+            return True
+        # Fall back to comparing resolved IPs
+        return socket.gethostbyname(host) == socket.gethostbyname(local)
     except OSError:
         return False
 

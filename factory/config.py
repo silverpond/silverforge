@@ -39,6 +39,19 @@ _WORKERS_SEARCH_PATHS = [
 ]
 
 
+def resolve_workers_path(path: Optional[Path] = None) -> Path:
+    """Return the resolved path to workers.yaml, searching default locations if path is None."""
+    if path is not None:
+        return path
+    for candidate in _WORKERS_SEARCH_PATHS:
+        if candidate.exists():
+            return candidate.resolve()
+    searched = ", ".join(str(p) for p in _WORKERS_SEARCH_PATHS)
+    raise FileNotFoundError(
+        f"workers.yaml not found. Searched: {searched}. Run 'factory setup' to configure."
+    )
+
+
 def load_workers(path: Optional[Path] = None) -> GlobalConfig:
     if path is None:
         for candidate in _WORKERS_SEARCH_PATHS:

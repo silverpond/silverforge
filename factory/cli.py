@@ -33,7 +33,7 @@ _load_env_file(Path.cwd() / ".env")
 _load_env_file(Path.home() / ".config" / "factory" / ".env")
 
 from factory import store
-from factory.config import load_task, load_workers
+from factory.config import load_task, load_workers, resolve_workers_path
 from factory.models import RunState, TaskDefinition
 from factory.runner import launch_task, run_task, spawn_watcher
 from factory.ssh import SSHClient
@@ -201,7 +201,7 @@ def run_cmd(
         raise typer.Exit(1)
 
     gh_repo = _parse_gh_repo(task.repo.url) if task.repo and task.repo.url else None
-    spawn_watcher(run, workers.resolve(), repo=gh_repo)
+    spawn_watcher(run, resolve_workers_path(workers), repo=gh_repo)
 
 
 # ── status ───────────────────────────────────────────────────────────────────
@@ -1251,7 +1251,7 @@ def slack_listen(
                 return
 
             gh_repo = _parse_gh_repo(task.repo.url) if task.repo and task.repo.url else None
-            spawn_watcher(run, workers.resolve(), repo=gh_repo)
+            spawn_watcher(run, resolve_workers_path(workers), repo=gh_repo)
 
             slack_client.post(
                 channel_id,

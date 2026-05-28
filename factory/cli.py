@@ -97,13 +97,35 @@ def serve(
     host: str = typer.Option("127.0.0.1", "--host", "-h", help="Host to bind to"),
     port: int = typer.Option(8000, "--port", "-p", help="Port to listen on"),
 ) -> None:
-    """Start the HTTP API server."""
-    import uvicorn
+    """Start the HTTP API server.
+
+    Runs the server in the background as a subprocess, keeping the CLI responsive.
+    """
+    # Validate port is in valid TCP range (1-65535)
+    if not (1 <= port <= 65535):
+        typer.echo(f"Error: Port must be between 1 and 65535, got {port}", err=True)
+        raise typer.Exit(1)
+
+    import subprocess
+    import sys
     from factory.server import app as fastapi_app
 
     typer.echo(f"Starting server on http://{host}:{port}")
     typer.echo("  GET /hello — Returns a hello message")
-    uvicorn.run(fastapi_app, host=host, port=port)
+    typer.echo("  Press Ctrl-C to stop\n")
+
+    # Run uvicorn in a subprocess to keep the CLI responsive
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "uvicorn", "factory.server:app",
+             "--host", host, "--port", str(port)],
+            check=True
+        )
+    except KeyboardInterrupt:
+        typer.echo("\nServer stopped.")
+    except subprocess.CalledProcessError as e:
+        typer.echo(f"Server exited with error: {e}", err=True)
+        raise typer.Exit(1)
 
 
 # ── inline task helpers ───────────────────────────────────────────────────────

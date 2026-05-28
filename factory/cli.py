@@ -42,7 +42,7 @@ app = typer.Typer(
 )
 console = Console()
 
-_WORKERS_OPT = typer.Option(Path("workers.yaml"), "--workers", "-w", help="Path to workers.yaml")
+_WORKERS_OPT = typer.Option(None, "--workers", "-w", help="Path to workers.yaml")
 
 _STATE_STYLE: dict[RunState, str] = {
     RunState.queued:        "white",
@@ -583,8 +583,8 @@ def setup_cmd(
     """One-time engineer setup: SSH access, GitHub token, and optional label creation."""
     try:
         config = load_workers(workers_path)
-    except FileNotFoundError:
-        typer.echo(f"workers.yaml not found at {workers_path}", err=True)
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
         raise typer.Exit(1)
 
     worker_names = list(config.workers.keys())
@@ -690,6 +690,14 @@ def setup_cmd(
     )).strip()
     if gh_repo_str:
         _setup_gh_labels(gh_repo_str)
+
+    # Copy workers.yaml to ~/.config/factory/ so factory works from any directory
+    import shutil
+    config_workers = Path.home() / ".config" / "factory" / "workers.yaml"
+    if not config_workers.exists() and workers_path and Path(workers_path).exists():
+        config_workers.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(workers_path, config_workers)
+        console.print(f"  [green]✓[/green] workers.yaml copied to [dim]{config_workers}[/dim]")
 
     console.print("\n[green]✓ Setup complete.[/green]")
     console.print("  Run a task:    [bold]factory run \"your task\" --repo owner/repo[/bold]")

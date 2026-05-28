@@ -33,7 +33,23 @@ class GlobalConfig(BaseModel):
     workers: Dict[str, WorkerConfig]
 
 
-def load_workers(path: Path = Path("workers.yaml")) -> GlobalConfig:
+_WORKERS_SEARCH_PATHS = [
+    Path("workers.yaml"),
+    Path.home() / ".config" / "factory" / "workers.yaml",
+]
+
+
+def load_workers(path: Optional[Path] = None) -> GlobalConfig:
+    if path is None:
+        for candidate in _WORKERS_SEARCH_PATHS:
+            if candidate.exists():
+                path = candidate
+                break
+        else:
+            searched = ", ".join(str(p) for p in _WORKERS_SEARCH_PATHS)
+            raise FileNotFoundError(
+                f"workers.yaml not found. Searched: {searched}. Run 'factory setup' to configure."
+            )
     with open(path) as f:
         data = yaml.safe_load(f)
     config = GlobalConfig(**data)

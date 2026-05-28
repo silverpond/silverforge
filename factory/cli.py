@@ -647,6 +647,16 @@ def setup_cmd(
 
     # GitHub token → worker
     github_token = os.environ.get("FACTORY_GITHUB_TOKEN")
+    if not github_token:
+        console.print("\n  [bold]GitHub[/bold] — token needed for PR creation (github.com/settings/tokens, repo scope)")
+        github_token = ask(questionary.text(
+            "FACTORY_GITHUB_TOKEN (leave blank to skip):",
+            default="",
+        )).strip()
+        if github_token:
+            _write_env_var("FACTORY_GITHUB_TOKEN", github_token)
+            os.environ["FACTORY_GITHUB_TOKEN"] = github_token
+            console.print(f"  [green]✓[/green] FACTORY_GITHUB_TOKEN saved to [dim].env[/dim]")
     if github_token:
         if ask(questionary.confirm(
             f"Write GITHUB_TOKEN to {worker_name} (~/.factory-secrets) for git clone/push?",
@@ -657,8 +667,6 @@ def setup_cmd(
                 console.print(f"  [green]✓[/green] GITHUB_TOKEN written to {worker_name}:~/.factory-secrets")
             except Exception as exc:
                 console.print(f"  [yellow]⚠[/yellow] Could not write secrets: {exc}")
-    else:
-        console.print("  [yellow]⚠[/yellow] FACTORY_GITHUB_TOKEN not set in .env — add it and re-run setup")
 
     # Slack
     if not os.environ.get("SLACK_BOT_TOKEN"):

@@ -7,6 +7,7 @@ Commands:
   status [run_id]           — show run(s) status
   eval   <run_id>           — re-run eval commands for an existing run
   attach <run_id>           — SSH into the remote tmux session for a run
+  serve                     — start the HTTP API server
 """
 from __future__ import annotations
 
@@ -87,6 +88,22 @@ def ping(
     else:
         console.print(f"  [red]UNREACHABLE[/red] — {worker} did not respond")
         raise typer.Exit(1)
+
+
+# ── serve ────────────────────────────────────────────────────────────────────
+
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host", "-h", help="Host to bind to"),
+    port: int = typer.Option(8000, "--port", "-p", help="Port to listen on"),
+) -> None:
+    """Start the HTTP API server."""
+    import uvicorn
+    from factory.server import app as fastapi_app
+
+    typer.echo(f"Starting server on http://{host}:{port}")
+    typer.echo("  GET /hello — Returns a hello message")
+    uvicorn.run(fastapi_app, host=host, port=port)
 
 
 # ── inline task helpers ───────────────────────────────────────────────────────

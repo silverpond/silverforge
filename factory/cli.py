@@ -317,17 +317,20 @@ def attach(
     w = config.workers[r.worker]
     session = f"factory-{run_id}"
 
-    ssh_cmd = ["ssh", "-t", "-p", str(w.port)]
-    if w.identity_file:
-        import os
-        ssh_cmd += ["-i", os.path.expanduser(w.identity_file)]
-    ssh_cmd += [
-        f"{w.user}@{w.host}",
-        f"tmux attach-session -t {session} 2>/dev/null || tmux new-session -s {session}",
-    ]
-    typer.echo(f"Attaching to {w.host} → tmux session '{session}'")
-    typer.echo("(Ctrl-b d to detach)")
-    subprocess.run(ssh_cmd)
+    from factory.ssh import _is_local
+    tmux_cmd = f"tmux attach-session -t {session} 2>/dev/null || tmux new-session -s {session}"
+    if _is_local(w.host):
+        typer.echo(f"Attaching to local tmux session '{session}'")
+        typer.echo("(Ctrl-b d to detach)")
+        subprocess.run(["bash", "-c", tmux_cmd])
+    else:
+        ssh_cmd = ["ssh", "-t", "-p", str(w.port)]
+        if w.identity_file:
+            ssh_cmd += ["-i", os.path.expanduser(w.identity_file)]
+        ssh_cmd += [f"{w.user}@{w.host}", tmux_cmd]
+        typer.echo(f"Attaching to {w.host} → tmux session '{session}'")
+        typer.echo("(Ctrl-b d to detach)")
+        subprocess.run(ssh_cmd)
 
 
 # ── connect ───────────────────────────────────────────────────────────────────
@@ -369,13 +372,16 @@ def connect(
         idx = typer.prompt("Select session", default="0")
         session = sessions[int(idx)]
 
-    ssh_cmd = ["ssh", "-t", "-p", str(w.port)]
-    if w.identity_file:
-        ssh_cmd += ["-i", os.path.expanduser(w.identity_file)]
-    ssh_cmd += [f"{w.user}@{w.host}", f"tmux attach-session -t {session}"]
-
+    from factory.ssh import _is_local
     typer.echo(f"Attaching to {session} on {w.host}  (Ctrl-b d to detach)")
-    subprocess.run(ssh_cmd)
+    if _is_local(w.host):
+        subprocess.run(["bash", "-c", f"tmux attach-session -t {session}"])
+    else:
+        ssh_cmd = ["ssh", "-t", "-p", str(w.port)]
+        if w.identity_file:
+            ssh_cmd += ["-i", os.path.expanduser(w.identity_file)]
+        ssh_cmd += [f"{w.user}@{w.host}", f"tmux attach-session -t {session}"]
+        subprocess.run(ssh_cmd)
 
 
 # ── kill ─────────────────────────────────────────────────────────────────────

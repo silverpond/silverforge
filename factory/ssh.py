@@ -3,10 +3,14 @@ SSH helpers using subprocess.
 
 Keeps things simple: no paramiko, no asyncio, just ssh(1).
 BatchMode=yes means it will fail cleanly if keys aren't set up.
+
+When the target host is the local machine, commands run via subprocess
+directly — no SSH needed.
 """
 from __future__ import annotations
 
 import os
+import socket
 import subprocess
 from dataclasses import dataclass
 from typing import List, Optional
@@ -23,6 +27,16 @@ class SSHResult:
         return self.exit_code == 0
 
 
+def _is_local(host: str) -> bool:
+    if host in ("localhost", "127.0.0.1", "::1"):
+        return True
+    try:
+        local = socket.gethostname()
+        return host == local or host == socket.getfqdn(local)
+    except OSError:
+        return False
+
+
 class SSHClient:
     def __init__(self, host: str, user: str, port: int = 22, identity_file: Optional[str] = None, shell_init: Optional[str] = None):
         self.host = host
@@ -30,6 +44,7 @@ class SSHClient:
         self.port = port
         self.identity_file = identity_file
         self.shell_init = shell_init  # prepended to every command, e.g. "source /etc/profile"
+        self.local = _is_local(host)
 
     def _base_args(self) -> List[str]:
         args = [
@@ -45,13 +60,16 @@ class SSHClient:
         return args
 
     def run(self, command: str, timeout: Optional[int] = 60) -> SSHResult:
-        """Run a single shell command on the remote host."""
+        """Run a single shell command — locally if host is this machine, otherwise over SSH."""
         if self.shell_init:
             command = f"{self.shell_init} && {command}"
-        cmd = self._base_args() + [command]
+        if self.local:
+            cmd_args = ["bash", "-c", command]
+        else:
+            cmd_args = self._base_args() + [command]
         try:
             result = subprocess.run(
-                cmd,
+                cmd_args,
                 capture_output=True,
                 text=True,
                 timeout=timeout,

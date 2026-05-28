@@ -564,9 +564,17 @@ def spawn_watcher(
     if issue_number is not None:
         cmd += ["--issue", str(issue_number)]
 
+    # Inherit env and ensure factory is importable — needed when installed via Nix,
+    # where sys.executable is a bare Python with no package paths set up.
+    env = os.environ.copy()
+    import factory as _pkg
+    site_packages = str(Path(_pkg.__file__).parent.parent)
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = site_packages + (":" + existing if existing else "")
+
     with open(log_path, "w") as log_fh:
         subprocess.Popen(cmd, stdout=log_fh, stderr=subprocess.STDOUT,
-                         start_new_session=True, close_fds=True)
+                         start_new_session=True, close_fds=True, env=env)
 
 
 def run_task(task: TaskDefinition, workers_path: Path = Path("workers.yaml")) -> Run:

@@ -33,6 +33,7 @@ from factory import store
 from factory.config import load_task, load_workers
 from factory.models import RunState, TaskDefinition
 from factory.runner import launch_task, run_task, spawn_watcher
+from factory.server import app as server_app
 from factory.ssh import SSHClient
 
 app = typer.Typer(
@@ -769,6 +770,19 @@ def labels(
 ) -> None:
     """Create all standard factory labels on a GitHub repo."""
     _setup_gh_labels(repo)
+
+
+# ── serve ────────────────────────────────────────────────────────────────────
+
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host", "-h", help="Server host"),
+    port: int = typer.Option(8000, "--port", "-p", help="Server port"),
+) -> None:
+    """Start the HTTP server with hello endpoint."""
+    import uvicorn
+
+    uvicorn.run(server_app, host=host, port=port, log_level="info")
 
 
 # ── workers ──────────────────────────────────────────────────────────────────

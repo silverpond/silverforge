@@ -606,6 +606,11 @@ def _github_https_url(url: str) -> str:
 def _create_run_worktree(client: SSHClient, task: TaskDefinition, run_id: str, worker: "WorkerConfig") -> str:
     base_path = task.repo.path
     worktree_base = worker.default_worktree_base
+    # Resolve ~ to an absolute path so shlex.quote doesn't prevent expansion later
+    if worktree_base.startswith("~"):
+        home = client.run("echo $HOME", timeout=5).stdout.strip()
+        if home:
+            worktree_base = home + worktree_base[1:]
     worktree_path = f"{worktree_base}/{task.id}-{run_id}"
     branch = f"factory/{task.id}-{run_id}"
 

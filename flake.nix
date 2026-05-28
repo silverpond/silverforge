@@ -10,7 +10,7 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        python = pkgs.python311;
+        python = pkgs.python312;
 
         silverpond-factory = python.pkgs.buildPythonPackage {
           pname = "silverpond-factory";

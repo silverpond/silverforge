@@ -634,6 +634,7 @@ def send_feedback_to_session(
     client.run(f"echo '{encoded}' | base64 -d > {tmp}", timeout=5)
     client.run(f"tmux load-buffer {tmp} 2>/dev/null || true", timeout=5)
     client.run(f"tmux paste-buffer -t {session_name} -p 2>/dev/null || true", timeout=5)
+    time.sleep(1)  # give TUI time to register paste before Enter lands
     client.run(f"tmux send-keys -t {session_name} Enter", timeout=5)
     client.run(f"rm -f {tmp}", timeout=5)
     return True

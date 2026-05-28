@@ -21,13 +21,16 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-_env_file = Path.cwd() / ".env"
-if _env_file.exists():
-    for _line in _env_file.read_text().splitlines():
-        _line = _line.strip()
-        if _line and not _line.startswith("#") and "=" in _line:
-            _k, _, _v = _line.partition("=")
-            os.environ.setdefault(_k.strip(), _v.strip())
+def _load_env_file(path: Path) -> None:
+    if path.exists():
+        for _line in path.read_text().splitlines():
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _, _v = _line.partition("=")
+                os.environ.setdefault(_k.strip(), _v.strip())
+
+_load_env_file(Path.cwd() / ".env")
+_load_env_file(Path.home() / ".config" / "factory" / ".env")
 
 from factory import store
 from factory.config import load_task, load_workers
@@ -722,9 +725,22 @@ def _write_worker_secrets(client: SSHClient, github_token: str) -> None:
     )
 
 
+def _env_path() -> Path:
+    """Return the .env path to write to — repo .env if writable, otherwise ~/.config/factory/.env."""
+    repo_env = Path(__file__).parent.parent / ".env"
+    try:
+        repo_env.parent.stat()
+        repo_env.touch(exist_ok=True)
+        return repo_env
+    except (OSError, PermissionError):
+        config_env = Path.home() / ".config" / "factory" / ".env"
+        config_env.parent.mkdir(parents=True, exist_ok=True)
+        return config_env
+
+
 def _write_env_var(key: str, value: str) -> None:
-    """Upsert a KEY=value line in the local .env file."""
-    env_path = Path(__file__).parent.parent / ".env"
+    """Upsert a KEY=value line in the .env file."""
+    env_path = _env_path()
     lines = env_path.read_text().splitlines() if env_path.exists() else []
     updated = False
     for i, line in enumerate(lines):

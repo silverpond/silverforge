@@ -34,8 +34,16 @@ def _is_local(host: str) -> bool:
         local = socket.gethostname()
         if host == local or host == socket.getfqdn(local) or host == socket.getfqdn():
             return True
-        # Fall back to comparing resolved IPs
-        return socket.gethostbyname(host) == socket.gethostbyname(local)
+        # Check if the resolved IP is assigned to a local interface
+        target_ip = socket.gethostbyname(host)
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.bind((target_ip, 0))
+            return True
+        except OSError:
+            return False
+        finally:
+            s.close()
     except OSError:
         return False
 

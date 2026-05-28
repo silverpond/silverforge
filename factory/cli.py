@@ -672,6 +672,20 @@ def setup_cmd(
             os.environ["SLACK_BOT_TOKEN"] = slack_token
             console.print(f"  [green]✓[/green] SLACK_BOT_TOKEN saved to [dim].env[/dim]")
 
+    if os.environ.get("SLACK_BOT_TOKEN") and not os.environ.get("SLACK_APP_TOKEN"):
+        console.print(
+            "\n  [dim]App-level token enables real-time Slack message delivery (Socket Mode)."
+            " Get it from api.slack.com/apps → your app → Basic Information → App-Level Tokens.[/dim]"
+        )
+        app_token = ask(questionary.text(
+            "SLACK_APP_TOKEN (xapp-..., leave blank to skip):",
+            default="",
+        )).strip()
+        if app_token:
+            _write_env_var("SLACK_APP_TOKEN", app_token)
+            os.environ["SLACK_APP_TOKEN"] = app_token
+            console.print(f"  [green]✓[/green] SLACK_APP_TOKEN saved to [dim].env[/dim]")
+
     if os.environ.get("SLACK_BOT_TOKEN"):
         console.print(
             "\n  [dim]To find your Slack user ID: open Slack → click your profile picture"

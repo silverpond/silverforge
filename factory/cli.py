@@ -771,6 +771,20 @@ def labels(
     _setup_gh_labels(repo)
 
 
+# ── serve ─────────────────────────────────────────────────────────────────────
+
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host", "-h", help="Host to bind to"),
+    port: int = typer.Option(8000, "--port", "-p", help="Port to bind to"),
+) -> None:
+    """Start the HTTP API server."""
+    import uvicorn
+    from factory.server import app as server_app
+
+    uvicorn.run(server_app, host=host, port=port)
+
+
 # ── workers ──────────────────────────────────────────────────────────────────
 
 @app.command()

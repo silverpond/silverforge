@@ -1237,6 +1237,25 @@ def slack_listen(
         sm_client.close()
 
 
+# ── serve ────────────────────────────────────────────────────────────────────
+
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host", "-h", help="Host to bind to"),
+    port: int = typer.Option(8000, "--port", "-p", help="Port to bind to"),
+) -> None:
+    """Start the HTTP API server."""
+    try:
+        import uvicorn
+        from factory.server import app as server_app
+    except ImportError:
+        typer.echo("fastapi and uvicorn are required for the serve command. Install with: pip install fastapi uvicorn", err=True)
+        raise typer.Exit(1)
+
+    console.print(f"Starting Silverforge Factory HTTP server at [cyan]http://{host}:{port}[/cyan]")
+    uvicorn.run(server_app, host=host, port=port)
+
+
 # ── entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

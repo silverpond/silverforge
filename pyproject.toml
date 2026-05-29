@@ -20,5 +20,11 @@ dependencies = [
 [tool.setuptools.packages.find]
 include = ["factory*"]
 
+[project.optional-dependencies]
+test = [
+    "pytest>=7",
+    "httpx>=0.24",
+]
+
 [project.scripts]
 factory = "factory.cli:app"

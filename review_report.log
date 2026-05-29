@@ -471,3 +471,727 @@ Findings:
 - **Iteration-order dependency in crucible feedback** `factory/runner.py:210`: By moving the baseline forward after each iteration, the incremental diff strategy creates an implicit dependency on iteration order. Identical code changes in different iteration sequences will receive different crucible feedback because they compare against different bases. This reduces reproducibility: running the same task twice with different intermediate code states will generate different crucible comments for the same final code. While acknowledged as an intended trade-off in the summary, this should be documented in code or task YAML schema to prevent confusion.
 - **Document iteration-order dependency in crucible feedback** `factory/runner.py:210`: By moving the baseline forward after each iteration, the incremental diff strategy creates an implicit dependency on iteration order. Identical code changes in different iteration sequences will receive different crucible feedback because they compare against different bases. This reduces reproducibility: running the same task twice with different intermediate code states will generate different crucible comments for the same final code. While this is an acknowledged trade-off to prevent timeouts, it should be documented in code to prevent confusion during debugging or refactoring.
 
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:34:21.833 +10:00] [progress] startup:references started Scanning related references
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:34:21.833 +10:00] [progress] startup:history started Collecting recent history
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:34:21.833 +10:00] [progress] startup:docs started Loading docs context
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.310 +10:00] [progress] startup:references completed count=0 duration=1.7s Reference scan complete
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.310 +10:00] [progress] startup:history completed count=20 duration=1.7s History collection complete
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.310 +10:00] [progress] startup:docs completed count=1 duration=1.7s Docs collection complete
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.310 +10:00] [progress] startup:prechecks started Running prechecks
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.310 +10:00] [progress] startup:prechecks completed count=2 duration=0.6s Prechecks complete
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.311 +10:00] [progress] run:header reviewers=claude-code max_rounds=2 changed_files=3 changed_lines=35 convergence_enabled=true context_enabled=true
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.311 +10:00] [progress] phase:start analyzer
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.311 +10:00] [progress] analyzer:start
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.311 +10:00] [agent-chat] -> claude-code index 59d1509..f772bf7 100644 sm_client.close()
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.311 +10:00] [analysis]
+## Local Diff Analysis
+
+Added HTTP API support to Silverforge Factory by introducing a new `serve` CLI command powered by FastAPI and uvicorn. The implementation includes a minimal `/hello` endpoint that returns `{"message": "Hello from Silverpond Factory"}`. The server code is cleanly separated into `factory/server.py`, and the CLI command in `factory/cli.py` handles dynamic imports with graceful degradation if dependencies are missing. This transforms the tool from CLI-only to offering both CLI and HTTP API entry points, enabling integration with other services and external callers.
+
+### Suggested Review Focus
+- Dependency scope & optional installs: fastapi and uvicorn are now required dependencies for all users (added to base dependencies in pyproject.toml), but only needed if the `serve` command is used. Consider if these should be optional/extras dependencies to reduce installation size for CLI-only users.
+- Server lifecycle & error handling: No graceful shutdown handling, signal management, or logging configuration. The server runs with uvicorn defaults (single worker, no reload). Confirm this matches production requirements.
+- Security & endpoint coverage: The `/hello` endpoint has no authentication, rate limiting, or input validation. Verify this is acceptable for the current deployment model and document any planned security additions as the API grows.
+- Extensibility & future endpoints: Single endpoint pattern is established; verify the module structure (`factory.server` with FastAPI app) scales as more routes are added. Consider if request/response models should be in a separate types module.
+
+### Trade-offs
+- **Dependency bloat**: All users pay the fastapi/uvicorn installation cost even if they only use the CLI. Mitigation: move to optional dependencies or extras (`pip install factory[server]`).
+- **Single-threaded default**: uvicorn.run() without workers= defaults to single worker. Suitable for development but may bottleneck under concurrent load.
+- **No configuration file support**: Host/port are CLI-only; no config file, environment variable, or .env support for production deployments.
+- **Minimal error context**: ImportError provides helpful message but no logging of server startup, connection errors, or shutdown events.
+- **No API versioning**: `/hello` path has no version prefix; future breaking changes will be harder to manage.
+
+### Affected Modules
+- factory/cli.py — new `serve` command added, imports uvicorn/FastAPI dynamically
+- factory/server.py — **new module**, contains FastAPI app definition and /hello route
+- pyproject.toml — dependencies section extended with fastapi and uvicorn
+- CLI entry point — now serves dual role (CLI commands + HTTP server command)
+
+### Call Chain
+- `factory serve` → `cli.serve()` → dynamic import check → `uvicorn.run(server_app, host=host, port=port)` → FastAPI app receives HTTP requests → route handler `/hello` returns JSON
+
+### Design Patterns
+- **Separation of Concerns**: HTTP server logic isolated in `factory.server` module, decoupled from CLI in `factory.cli`
+- **Dynamic Imports with Graceful Degradation**: Late imports + exception handling avoids hard dependency at import time
+- **CLI Option Binding**: typer decorators map command-line args (--host, --port) to function parameters
+- **Singleton FastAPI App**: Single `app` instance in server.py serves all routes; pattern supports pytest fixtures and test overrides
+
+### Reviewer Checklist
+- Verify fastapi>=0.100 and uvicorn>=0.23 are the correct minimum versions (check release notes for security/feature requirements)
+- Confirm if dependencies should be moved to `extras_require` in pyproject.toml instead of base dependencies
+- Review ImportError message for clarity; suggest cross-reference to docs or setup guide if not obvious
+- Check if `console.print()` startup message (with [cyan] rich markup) is appropriate level; consider if this should be logged instead
+- Validate FastAPI app title/version match project metadata (currently hardcoded "Silverforge Factory", "0.1.0")
+- Confirm /hello endpoint is a placeholder or the final implementation; if placeholder, add TODO or issue reference
+- Test error path: confirm helpful error message appears when fastapi/uvicorn not installed
+- Review if uvicorn.run() should accept additional kwargs for production use (workers, log_level, etc.)
+- Verify no authentication/CORS/rate-limiting requirements for the /hello endpoint in intended deployment context
+
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.311 +10:00] [system-context]
+### System Context
+- Changed files: 3
+- Reference snippets: 0
+- History commits: 20
+- Docs snippets: 1
+- Deterministic prechecks: 2
+- Affected files:
+  - factory/cli.py
+  - factory/server.py
+  - pyproject.toml
+- Precheck results:
+  - untangle-analyze-report [Fail] error: unexpected argument '.' found
+
+Usage: untangle analyze [OPTIONS] <PATH>
+
+For more information, try '--help'.
+  - untangle-quality-report [Fail] error: unrecognized subcommand 'quality'
+
+Usage: untangle <COMMAND>
+
+For more information, try '--help'.
+
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.311 +10:00] [progress] analyzer:done
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.311 +10:00] [progress] phase:done analyzer
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.311 +10:00] [progress] phase:start agent-preflight
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.311 +10:00] [progress] phase:done agent-preflight
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.312 +10:00] [progress] phase:start round-1
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.312 +10:00] [progress] round:1 start (agents: claude-code)
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.312 +10:00] [progress] round:1 status [... claude-code]
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.312 +10:00] [progress] round:1 status [RUN claude-code]
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.312 +10:00] [progress] agent:start round=1 id=claude-code
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.312 +10:00] [agent-chat] -> claude-code index 59d1509..f772bf7 100644 sm_client.close()
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.312 +10:00] [agent-review] round=1 id=claude-code 12 findings (2 Critical, 4 Warning, 6 Info) | The HTTP API implementation adds a `/hello` endpoint via FastAPI and introduces a `serve` CLI command. Critical issues identified: (1) dependency management contradiction—fastapi/uvicorn are hard dependencies in pyproject.toml but cli.py has dead-code ImportError handling that will never trigger, creating a confusing false safety net; (2) inconsistent product branding in response message ("Silverpond" vs "Silverforge"); (3) missing input validation on port parameter (could accept invalid values like 99999 or -1); (4) incomplete error handling—no protection against port-binding failures; (5) no tests exist for the new API functionality. Less critical but important: missing type hints, no Pydantic response model, misleading installation error message, and no graceful shutdown documentation. The implementation follows a reasonable pattern (separation of concerns, dynamic imports) but lacks the robustness expected for server code.
+[agent-review] details:
+Narrative:
+The HTTP API implementation adds a `/hello` endpoint via FastAPI and introduces a `serve` CLI command. Critical issues identified: (1) dependency management contradiction—fastapi/uvicorn are hard dependencies in pyproject.toml but cli.py has dead-code ImportError handling that will never trigger, creating a confusing false safety net; (2) inconsistent product branding in response message ("Silverpond" vs "Silverforge"); (3) missing input validation on port parameter (could accept invalid values like 99999 or -1); (4) incomplete error handling—no protection against port-binding failures; (5) no tests exist for the new API functionality. Less critical but important: missing type hints, no Pydantic response model, misleading installation error message, and no graceful shutdown documentation. The implementation follows a reasonable pattern (separation of concerns, dynamic imports) but lacks the robustness expected for server code.
+
+Findings:
+- [Critical] factory/cli.py:1248-1253 Either (a) move fastapi/uvicorn to extras_require to make them truly optional, OR (b) remove the try/except and import normally since they are now required. The current state is internally inconsistent.
+  description: The serve() function wraps imports in try/except ImportError, but fastapi and uvicorn are declared as hard dependencies in pyproject.toml (lines 16-17). This means the ImportError branch will never execute after successful installation. The try/except creates a false sense of graceful degradation and contradicts the stated intent of optional imports.
+- [Critical] <unknown> Add pytest tests covering: (1) server startup with default/custom host/port, (2) /hello endpoint returns correct JSON, (3) invalid port values (negative, >65535, port in use), (4) missing dependencies error path.
+  description: The implementation adds a new serve command and /hello endpoint with no unit or integration tests. CLAUDE.md explicitly states 'No tests exist yet — the main way to verify changes is running a task end-to-end.' For a new API endpoint, this leaves basic functionality unverified: server startup, port binding, /hello response format, error handling, and invalid input cases.
+- [Warning] factory/server.py:8-14 Response message should match the app title. Either change line 14 to 'Hello from Silverforge Factory' or update the app title if 'Silverpond' is the correct name.
+  description: FastAPI app is initialized with title='Silverforge Factory', but the /hello endpoint response message returns 'Hello from Silverpond Factory'. This is a typo or copy-paste error that creates inconsistent branding.
+- [Warning] factory/cli.py:1245 Add explicit validation for port to prevent user error. Typer's Option doesn't have min/max, so use a custom Typer validation or check inside the function before calling uvicorn.run().
+  description: The port option accepts any integer but does not validate that it falls within the valid port range (1-65535). Users can pass invalid values like --port 99999 or --port -1, which will either be silently rejected by uvicorn with an unclear error or cause confusing behavior.
+- [Warning] factory/cli.py:1252 Update error message to direct users to the correct installation command that includes the new dependencies.
+  description: The error message instructs users to run `pip install fastapi uvicorn`, but since these packages are now hard dependencies in pyproject.toml, the correct setup is `pip install -e .` (as documented in CLAUDE.md). The error message contradicts the actual installation method.
+- [Warning] factory/cli.py:1256 Wrap uvicorn.run() in a try/except block to catch and handle common startup failures (OSError for port binding, etc.) with helpful messages.
+  description: The uvicorn.run() call is not wrapped in error handling. If the port is already in use, the user lacks permission to bind to the host, or the server fails to start, the raw exception traceback will be shown instead of a user-friendly error message.
+- [Info] factory/server.py:12 Add return type annotation to the hello function.
+  description: The hello() function has no return type annotation. Python/FastAPI best practice is to annotate return types for IDE support, type checking, and OpenAPI schema generation.
+- [Info] factory/server.py:11-14 Define a Pydantic model for the response and use it as the response_model in the decorator.
+  description: The endpoint returns a plain dict instead of a Pydantic BaseModel. FastAPI best practice is to use Pydantic models for response validation, OpenAPI schema clarity, and future API evolution.
+- [Info] factory/server.py:13 Expand docstring to document the endpoint's purpose, response structure, and use case.
+  description: The docstring 'Hello endpoint.' is too brief and doesn't describe what the endpoint returns or its purpose.
+- [Info] factory/server.py:11 Clarify the intended deployment context and add security controls if needed (e.g., rate limiting, CORS, basic auth). Document security assumptions.
+  description: The /hello endpoint has no authentication, rate limiting, CORS headers, or access controls. If deployed publicly, it could be used for reconnaissance or DoS. Context determines if this is acceptable (health check vs internal API).
+- [Info] factory/cli.py:1256 Document the production deployment model. For local development, single worker is acceptable. For production, recommend using gunicorn or specifying workers=.
+  description: uvicorn.run() without the workers= parameter defaults to a single worker process. This is fine for development but will bottleneck under concurrent load in production. No documentation on production deployment.
+- [Info] factory/cli.py:1255-1256 Either suppress the manual console.print() and rely on uvicorn's logging, or suppress uvicorn's startup logs and use custom logging.
+  description: The console.print() startup message on line 1255 will be followed by uvicorn's own startup log messages, resulting in two different formatted messages about server startup. This may appear redundant or confusing.
+
+[agent-review]   [CRITICAL] factory/cli.py:1248 Either (a) move fastapi/uvicorn to extras_require to make them truly optional, OR (b) remove the try/except and import normally since they are now required. The current state is internally inconsistent.
+[agent-review]   [CRITICAL] <unknown> Add pytest tests covering: (1) server startup with default/custom host/port, (2) /hello endpoint returns correct JSON, (3) invalid port values (negative, >65535, port in use), (4) missing dependencies error path.
+[agent-review]   [WARNING] factory/server.py:8 Response message should match the app title. Either change line 14 to 'Hello from Silverforge Factory' or update the app title if 'Silverpond' is the correct name.
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.313 +10:00] [progress] round:1 status [OK claude-code (78.7s)]
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.313 +10:00] [progress] agent:done round=1 id=claude-code
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.313 +10:00] [progress] round:1 done
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.313 +10:00] [agent-chat] -> claude-code Findings so far: [{"agent":"claude-code","severity":"Warning","confidence":"High","file":"factory/cli.py","span":{"start":1245,"end":1245},"message":"Add explicit validation for po
+…
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.313 +10:00] [progress] convergence round=1 verdict=NOT_CONVERGED rationale=Net-new findings or unresolved high-severity issues remain.
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.313 +10:00] [progress] round:1/2 complete
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.313 +10:00] [progress] phase:done round-1
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.313 +10:00] [progress] phase:start round-2
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.313 +10:00] [progress] round:2 start (agents: claude-code)
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.313 +10:00] [progress] round:2 status [... claude-code]
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.313 +10:00] [progress] round:2 status [RUN claude-code]
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.313 +10:00] [progress] agent:start round=2 id=claude-code
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.313 +10:00] [agent-chat] -> claude-code Round 1 prior reviewer findings: index 59d1509..f772bf7 100644
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.314 +10:00] [agent-review] round=2 id=claude-code 11 findings (2 Critical, 5 Warning, 4 Info) | The Round 2 diff introduces the HTTP server implementation but does not address any of the Critical or Warning-level issues identified in Round 1. The code exhibits a fundamental inconsistency: fastapi and uvicorn are added as hard dependencies in pyproject.toml (affecting all users), yet the serve() function treats them as optional with try/except error handling. Additionally, no pytest tests are included despite the Critical requirement for test coverage. The /hello endpoint has unresolved issues including name mismatches (Silverpond vs Silverforge), missing return type annotations, lack of Pydantic models, absent port validation, and no exception handling for uvicorn startup failures. The implementation is minimal and functional for basic use but lacks production-readiness in error handling, validation, and testing.
+[agent-review] details:
+Narrative:
+The Round 2 diff introduces the HTTP server implementation but does not address any of the Critical or Warning-level issues identified in Round 1. The code exhibits a fundamental inconsistency: fastapi and uvicorn are added as hard dependencies in pyproject.toml (affecting all users), yet the serve() function treats them as optional with try/except error handling. Additionally, no pytest tests are included despite the Critical requirement for test coverage. The /hello endpoint has unresolved issues including name mismatches (Silverpond vs Silverforge), missing return type annotations, lack of Pydantic models, absent port validation, and no exception handling for uvicorn startup failures. The implementation is minimal and functional for basic use but lacks production-readiness in error handling, validation, and testing.
+
+Findings:
+- [Critical] factory/cli.py:1248-1253 Either move fastapi/uvicorn to extras_require in pyproject.toml and remove try/except from serve(), OR make them required base dependencies and remove try/except. Current inconsistency wastes resources and confuses users.
+  description: fastapi and uvicorn are added as unconditional dependencies in pyproject.toml (lines 16-17), meaning ALL users will install them even if they never use the `factory serve` command. However, the serve() function treats them as optional with try/except ImportError handling (lines 1248-1253). This creates two problems: (1) bloated installation for CLI-only users, and (2) internally inconsistent logic—if dependencies are truly optional, they should be in extras_require; if required, the try/except is misleading. The prior Round 1 review flagged this as Critical and it remains unfixed.
+- [Critical] <unknown> Create a test suite covering server startup, /hello endpoint behavior, port validation edge cases, and graceful error handling for missing dependencies. Example: tests/test_server.py with pytest fixtures for FastAPI TestClient.
+  description: The diff introduces new HTTP server code but includes zero test coverage. Round 1 explicitly required tests for: (1) server startup with default/custom host/port, (2) /hello endpoint returns correct JSON, (3) invalid port values (negative, >65535, port in use), (4) missing dependencies error path. No test files appear in the diff. This is a Critical gap because the serve command has several failure modes (port binding, import errors, validation) that cannot be validated without tests.
+- [Warning] factory/server.py:8-14 Align app title and response message. Determine the correct brand name (Silverforge or Silverpond) and apply consistently across server.py.
+  description: The FastAPI app is titled 'Silverforge Factory' (line 8) but the /hello endpoint returns 'Hello from Silverpond Factory' (line 14). This inconsistency was flagged in Round 1 and remains unresolved. The mismatch suggests unclear naming or copy-paste error. Users calling the /hello endpoint will see 'Silverpond' while the app title advertises 'Silverforge'.
+- [Warning] factory/cli.py:1245 Add explicit port validation inside serve() before calling uvicorn.run(). Validate that port is in range [1, 65535] or [1024, 65535] depending on intended permission model.
+  description: The port parameter is defined as `typer.Option(8000, "--port", "-p")` with no validation constraints. Typer's Option does not support min/max constraints, so any integer is accepted. Invalid values like -1, -100, or 70000 will be passed to uvicorn.run(), causing runtime failures with unhelpful error messages. Users can accidentally shoot themselves in the foot with `factory serve --port -1` or `factory serve --port 99999`.
+- [Warning] factory/cli.py:1256 Wrap uvicorn.run() in a try/except block to catch and handle common startup errors (OSError for port binding, ValueError for invalid host) with user-friendly messages.
+  description: The uvicorn.run() call on line 1256 has no error handling. Common failure scenarios (port in use, invalid host, permission denied) will raise OSError or other exceptions, resulting in ugly stack traces. This was flagged as Warning in Round 1 and remains unfixed. Users get no helpful guidance when startup fails.
+- [Warning] factory/cli.py:1252 Update the error message to reflect that fastapi/uvicorn are now required dependencies included in the main package install. Direct users to 'pip install -e .' or 'pip install silverpond-factory' instead.
+  description: The error message on line 1252 says 'pip install fastapi uvicorn' but this is incomplete. Since fastapi and uvicorn are now hard dependencies in pyproject.toml (as of this diff), the proper instruction is 'pip install -e .' (or 'pip install silverpond-factory'). The current message suggests users can install only the two packages separately, ignoring other required dependencies. This was noted in Round 1 and remains unfixed.
+- [Warning] factory/server.py:11-14 Add return type annotation to hello() function to clarify the return type and improve type safety.
+  description: The hello() function on line 11 has no return type annotation. This was flagged as Info in Round 1 but is important for type safety and IDE support. The function returns a dict, but there's no explicit type hint. Modern Python fastapi applications should annotate return types.
+- [Info] factory/server.py:1-14 Expand docstrings to document the API's purpose, deployment context, security model, and endpoint descriptions. Help future maintainers and API consumers understand the contract.
+  description: The module docstring (lines 1-5) and function docstring (line 13) are too brief. The module says 'Provides REST API endpoints for the factory' without explaining the deployment model, security assumptions, or versioning strategy. The function docstring is just 'Hello endpoint.' with no explanation of purpose, response structure, or use case. This was flagged as Info in Round 1.
+- [Info] factory/server.py:8 Reference version from project metadata instead of hardcoding. Import from a version file or use importlib.metadata.
+  description: The FastAPI app title and version are hardcoded in server.py line 8: `FastAPI(title="Silverforge Factory", version="0.1.0")`. The version '0.1.0' is also hardcoded in pyproject.toml line 7. When the project version bumps, server.py must be manually updated. This violates DRY and creates maintenance burden.
+- [Info] factory/cli.py:1248-1253 Make the exception handler more specific by catching only the known imports, or re-raise with more context if the actual error is different.
+  description: The exception handler on lines 1248-1253 catches all ImportError but attributes every import failure to 'fastapi and uvicorn'. If factory.server has an unrelated import error (e.g., missing pydantic, typo in module), the error message will still say 'fastapi and uvicorn are required', misleading the user. This reduces debuggability.
+- [Info] factory/cli.py:1255-1256 Consider adding a --quiet flag or integrating with Python logging. Document the logging behavior for production deployments.
+  description: The server startup message is printed via console.print() with Rich markup (line 1255), but there's no corresponding logging integration, quiet mode, or shutdown message. The uvicorn.run() call uses default logging. In production, this mixing of console output and server logging can be confusing. Also, there's no way to suppress the startup message (useful for automation/CI).
+
+[agent-review]   [CRITICAL] factory/cli.py:1248 Either move fastapi/uvicorn to extras_require in pyproject.toml and remove try/except from serve(), OR make them required base dependencies and remove try/except. Current inconsistency wastes resources and confuses users.
+[agent-review]   [CRITICAL] <unknown> Create a test suite covering server startup, /hello endpoint behavior, port validation edge cases, and graceful error handling for missing dependencies. Example: tests/test_server.py with pytest fixtures for FastAPI TestClient.
+[agent-review]   [WARNING] factory/server.py:8 Align app title and response message. Determine the correct brand name (Silverforge or Silverpond) and apply consistently across server.py.
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.314 +10:00] [progress] round:2 status [OK claude-code (69.0s)]
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.314 +10:00] [progress] agent:done round=2 id=claude-code
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.314 +10:00] [progress] round:2 done
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.314 +10:00] [progress] round:2/2 complete
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.314 +10:00] [progress] phase:done round-2
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.314 +10:00] [agent-chat] -> claude-code Normalize these findings into canonical issues (merge duplicates): [{"agent":"claude-code","severity":"Warning","confidence":"High","file":"factory/cli.py","span":{"start":1245,"en
+…
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.314 +10:00] [progress] phase:start finalize
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.314 +10:00] [agent-chat] -> claude-code Findings: [{"agent":"claude-code","severity":"Warning","confidence":"High","file":"factory/cli.py","span":{"start":1245,"end":1245},"message":"Add explicit validation for port to p
+…
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.315 +10:00] [progress] autofix:ready
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.315 +10:00] [run:e031d5f4-880d-4c38-8954-5c3ebbc9c572] [2026-05-29 14:38:34.315 +10:00] [progress] phase:done finalize
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572]
+[2026-05-29 14:38:34.316 +10:00] [report]
+{
+  "agent_failures": [],
+  "analysis_markdown": "## Local Diff Analysis\n\nAdded HTTP API support to Silverforge Factory by introducing a new `serve` CLI command powered by FastAPI and uvicorn. The implementation includes a minimal `/hello` endpoint that returns `{\"message\": \"Hello from Silverpond Factory\"}`. The server code is cleanly separated into `factory/server.py`, and the CLI command in `factory/cli.py` handles dynamic imports with graceful degradation if dependencies are missing. This transforms the tool from CLI-only to offering both CLI and HTTP API entry points, enabling integration with other services and external callers.\n\n### Suggested Review Focus\n- Dependency scope & optional installs: fastapi and uvicorn are now required dependencies for all users (added to base dependencies in pyproject.toml), but only needed if the `serve` command is used. Consider if these should be optional/extras dependencies to reduce installation size for CLI-only users.\n- Server lifecycle & error handling: No graceful shutdown handling, signal management, or logging configuration. The server runs with uvicorn defaults (single worker, no reload). Confirm this matches production requirements.\n- Security & endpoint coverage: The `/hello` endpoint has no authentication, rate limiting, or input validation. Verify this is acceptable for the current deployment model and document any planned security additions as the API grows.\n- Extensibility & future endpoints: Single endpoint pattern is established; verify the module structure (`factory.server` with FastAPI app) scales as more routes are added. Consider if request/response models should be in a separate types module.\n\n### Trade-offs\n- **Dependency bloat**: All users pay the fastapi/uvicorn installation cost even if they only use the CLI. Mitigation: move to optional dependencies or extras (`pip install factory[server]`).\n- **Single-threaded default**: uvicorn.run() without workers= defaults to single worker. Suitable for development but may bottleneck under concurrent load.\n- **No configuration file support**: Host/port are CLI-only; no config file, environment variable, or .env support for production deployments.\n- **Minimal error context**: ImportError provides helpful message but no logging of server startup, connection errors, or shutdown events.\n- **No API versioning**: `/hello` path has no version prefix; future breaking changes will be harder to manage.\n\n### Affected Modules\n- factory/cli.py — new `serve` command added, imports uvicorn/FastAPI dynamically\n- factory/server.py — **new module**, contains FastAPI app definition and /hello route\n- pyproject.toml — dependencies section extended with fastapi and uvicorn\n- CLI entry point — now serves dual role (CLI commands + HTTP server command)\n\n### Call Chain\n- `factory serve` → `cli.serve()` → dynamic import check → `uvicorn.run(server_app, host=host, port=port)` → FastAPI app receives HTTP requests → route handler `/hello` returns JSON\n\n### Design Patterns\n- **Separation of Concerns**: HTTP server logic isolated in `factory.server` module, decoupled from CLI in `factory.cli`\n- **Dynamic Imports with Graceful Degradation**: Late imports + exception handling avoids hard dependency at import time\n- **CLI Option Binding**: typer decorators map command-line args (--host, --port) to function parameters\n- **Singleton FastAPI App**: Single `app` instance in server.py serves all routes; pattern supports pytest fixtures and test overrides\n\n### Reviewer Checklist\n- Verify fastapi>=0.100 and uvicorn>=0.23 are the correct minimum versions (check release notes for security/feature requirements)\n- Confirm if dependencies should be moved to `extras_require` in pyproject.toml instead of base dependencies\n- Review ImportError message for clarity; suggest cross-reference to docs or setup guide if not obvious\n- Check if `console.print()` startup message (with [cyan] rich markup) is appropriate level; consider if this should be logged instead\n- Validate FastAPI app title/version match project metadata (currently hardcoded \"Silverforge Factory\", \"0.1.0\")\n- Confirm /hello endpoint is a placeholder or the final implementation; if placeholder, add TODO or issue reference\n- Test error path: confirm helpful error message appears when fastapi/uvicorn not installed\n- Review if uvicorn.run() should accept additional kwargs for production use (workers, log_level, etc.)\n- Verify no authentication/CORS/rate-limiting requirements for the /hello endpoint in intended deployment context\n",
+  "auto_fix": {
+    "explanation": "## Auto-Fix Summary: 5 Critical & Warning Issues Resolved\n\n### 1. **Port Validation (Warning → Fixed)**\n   - **Issue**: Port parameter accepted invalid values (-1, 0, 65536+)\n   - **Fix**: Added explicit validation `if not (1 <= port <= 65535)` with user-friendly error message before uvicorn.run()\n   - **Location**: `factory/cli.py`, serve() function\n\n### 2. **Dead-Code ImportError Handling (Critical → Fixed)**\n   - **Issue**: try/except ImportError was dead code since fastapi/uvicorn are hard dependencies in pyproject.toml\n   - **Fix**: Removed the try/except block and moved imports to normal location (after validation, before uvicorn.run()). Since they're hard deps, they will always be available after installation\n   - **Location**: `factory/cli.py`, serve() function\n\n### 3. **Inconsistent Product Name (Warning → Fixed)**\n   - **Issue**: Response message said \"Silverpond Factory\" but app title was \"Silverforge Factory\"\n   - **Fix**: Changed response message to \"Hello from Silverforge Factory\" to match app title\n   - **Location**: `factory/server.py`, line 14\n\n### 4. **Missing Error Handling (Warning → Fixed)**\n   - **Issue**: uvicorn.run() had no error handling for OSError (port already in use, permission denied, etc.)\n   - **Fix**: Wrapped uvicorn.run() in try/except OSError with user-friendly error message\n   - **Location**: `factory/cli.py`, serve() function\n\n### 5. **Missing Test Coverage (Critical → Fixed)**\n   - **Issue**: No pytest tests for new server functionality\n   - **Fix**: Created `tests/test_server.py` with 5 test cases covering:\n     - `/hello` endpoint returns correct JSON (\"Silverforge Factory\" message)\n     - Response has correct content-type (application/json)\n     - App title and version are set correctly\n     - Invalid HTTP methods (POST) return 405\n   - **Location**: New file `tests/test_server.py`\n\n### Summary of Changes\n- **factory/cli.py**: Enhanced serve() with port validation, normal imports, and uvicorn error handling\n- **factory/server.py**: Fixed product name in response message (Silverpond → Silverforge)\n- **tests/test_server.py**: New comprehensive test suite for server functionality\n- **pyproject.toml**: No changes needed (dependencies correctly declared as hard dependencies)",
+    "unified_diff": "diff --git a/factory/cli.py b/factory/cli.py\nindex 59d1509..f772bf7 100644\n--- a/factory/cli.py\n+++ b/factory/cli.py\n@@ -1237,6 +1237,31 @@ def slack_listen(\n         sm_client.close()\n \n \n+# ── serve ────────────────────────────────────────────────────────────────────\n+\n+@app.command()\n+def serve(\n+    host: str = typer.Option(\"127.0.0.1\", \"--host\", \"-h\", help=\"Host to bind to\"),\n+    port: int = typer.Option(8000, \"--port\", \"-p\", help=\"Port to bind to\"),\n+) -> None:\n+    \"\"\"Start the HTTP API server.\"\"\"\n+    # Validate port range\n+    if not (1 <= port <= 65535):\n+        typer.echo(f\"error: port must be between 1 and 65535, got {port}\", err=True)\n+        raise typer.Exit(1)\n+\n+    import uvicorn\n+    from factory.server import app as server_app\n+\n+    console.print(f\"Starting Silverforge Factory HTTP server at [cyan]http://{host}:{port}[/cyan]\")\n+    try:\n+        uvicorn.run(server_app, host=host, port=port)\n+    except OSError as e:\n+        typer.echo(f\"Failed to start server: {e}\", err=True)\n+        raise typer.Exit(1)\n+\n+\n # ── entry point ───────────────────────────────────────────────────────────\n \n if __name__ == \"__main__\":\ndiff --git a/factory/server.py b/factory/server.py\nindex 15ff18e..aaaabbbb 100644\n--- a/factory/server.py\n+++ b/factory/server.py\n@@ -11,4 +11,4 @@ app = FastAPI(title=\"Silverforge Factory\", version=\"0.1.0\")\n @app.get(\"/hello\")\n def hello():\n     \"\"\"Hello endpoint.\"\"\"\n-    return {\"message\": \"Hello from Silverpond Factory\"}\n+    return {\"message\": \"Hello from Silverforge Factory\"}\ndiff --git a/tests/test_server.py b/tests/test_server.py\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/tests/test_server.py\n@@ -0,0 +1,40 @@\n+\"\"\"Tests for the HTTP API server.\"\"\"\n+import pytest\n+from fastapi.testclient import TestClient\n+from factory.server import app\n+\n+\n+@pytest.fixture\n+def client():\n+    \"\"\"FastAPI TestClient fixture.\"\"\"\n+    return TestClient(app)\n+\n+\n+def test_hello_endpoint_returns_correct_json(client):\n+    \"\"\"Test that /hello returns the correct JSON response.\"\"\"\n+    response = client.get(\"/hello\")\n+    assert response.status_code == 200\n+    assert response.json() == {\"message\": \"Hello from Silverforge Factory\"}\n+\n+\n+def test_hello_endpoint_has_correct_content_type(client):\n+    \"\"\"Test that /hello returns application/json.\"\"\"\n+    response = client.get(\"/hello\")\n+    assert response.headers[\"content-type\"] == \"application/json\"\n+\n+\n+def test_app_title():\n+    \"\"\"Test that the app title is set correctly.\"\"\"\n+    assert app.title == \"Silverforge Factory\"\n+\n+\n+def test_app_version():\n+    \"\"\"Test that the app version is set correctly.\"\"\"\n+    assert app.version == \"0.1.0\"\n+\n+\n+def test_hello_endpoint_method_not_allowed(client):\n+    \"\"\"Test that POST to /hello is not allowed.\"\"\"\n+    response = client.post(\"/hello\")\n+    assert response.status_code == 405\n"
+  },
+  "consensus": [
+    {
+      "agreed_count": 1,
+      "file": "factory/cli.py",
+      "reached_quorum": true,
+      "severity": "Critical",
+      "span": {
+        "end": 1253,
+        "start": 1248
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/cli.py",
+      "reached_quorum": true,
+      "severity": "Warning",
+      "span": {
+        "end": 1245,
+        "start": 1245
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/server.py",
+      "reached_quorum": true,
+      "severity": "Warning",
+      "span": {
+        "end": 14,
+        "start": 8
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/cli.py",
+      "reached_quorum": true,
+      "severity": "Warning",
+      "span": {
+        "end": 1256,
+        "start": 1256
+      },
+      "total_agents": 1
+    }
+  ],
+  "final_action_plan": {
+    "prioritized_steps": [
+      "[Critical] No pytest tests for server functionality (<unknown>)",
+      "[Critical] No tests for new HTTP API functionality (<unknown>)",
+      "[Critical] Dead-code ImportError handling contradicts hard dependencies (factory/cli.py:1248)",
+      "[Critical] No pytest tests for server functionality (tests/test_server.py:1)",
+      "[Warning] Port parameter lacks validation for valid range (factory/cli.py:1245)",
+      "[Warning] No error handling for uvicorn.run() startup failures (factory/cli.py:1256)",
+      "[Warning] Inconsistent product name in response vs app title (factory/server.py:8)"
+    ],
+    "quick_wins": []
+  },
+  "final_analysis_markdown": "## Final Analysis\n\n- Issues: 7 (Critical: 4, Warning: 3, Info: 0)\n- Agent failures: 0\n\n### Top Issues\n- [Critical] No pytest tests for server functionality `<unknown>`\n- [Critical] No tests for new HTTP API functionality `<unknown>`\n- [Critical] Dead-code ImportError handling contradicts hard dependencies `factory/cli.py:1248`\n- [Critical] No pytest tests for server functionality `tests/test_server.py:1`\n- [Warning] Port parameter lacks validation for valid range `factory/cli.py:1245`\n- [Warning] No error handling for uvicorn.run() startup failures `factory/cli.py:1256`\n- [Warning] Inconsistent product name in response vs app title `factory/server.py:8`\n\n### Action Plan\n- [Critical] No pytest tests for server functionality (<unknown>)\n- [Critical] No tests for new HTTP API functionality (<unknown>)\n- [Critical] Dead-code ImportError handling contradicts hard dependencies (factory/cli.py:1248)\n- [Critical] No pytest tests for server functionality (tests/test_server.py:1)\n- [Warning] Port parameter lacks validation for valid range (factory/cli.py:1245)\n- [Warning] No error handling for uvicorn.run() startup failures (factory/cli.py:1256)\n- [Warning] Inconsistent product name in response vs app title (factory/server.py:8)\n",
+  "findings": [
+    {
+      "agent": "claude-code",
+      "category": "correctness",
+      "confidence": "High",
+      "description": "The port option accepts any integer but does not validate that it falls within the valid port range (1-65535). Users can pass invalid values like --port 99999 or --port -1, which will either be silently rejected by uvicorn with an unclear error or cause confusing behavior.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:1245",
+          "quote": "port: int = typer.Option(8000, \"--port\", \"-p\", help=\"Port to bind to\"),"
+        }
+      ],
+      "file": "factory/cli.py",
+      "message": "Add explicit validation for port to prevent user error. Typer's Option doesn't have min/max, so use a custom Typer validation or check inside the function before calling uvicorn.run().",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Warning",
+      "span": {
+        "end": 1245,
+        "start": 1245
+      },
+      "suggested_fix": "Add validation inside serve() before uvicorn.run(): `if not (1 <= port <= 65535): typer.echo(f'error: port must be between 1 and 65535, got {port}', err=True); raise typer.Exit(1)`",
+      "title": "Port parameter lacks validation for valid range"
+    },
+    {
+      "agent": "claude-code",
+      "category": "correctness",
+      "confidence": "High",
+      "description": "The serve() function wraps imports in try/except ImportError, but fastapi and uvicorn are declared as hard dependencies in pyproject.toml (lines 16-17). This means the ImportError branch will never execute after successful installation. The try/except creates a false sense of graceful degradation and contradicts the stated intent of optional imports.",
+      "evidence": [
+        {
+          "location": "pyproject.toml:16-17",
+          "quote": "\"fastapi>=0.100\",\n    \"uvicorn>=0.23\","
+        },
+        {
+          "location": "factory/cli.py:1248-1253",
+          "quote": "try:\n        import uvicorn\n        from factory.server import app as server_app\n    except ImportError:\n        typer.echo(\"fastapi and uvicorn are required for the serve command. Install with: pip install fastapi uvicorn\", err=True)\n        raise typer.Exit(1)"
+        }
+      ],
+      "file": "factory/cli.py",
+      "message": "Either (a) move fastapi/uvicorn to extras_require to make them truly optional, OR (b) remove the try/except and import normally since they are now required. The current state is internally inconsistent.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Critical",
+      "span": {
+        "end": 1253,
+        "start": 1248
+      },
+      "suggested_fix": "If serve is a core feature: remove the try/except and import normally at the top of cli.py. If serve is optional: move dependencies to [project.optional-dependencies] = {\"server\": [\"fastapi>=0.100\", \"uvicorn>=0.23\"]} and update the error message to 'pip install silverpond-factory[server]'.",
+      "title": "Dead-code ImportError handling contradicts hard dependencies"
+    },
+    {
+      "agent": "claude-code",
+      "category": "correctness",
+      "confidence": "High",
+      "description": "FastAPI app is initialized with title='Silverforge Factory', but the /hello endpoint response message returns 'Hello from Silverpond Factory'. This is a typo or copy-paste error that creates inconsistent branding.",
+      "evidence": [
+        {
+          "location": "factory/server.py:8",
+          "quote": "app = FastAPI(title=\"Silverforge Factory\", version=\"0.1.0\")"
+        },
+        {
+          "location": "factory/server.py:14",
+          "quote": "return {\"message\": \"Hello from Silverpond Factory\"}"
+        }
+      ],
+      "file": "factory/server.py",
+      "message": "Response message should match the app title. Either change line 14 to 'Hello from Silverforge Factory' or update the app title if 'Silverpond' is the correct name.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Warning",
+      "span": {
+        "end": 14,
+        "start": 8
+      },
+      "suggested_fix": "Change line 14 from `\"Hello from Silverpond Factory\"` to `\"Hello from Silverforge Factory\"` to match the app title on line 8.",
+      "title": "Inconsistent product name in response vs app title"
+    },
+    {
+      "agent": "claude-code",
+      "category": "error handling",
+      "confidence": "High",
+      "description": "The uvicorn.run() call is not wrapped in error handling. If the port is already in use, the user lacks permission to bind to the host, or the server fails to start, the raw exception traceback will be shown instead of a user-friendly error message.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:1256",
+          "quote": "uvicorn.run(server_app, host=host, port=port)"
+        }
+      ],
+      "file": "factory/cli.py",
+      "message": "Wrap uvicorn.run() in a try/except block to catch and handle common startup failures (OSError for port binding, etc.) with helpful messages.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Warning",
+      "span": {
+        "end": 1256,
+        "start": 1256
+      },
+      "suggested_fix": "Add try/except around uvicorn.run(): `try:\\n    uvicorn.run(...)\\nexcept OSError as e:\\n    typer.echo(f'Failed to start server: {e}', err=True)\\n    raise typer.Exit(1)`",
+      "title": "No error handling for uvicorn.run() startup failures"
+    },
+    {
+      "agent": "claude-code",
+      "category": "testing",
+      "confidence": "High",
+      "description": "The implementation adds a new serve command and /hello endpoint with no unit or integration tests. CLAUDE.md explicitly states 'No tests exist yet — the main way to verify changes is running a task end-to-end.' For a new API endpoint, this leaves basic functionality unverified: server startup, port binding, /hello response format, error handling, and invalid input cases.",
+      "evidence": [
+        {
+          "location": "CLAUDE.md",
+          "quote": "No tests exist yet — the main way to verify changes is running a task end-to-end."
+        }
+      ],
+      "file": null,
+      "message": "Add pytest tests covering: (1) server startup with default/custom host/port, (2) /hello endpoint returns correct JSON, (3) invalid port values (negative, >65535, port in use), (4) missing dependencies error path.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Critical",
+      "span": null,
+      "suggested_fix": "Create tests/test_server.py with fixtures for FastAPI TestClient and test cases covering startup, response validation, error conditions, and edge cases.",
+      "title": "No tests for new HTTP API functionality"
+    },
+    {
+      "agent": "claude-code",
+      "category": "testing",
+      "confidence": "High",
+      "description": "The diff introduces new HTTP server code but includes zero test coverage. Round 1 explicitly required tests for: (1) server startup with default/custom host/port, (2) /hello endpoint returns correct JSON, (3) invalid port values (negative, >65535, port in use), (4) missing dependencies error path. No test files appear in the diff. This is a Critical gap because the serve command has several failure modes (port binding, import errors, validation) that cannot be validated without tests.",
+      "evidence": [
+        {
+          "location": "diff",
+          "quote": "No test files added; only factory/cli.py, factory/server.py, and pyproject.toml modified"
+        }
+      ],
+      "file": null,
+      "message": "Create a test suite covering server startup, /hello endpoint behavior, port validation edge cases, and graceful error handling for missing dependencies. Example: tests/test_server.py with pytest fixtures for FastAPI TestClient.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 2,
+      "severity": "Critical",
+      "span": null,
+      "suggested_fix": "Add tests/test_server.py with: (1) test_hello_endpoint_returns_correct_json(), (2) test_serve_missing_dependencies(), (3) test_invalid_port_values() covering negative, 0, >65535, (4) test_port_in_use_error(), (5) test_custom_host_port_via_cli().",
+      "title": "No pytest tests for server functionality"
+    }
+  ],
+  "issues": [
+    {
+      "category": "testing",
+      "description": "The diff introduces new HTTP server code but includes zero test coverage. Round 1 explicitly required tests for: (1) server startup with default/custom host/port, (2) /hello endpoint returns correct JSON, (3) invalid port values (negative, >65535, port in use), (4) missing dependencies error path. No test files appear in the diff. This is a Critical gap because the serve command has several failure modes (port binding, import errors, validation) that cannot be validated without tests.",
+      "evidence": [
+        {
+          "location": "diff",
+          "quote": "No test files added; only factory/cli.py, factory/server.py, and pyproject.toml modified"
+        }
+      ],
+      "file": null,
+      "line_end": null,
+      "line_start": null,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Critical",
+      "suggested_fix": "Add tests/test_server.py with: (1) test_hello_endpoint_returns_correct_json(), (2) test_serve_missing_dependencies(), (3) test_invalid_port_values() covering negative, 0, >65535, (4) test_port_in_use_error(), (5) test_custom_host_port_via_cli().",
+      "title": "No pytest tests for server functionality"
+    },
+    {
+      "category": "testing",
+      "description": "The implementation adds a new serve command and /hello endpoint with no unit or integration tests. CLAUDE.md explicitly states 'No tests exist yet — the main way to verify changes is running a task end-to-end.' For a new API endpoint, this leaves basic functionality unverified: server startup, port binding, /hello response format, error handling, and invalid input cases.",
+      "evidence": [
+        {
+          "location": "CLAUDE.md",
+          "quote": "No tests exist yet — the main way to verify changes is running a task end-to-end."
+        }
+      ],
+      "file": null,
+      "line_end": null,
+      "line_start": null,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Critical",
+      "suggested_fix": "Create tests/test_server.py with fixtures for FastAPI TestClient and test cases covering startup, response validation, error conditions, and edge cases.",
+      "title": "No tests for new HTTP API functionality"
+    },
+    {
+      "category": "correctness",
+      "description": "The serve() function wraps imports in try/except ImportError, but fastapi and uvicorn are declared as hard dependencies in pyproject.toml (lines 16-17). This means the ImportError branch will never execute after successful installation. The try/except creates a false sense of graceful degradation and contradicts the stated intent of optional imports.",
+      "evidence": [
+        {
+          "location": "pyproject.toml:16-17",
+          "quote": "\"fastapi>=0.100\",\n    \"uvicorn>=0.23\","
+        },
+        {
+          "location": "factory/cli.py:1248-1253",
+          "quote": "try:\n        import uvicorn\n        from factory.server import app as server_app\n    except ImportError:\n        typer.echo(\"fastapi and uvicorn are required for the serve command. Install with: pip install fastapi uvicorn\", err=True)\n        raise typer.Exit(1)"
+        }
+      ],
+      "file": "factory/cli.py",
+      "line_end": 1253,
+      "line_start": 1248,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Critical",
+      "suggested_fix": "If serve is a core feature: remove the try/except and import normally at the top of cli.py. If serve is optional: move dependencies to [project.optional-dependencies] = {\"server\": [\"fastapi>=0.100\", \"uvicorn>=0.23\"]} and update the error message to 'pip install silverpond-factory[server]'.",
+      "title": "Dead-code ImportError handling contradicts hard dependencies"
+    },
+    {
+      "category": "testing",
+      "description": "The implementation adds a new serve command and /hello endpoint with zero test coverage. The codebase explicitly states 'No tests exist yet' but this new HTTP API has multiple failure modes (port binding, import errors, validation, startup) that cannot be validated without tests. Missing test coverage for: (1) server startup with default/custom host/port, (2) /hello endpoint returns correct JSON, (3) invalid port values (negative, 0, >65535), (4) port already in use error, (5) missing dependencies error path.",
+      "evidence": [],
+      "file": "tests/test_server.py",
+      "line_end": 1,
+      "line_start": 1,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Critical",
+      "suggested_fix": "Create tests/test_server.py with pytest fixtures for FastAPI TestClient and test cases: test_hello_endpoint_returns_correct_json(), test_invalid_port_values(), test_port_in_use_error(), test_custom_host_port_via_cli(), test_server_startup_with_defaults().",
+      "title": "No pytest tests for server functionality"
+    },
+    {
+      "category": "correctness",
+      "description": "The port option accepts any integer but does not validate that it falls within the valid port range (1-65535). Users can pass invalid values like --port 99999 or --port -1, which will either be silently rejected by uvicorn with an unclear error or cause confusing behavior.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:1245",
+          "quote": "port: int = typer.Option(8000, \"--port\", \"-p\", help=\"Port to bind to\"),"
+        }
+      ],
+      "file": "factory/cli.py",
+      "line_end": 1245,
+      "line_start": 1245,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "Add validation inside serve() before uvicorn.run(): `if not (1 <= port <= 65535): typer.echo(f'error: port must be between 1 and 65535, got {port}', err=True); raise typer.Exit(1)`",
+      "title": "Port parameter lacks validation for valid range"
+    },
+    {
+      "category": "error handling",
+      "description": "The uvicorn.run() call is not wrapped in error handling. If the port is already in use, the user lacks permission to bind to the host, or the server fails to start, the raw exception traceback will be shown instead of a user-friendly error message.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:1256",
+          "quote": "uvicorn.run(server_app, host=host, port=port)"
+        }
+      ],
+      "file": "factory/cli.py",
+      "line_end": 1256,
+      "line_start": 1256,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "Add try/except around uvicorn.run(): `try:\\n    uvicorn.run(...)\\nexcept OSError as e:\\n    typer.echo(f'Failed to start server: {e}', err=True)\\n    raise typer.Exit(1)`",
+      "title": "No error handling for uvicorn.run() startup failures"
+    },
+    {
+      "category": "correctness",
+      "description": "FastAPI app is initialized with title='Silverforge Factory', but the /hello endpoint response message returns 'Hello from Silverpond Factory'. This is a typo or copy-paste error that creates inconsistent branding.",
+      "evidence": [
+        {
+          "location": "factory/server.py:8",
+          "quote": "app = FastAPI(title=\"Silverforge Factory\", version=\"0.1.0\")"
+        },
+        {
+          "location": "factory/server.py:14",
+          "quote": "return {\"message\": \"Hello from Silverpond Factory\"}"
+        }
+      ],
+      "file": "factory/server.py",
+      "line_end": 14,
+      "line_start": 8,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "Change line 14 from `\"Hello from Silverpond Factory\"` to `\"Hello from Silverforge Factory\"` to match the app title on line 8.",
+      "title": "Inconsistent product name in response vs app title"
+    }
+  ],
+  "pr_comment_markdown": "## Crucible Review Summary\n\n- Issues: 7\n- Critical: 4, Warning: 3\n\n### Top Actions\n- [Critical] No pytest tests for server functionality (<unknown>)\n- [Critical] No tests for new HTTP API functionality (<unknown>)\n- [Critical] Dead-code ImportError handling contradicts hard dependencies (factory/cli.py:1248)\n- [Critical] No pytest tests for server functionality (tests/test_server.py:1)\n- [Warning] Port parameter lacks validation for valid range (factory/cli.py:1245)\n- [Warning] No error handling for uvicorn.run() startup failures (factory/cli.py:1256)\n- [Warning] Inconsistent product name in response vs app title (factory/server.py:8)\n\n### Notable Issues\n- **No pytest tests for server functionality** `<unknown>`: The diff introduces new HTTP server code but includes zero test coverage. Round 1 explicitly required tests for: (1) server startup with default/custom host/port, (2) /hello endpoint returns correct JSON, (3) invalid port values (negative, >65535, port in use), (4) missing dependencies error path. No test files appear in the diff. This is a Critical gap because the serve command has several failure modes (port binding, import errors, validation) that cannot be validated without tests.\n- **No tests for new HTTP API functionality** `<unknown>`: The implementation adds a new serve command and /hello endpoint with no unit or integration tests. CLAUDE.md explicitly states 'No tests exist yet — the main way to verify changes is running a task end-to-end.' For a new API endpoint, this leaves basic functionality unverified: server startup, port binding, /hello response format, error handling, and invalid input cases.\n- **Dead-code ImportError handling contradicts hard dependencies** `factory/cli.py:1248`: The serve() function wraps imports in try/except ImportError, but fastapi and uvicorn are declared as hard dependencies in pyproject.toml (lines 16-17). This means the ImportError branch will never execute after successful installation. The try/except creates a false sense of graceful degradation and contradicts the stated intent of optional imports.\n- **No pytest tests for server functionality** `tests/test_server.py:1`: The implementation adds a new serve command and /hello endpoint with zero test coverage. The codebase explicitly states 'No tests exist yet' but this new HTTP API has multiple failure modes (port binding, import errors, validation, startup) that cannot be validated without tests. Missing test coverage for: (1) server startup with default/custom host/port, (2) /hello endpoint returns correct JSON, (3) invalid port values (negative, 0, >65535), (4) port already in use error, (5) missing dependencies error path.\n- **Port parameter lacks validation for valid range** `factory/cli.py:1245`: The port option accepts any integer but does not validate that it falls within the valid port range (1-65535). Users can pass invalid values like --port 99999 or --port -1, which will either be silently rejected by uvicorn with an unclear error or cause confusing behavior.\n- **No error handling for uvicorn.run() startup failures** `factory/cli.py:1256`: The uvicorn.run() call is not wrapped in error handling. If the port is already in use, the user lacks permission to bind to the host, or the server fails to start, the raw exception traceback will be shown instead of a user-friendly error message.\n- **Inconsistent product name in response vs app title** `factory/server.py:8`: FastAPI app is initialized with title='Silverforge Factory', but the /hello endpoint response message returns 'Hello from Silverpond Factory'. This is a typo or copy-paste error that creates inconsistent branding.\n",
+  "pr_review_draft": {
+    "inline_comments": [
+      {
+        "body": "**Dead-code ImportError handling contradicts hard dependencies**\n\nThe serve() function wraps imports in try/except ImportError, but fastapi and uvicorn are declared as hard dependencies in pyproject.toml (lines 16-17). This means the ImportError branch will never execute after successful installation. The try/except creates a false sense of graceful degradation and contradicts the stated intent of optional imports.\n\nRaised by: claude-code\n\nSuggested fix: If serve is a core feature: remove the try/except and import normally at the top of cli.py. If serve is optional: move dependencies to [project.optional-dependencies] = {\"server\": [\"fastapi>=0.100\", \"uvicorn>=0.23\"]} and update the error message to 'pip install silverpond-factory[server]'.",
+        "category": "correctness",
+        "description": "The serve() function wraps imports in try/except ImportError, but fastapi and uvicorn are declared as hard dependencies in pyproject.toml (lines 16-17). This means the ImportError branch will never execute after successful installation. The try/except creates a false sense of graceful degradation and contradicts the stated intent of optional imports.",
+        "line": 1253,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/cli.py",
+        "severity": "Critical",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 1248,
+        "start_side": "Right",
+        "title": "Dead-code ImportError handling contradicts hard dependencies"
+      },
+      {
+        "body": "**Port parameter lacks validation for valid range**\n\nThe port option accepts any integer but does not validate that it falls within the valid port range (1-65535). Users can pass invalid values like --port 99999 or --port -1, which will either be silently rejected by uvicorn with an unclear error or cause confusing behavior.\n\nRaised by: claude-code\n\nSuggested fix: Add validation inside serve() before uvicorn.run(): `if not (1 <= port <= 65535): typer.echo(f'error: port must be between 1 and 65535, got {port}', err=True); raise typer.Exit(1)`",
+        "category": "correctness",
+        "description": "The port option accepts any integer but does not validate that it falls within the valid port range (1-65535). Users can pass invalid values like --port 99999 or --port -1, which will either be silently rejected by uvicorn with an unclear error or cause confusing behavior.",
+        "line": 1245,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/cli.py",
+        "severity": "Warning",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "Port parameter lacks validation for valid range"
+      },
+      {
+        "body": "**No error handling for uvicorn.run() startup failures**\n\nThe uvicorn.run() call is not wrapped in error handling. If the port is already in use, the user lacks permission to bind to the host, or the server fails to start, the raw exception traceback will be shown instead of a user-friendly error message.\n\nRaised by: claude-code\n\nSuggested fix: Add try/except around uvicorn.run(): `try:\\n    uvicorn.run(...)\\nexcept OSError as e:\\n    typer.echo(f'Failed to start server: {e}', err=True)\\n    raise typer.Exit(1)`",
+        "category": "error handling",
+        "description": "The uvicorn.run() call is not wrapped in error handling. If the port is already in use, the user lacks permission to bind to the host, or the server fails to start, the raw exception traceback will be shown instead of a user-friendly error message.",
+        "line": 1256,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/cli.py",
+        "severity": "Warning",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "No error handling for uvicorn.run() startup failures"
+      },
+      {
+        "body": "**Inconsistent product name in response vs app title**\n\nFastAPI app is initialized with title='Silverforge Factory', but the /hello endpoint response message returns 'Hello from Silverpond Factory'. This is a typo or copy-paste error that creates inconsistent branding.\n\nRaised by: claude-code\n\nSuggested fix: Change line 14 from `\"Hello from Silverpond Factory\"` to `\"Hello from Silverforge Factory\"` to match the app title on line 8.",
+        "category": "correctness",
+        "description": "FastAPI app is initialized with title='Silverforge Factory', but the /hello endpoint response message returns 'Hello from Silverpond Factory'. This is a typo or copy-paste error that creates inconsistent branding.",
+        "line": 14,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/server.py",
+        "severity": "Warning",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 8,
+        "start_side": "Right",
+        "title": "Inconsistent product name in response vs app title"
+      }
+    ],
+    "overview_comment": {
+      "body": "## Crucible Review Summary\n\n- Issues: 7\n- Critical: 4, Warning: 3\n\n### Top Actions\n- [Critical] No pytest tests for server functionality (<unknown>)\n- [Critical] No tests for new HTTP API functionality (<unknown>)\n- [Critical] Dead-code ImportError handling contradicts hard dependencies (factory/cli.py:1248)\n- [Critical] No pytest tests for server functionality (tests/test_server.py:1)\n- [Warning] Port parameter lacks validation for valid range (factory/cli.py:1245)\n- [Warning] No error handling for uvicorn.run() startup failures (factory/cli.py:1256)\n- [Warning] Inconsistent product name in response vs app title (factory/server.py:8)\n\n### Notable Issues\n- **No pytest tests for server functionality** `<unknown>`: The diff introduces new HTTP server code but includes zero test coverage. Round 1 explicitly required tests for: (1) server startup with default/custom host/port, (2) /hello endpoint returns correct JSON, (3) invalid port values (negative, >65535, port in use), (4) missing dependencies error path. No test files appear in the diff. This is a Critical gap because the serve command has several failure modes (port binding, import errors, validation) that cannot be validated without tests.\n- **No tests for new HTTP API functionality** `<unknown>`: The implementation adds a new serve command and /hello endpoint with no unit or integration tests. CLAUDE.md explicitly states 'No tests exist yet — the main way to verify changes is running a task end-to-end.' For a new API endpoint, this leaves basic functionality unverified: server startup, port binding, /hello response format, error handling, and invalid input cases.\n- **Dead-code ImportError handling contradicts hard dependencies** `factory/cli.py:1248`: The serve() function wraps imports in try/except ImportError, but fastapi and uvicorn are declared as hard dependencies in pyproject.toml (lines 16-17). This means the ImportError branch will never execute after successful installation. The try/except creates a false sense of graceful degradation and contradicts the stated intent of optional imports.\n- **No pytest tests for server functionality** `tests/test_server.py:1`: The implementation adds a new serve command and /hello endpoint with zero test coverage. The codebase explicitly states 'No tests exist yet' but this new HTTP API has multiple failure modes (port binding, import errors, validation, startup) that cannot be validated without tests. Missing test coverage for: (1) server startup with default/custom host/port, (2) /hello endpoint returns correct JSON, (3) invalid port values (negative, 0, >65535), (4) port already in use error, (5) missing dependencies error path.\n- **Port parameter lacks validation for valid range** `factory/cli.py:1245`: The port option accepts any integer but does not validate that it falls within the valid port range (1-65535). Users can pass invalid values like --port 99999 or --port -1, which will either be silently rejected by uvicorn with an unclear error or cause confusing behavior.\n- **No error handling for uvicorn.run() startup failures** `factory/cli.py:1256`: The uvicorn.run() call is not wrapped in error handling. If the port is already in use, the user lacks permission to bind to the host, or the server fails to start, the raw exception traceback will be shown instead of a user-friendly error message.\n- **Inconsistent product name in response vs app title** `factory/server.py:8`: FastAPI app is initialized with title='Silverforge Factory', but the /hello endpoint response message returns 'Hello from Silverpond Factory'. This is a typo or copy-paste error that creates inconsistent branding.\n"
+    },
+    "overview_only_comments": [
+      {
+        "body": "**No pytest tests for server functionality**\n\nThe diff introduces new HTTP server code but includes zero test coverage. Round 1 explicitly required tests for: (1) server startup with default/custom host/port, (2) /hello endpoint returns correct JSON, (3) invalid port values (negative, >65535, port in use), (4) missing dependencies error path. No test files appear in the diff. This is a Critical gap because the serve command has several failure modes (port binding, import errors, validation) that cannot be validated without tests.\n\nRaised by: claude-code\n\nSuggested fix: Add tests/test_server.py with: (1) test_hello_endpoint_returns_correct_json(), (2) test_serve_missing_dependencies(), (3) test_invalid_port_values() covering negative, 0, >65535, (4) test_port_in_use_error(), (5) test_custom_host_port_via_cli().",
+        "category": "testing",
+        "description": "The diff introduces new HTTP server code but includes zero test coverage. Round 1 explicitly required tests for: (1) server startup with default/custom host/port, (2) /hello endpoint returns correct JSON, (3) invalid port values (negative, >65535, port in use), (4) missing dependencies error path. No test files appear in the diff. This is a Critical gap because the serve command has several failure modes (port binding, import errors, validation) that cannot be validated without tests.",
+        "line": null,
+        "mapping_note": "Issue could not be mapped to a changed diff hunk",
+        "mapping_status": "OverviewOnly",
+        "path": null,
+        "severity": "Critical",
+        "side": null,
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "No pytest tests for server functionality"
+      },
+      {
+        "body": "**No tests for new HTTP API functionality**\n\nThe implementation adds a new serve command and /hello endpoint with no unit or integration tests. CLAUDE.md explicitly states 'No tests exist yet — the main way to verify changes is running a task end-to-end.' For a new API endpoint, this leaves basic functionality unverified: server startup, port binding, /hello response format, error handling, and invalid input cases.\n\nRaised by: claude-code\n\nSuggested fix: Create tests/test_server.py with fixtures for FastAPI TestClient and test cases covering startup, response validation, error conditions, and edge cases.",
+        "category": "testing",
+        "description": "The implementation adds a new serve command and /hello endpoint with no unit or integration tests. CLAUDE.md explicitly states 'No tests exist yet — the main way to verify changes is running a task end-to-end.' For a new API endpoint, this leaves basic functionality unverified: server startup, port binding, /hello response format, error handling, and invalid input cases.",
+        "line": null,
+        "mapping_note": "Issue could not be mapped to a changed diff hunk",
+        "mapping_status": "OverviewOnly",
+        "path": null,
+        "severity": "Critical",
+        "side": null,
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "No tests for new HTTP API functionality"
+      },
+      {
+        "body": "**No pytest tests for server functionality**\n\nThe implementation adds a new serve command and /hello endpoint with zero test coverage. The codebase explicitly states 'No tests exist yet' but this new HTTP API has multiple failure modes (port binding, import errors, validation, startup) that cannot be validated without tests. Missing test coverage for: (1) server startup with default/custom host/port, (2) /hello endpoint returns correct JSON, (3) invalid port values (negative, 0, >65535), (4) port already in use error, (5) missing dependencies error path.\n\nRaised by: claude-code\n\nSuggested fix: Create tests/test_server.py with pytest fixtures for FastAPI TestClient and test cases: test_hello_endpoint_returns_correct_json(), test_invalid_port_values(), test_port_in_use_error(), test_custom_host_port_via_cli(), test_server_startup_with_defaults().",
+        "category": "testing",
+        "description": "The implementation adds a new serve command and /hello endpoint with zero test coverage. The codebase explicitly states 'No tests exist yet' but this new HTTP API has multiple failure modes (port binding, import errors, validation, startup) that cannot be validated without tests. Missing test coverage for: (1) server startup with default/custom host/port, (2) /hello endpoint returns correct JSON, (3) invalid port values (negative, 0, >65535), (4) port already in use error, (5) missing dependencies error path.",
+        "line": null,
+        "mapping_note": "Issue could not be mapped to a changed diff hunk",
+        "mapping_status": "OverviewOnly",
+        "path": "tests/test_server.py",
+        "severity": "Critical",
+        "side": null,
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "No pytest tests for server functionality"
+      }
+    ]
+  },
+  "run_id": "e031d5f4-880d-4c38-8954-5c3ebbc9c572",
+  "session_id": "e031d5f4-880d-4c38-8954-5c3ebbc9c572",
+  "system_context_markdown": "### System Context\n- Changed files: 3\n- Reference snippets: 0\n- History commits: 20\n- Docs snippets: 1\n- Deterministic prechecks: 2\n- Affected files:\n  - factory/cli.py\n  - factory/server.py\n  - pyproject.toml\n- Precheck results:\n  - untangle-analyze-report [Fail] error: unexpected argument '.' found\n\nUsage: untangle analyze [OPTIONS] <PATH>\n\nFor more information, try '--help'.\n  - untangle-quality-report [Fail] error: unrecognized subcommand 'quality'\n\nUsage: untangle <COMMAND>\n\nFor more information, try '--help'.\n",
+  "verdict": "Block"
+}
+[run:e031d5f4-880d-4c38-8954-5c3ebbc9c572]
+[2026-05-29 14:38:34.316 +10:00] [final-analysis]
+## Final Analysis
+
+- Issues: 7 (Critical: 4, Warning: 3, Info: 0)
+- Agent failures: 0
+
+### Top Issues
+- [Critical] No pytest tests for server functionality `<unknown>`
+- [Critical] No tests for new HTTP API functionality `<unknown>`
+- [Critical] Dead-code ImportError handling contradicts hard dependencies `factory/cli.py:1248`
+- [Critical] No pytest tests for server functionality `tests/test_server.py:1`
+- [Warning] Port parameter lacks validation for valid range `factory/cli.py:1245`
+- [Warning] No error handling for uvicorn.run() startup failures `factory/cli.py:1256`
+- [Warning] Inconsistent product name in response vs app title `factory/server.py:8`
+
+### Action Plan
+- [Critical] No pytest tests for server functionality (<unknown>)
+- [Critical] No tests for new HTTP API functionality (<unknown>)
+- [Critical] Dead-code ImportError handling contradicts hard dependencies (factory/cli.py:1248)
+- [Critical] No pytest tests for server functionality (tests/test_server.py:1)
+- [Warning] Port parameter lacks validation for valid range (factory/cli.py:1245)
+- [Warning] No error handling for uvicorn.run() startup failures (factory/cli.py:1256)
+- [Warning] Inconsistent product name in response vs app title (factory/server.py:8)
+
+[2026-05-29 14:38:34.316 +10:00] [pr-comment]
+## Crucible Review Summary
+
+- Issues: 7
+- Critical: 4, Warning: 3
+
+### Top Actions
+- [Critical] No pytest tests for server functionality (<unknown>)
+- [Critical] No tests for new HTTP API functionality (<unknown>)
+- [Critical] Dead-code ImportError handling contradicts hard dependencies (factory/cli.py:1248)
+- [Critical] No pytest tests for server functionality (tests/test_server.py:1)
+- [Warning] Port parameter lacks validation for valid range (factory/cli.py:1245)
+- [Warning] No error handling for uvicorn.run() startup failures (factory/cli.py:1256)
+- [Warning] Inconsistent product name in response vs app title (factory/server.py:8)
+
+### Notable Issues
+- **No pytest tests for server functionality** `<unknown>`: The diff introduces new HTTP server code but includes zero test coverage. Round 1 explicitly required tests for: (1) server startup with default/custom host/port, (2) /hello endpoint returns correct JSON, (3) invalid port values (negative, >65535, port in use), (4) missing dependencies error path. No test files appear in the diff. This is a Critical gap because the serve command has several failure modes (port binding, import errors, validation) that cannot be validated without tests.
+- **No tests for new HTTP API functionality** `<unknown>`: The implementation adds a new serve command and /hello endpoint with no unit or integration tests. CLAUDE.md explicitly states 'No tests exist yet — the main way to verify changes is running a task end-to-end.' For a new API endpoint, this leaves basic functionality unverified: server startup, port binding, /hello response format, error handling, and invalid input cases.
+- **Dead-code ImportError handling contradicts hard dependencies** `factory/cli.py:1248`: The serve() function wraps imports in try/except ImportError, but fastapi and uvicorn are declared as hard dependencies in pyproject.toml (lines 16-17). This means the ImportError branch will never execute after successful installation. The try/except creates a false sense of graceful degradation and contradicts the stated intent of optional imports.
+- **No pytest tests for server functionality** `tests/test_server.py:1`: The implementation adds a new serve command and /hello endpoint with zero test coverage. The codebase explicitly states 'No tests exist yet' but this new HTTP API has multiple failure modes (port binding, import errors, validation, startup) that cannot be validated without tests. Missing test coverage for: (1) server startup with default/custom host/port, (2) /hello endpoint returns correct JSON, (3) invalid port values (negative, 0, >65535), (4) port already in use error, (5) missing dependencies error path.
+- **Port parameter lacks validation for valid range** `factory/cli.py:1245`: The port option accepts any integer but does not validate that it falls within the valid port range (1-65535). Users can pass invalid values like --port 99999 or --port -1, which will either be silently rejected by uvicorn with an unclear error or cause confusing behavior.
+- **No error handling for uvicorn.run() startup failures** `factory/cli.py:1256`: The uvicorn.run() call is not wrapped in error handling. If the port is already in use, the user lacks permission to bind to the host, or the server fails to start, the raw exception traceback will be shown instead of a user-friendly error message.
+- **Inconsistent product name in response vs app title** `factory/server.py:8`: FastAPI app is initialized with title='Silverforge Factory', but the /hello endpoint response message returns 'Hello from Silverpond Factory'. This is a typo or copy-paste error that creates inconsistent branding.
+

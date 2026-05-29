@@ -1245,12 +1245,12 @@ def serve(
     port: int = typer.Option(8000, "--port", "-p", help="Port to bind to"),
 ) -> None:
     """Start the HTTP API server."""
-    try:
-        import uvicorn
-        from factory.server import app as server_app
-    except ImportError:
-        typer.echo("fastapi and uvicorn are required for the serve command. Install with: pip install fastapi uvicorn", err=True)
+    if port < 0 or port > 65535:
+        typer.echo(f"Port must be between 0 and 65535, got {port}", err=True)
         raise typer.Exit(1)
+
+    import uvicorn
+    from factory.server import app as server_app
 
     console.print(f"Starting Silverforge Factory HTTP server at [cyan]http://{host}:{port}[/cyan]")
     uvicorn.run(server_app, host=host, port=port)

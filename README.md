@@ -37,38 +37,44 @@ Before you start, ask your admin to set up:
 
 ## Setup
 
-### 1. Install
+There are two ways to install: via Nix (recommended, no Python environment needed) or via pip.
+
+### Option A: Nix install (recommended)
+
+```bash
+nix profile install github:silverpond/silverforge/master
+factory setup
+```
+
+The setup wizard asks for your worker username, SSH key, GitHub token, and Slack tokens — everything gets saved to `~/.config/factory/.env` automatically.
+
+> **PATH note:** If `which factory` doesn't point to `~/.nix-profile/bin/factory`, add `export PATH="$HOME/.nix-profile/bin:$PATH"` to your `~/.zshrc`.
+
+---
+
+### Option B: pip install (for development)
 
 ```bash
 git clone https://github.com/silverpond/silverforge
 cd silverforge
 pip install -e .
-```
-
-### 2. Fill in your `.env`
-
-```bash
 cp .env.example .env
 ```
 
 Then edit `.env` and add:
 
-| Variable | Where to get it |
-|---|---|
-| `FACTORY_GITHUB_TOKEN` | Create at https://github.com/settings/tokens — scopes: `repo`, `issues`, `pull_requests`, `workflows` |
-| `SLACK_BOT_TOKEN` | Ask your admin — from the shared Slack app at api.slack.com/apps |
-| `SLACK_APP_TOKEN` | Ask your admin — same Slack app, under "App-Level Tokens" |
+| Variable                  | Where to get it                                                                                            |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `FACTORY_GITHUB_TOKEN`    | Create at https://github.com/settings/tokens — scopes: `repo`, `issues`, `pull_requests`, `workflows`      |
+| `SLACK_BOT_TOKEN`         | Ask your admin — from the shared Slack app at api.slack.com/apps                                           |
+| `SLACK_APP_TOKEN`         | Ask your admin — same Slack app, under "App-Level Tokens"                                                  |
 | `SLACK_DEFAULT_REVIEWERS` | Comma-separated Slack member IDs to invite to each run's channel (find yours at slack.com/account/profile) |
 
-Slack is optional — leave those blank to skip notifications.
-
-### 3. Run the setup wizard
+Then run:
 
 ```bash
 factory setup
 ```
-
-This asks for your username on the worker machine, your SSH key, writes your GitHub token to the worker so clone/push works, and optionally creates the standard factory labels on your repo.
 
 > **Note:** `workers.yaml` is already configured for the Silverpond ares machine. Your personal SSH key and username stay in `.env` (gitignored) — not in the repo.
 
@@ -101,6 +107,9 @@ factory run "Add input validation" --repo owner/my-repo --agent claude --agent c
 # Control how many Crucible review rounds run (0 = skip Crucible)
 factory run "Add a loading spinner" --repo owner/my-repo --crucible-rounds 2
 
+# Control which model crucible uses
+factory run "Add a loading spinner" --repo owner/my-repo --crucible-rounds 1 --crucible-model claude-haiku-4-5-20251001
+
 # If you're inside a git repo, --repo is inferred automatically
 cd ~/projects/my-repo
 factory run "Add a health check endpoint"
@@ -131,6 +140,7 @@ factory poll owner/my-repo --max-concurrency 2
 ```
 
 Individual issues can override model/effort via labels:
+
 - `factory:model:opus` — run that issue with Opus
 - `factory:effort:low` — run with low effort
 
@@ -210,7 +220,7 @@ YAML files let you configure the full pipeline — eval commands, crucible round
 ## Pipeline
 
 ```
-worktree → agent → eval → crucible (N rounds) → evaluator → pause-and-review → PR
+worktree → agent → crucible (N rounds) → evaluator → pause-and-review → PR
 ```
 
 Any stage that fails sends feedback back to the agent for another iteration (up to `max_iterations`, default 3). Stages not configured are skipped.

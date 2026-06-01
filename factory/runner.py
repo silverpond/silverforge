@@ -8,6 +8,7 @@ Pipeline:
 """
 from __future__ import annotations
 
+import base64
 import os
 import shlex
 import subprocess
@@ -235,6 +236,7 @@ def watch_task(
 
             needs_new_session = False  # True only when switching agents (rate limit)
             feedback_message = ""
+            crucible_feedback: str = ""
             crucible_rounds_used = 0  # tracks how many crucible feedback cycles have been used
             crucible_base: str | None = None  # updated to HEAD after each round to limit diff size
             max_iterations = (
@@ -503,6 +505,10 @@ def watch_task(
                             _log(run_id, "  state=human_review (pause-and-review: not approved)")
                             return run
                     _maybe_open_pr(run, task, worker, repo, issue_number, workers_path, slack_client)
+                    eval_fail_str = "\n".join(r.stdout + r.stderr for r in results if r.exit_code != 0)
+                    _generate_lesson(run_id, task, client, working_dir, passed=True,
+                                     iteration=iteration, crucible_feedback=crucible_feedback or "",
+                                     eval_failures=eval_fail_str, shell_init=worker.shell_init)
                     return run
 
                 if iteration < max_iterations:
@@ -515,7 +521,10 @@ def watch_task(
             _log(run_id, f"state=failed  (exhausted {max_iterations} iterations)")
             _post_results(slack_client, run, run.eval_results or [], passed=False)
             _maybe_comment_failure(run, repo, issue_number)
-            _update_repo_context(run_id, task, client, working_dir, passed=False)
+            eval_fail_str = "\n".join(r.stdout + r.stderr for r in (run.eval_results or []) if r.exit_code != 0)
+            _generate_lesson(run_id, task, client, working_dir, passed=False,
+                             iteration=max_iterations, crucible_feedback=crucible_feedback or "",
+                             eval_failures=eval_fail_str, shell_init=worker.shell_init)
             sess.kill_session(client, session_name)
             if run.slack_thread_ts:
                 sess.unregister_run(client, run.slack_thread_ts)
@@ -983,44 +992,67 @@ def _repo_slug_for_task(task: TaskDefinition) -> Optional[str]:
     )
 
 
-def _build_prompt(task: TaskDefinition) -> str:
-    """Build the full task prompt: repo context + constitution + coder prompt."""
-    assert task.coder is not None
-    prompt = _prepend_constitution(task.coder.prompt)
-    slug = _repo_slug_for_task(task)
-    if slug:
-        context = store.load_repo_context(slug)
-        if context.strip():
-            prompt = f"{context.rstrip()}\n\n---\n\n{prompt}"
-    return prompt
+_LESSON_PROMPT = """\
+A coding agent just completed a run on this repository. Generate one specific lesson \
+for future agents working in this codebase.
+
+Task: {task}
+Outcome: {outcome}
+Crucible code review issues: {crucible}
+Eval/test failures: {eval_failures}
+Agent completion notes: {completion}
+
+Write exactly ONE sentence — a specific, actionable rule that will help future agents \
+avoid mistakes or follow the right patterns in THIS repo. \
+Start with Always, Never, When, or Avoid.\
+"""
 
 
-def _update_repo_context(
+def _generate_lesson(
     run_id: str,
     task: TaskDefinition,
     client: "SSHClient",
     working_dir: str,
     passed: bool,
+    iteration: int,
+    crucible_feedback: str,
+    eval_failures: str,
+    shell_init: str,
 ) -> None:
-    """Read completion.md from the worker and append it to the local repo context file."""
-    slug = _repo_slug_for_task(task)
-    if not slug:
+    """Generate a Reflexion-style lesson via haiku and store it on the worker."""
+    if task.repo is None:
         return
+
     completion = client.run(
-        f"cat {working_dir}/.factory/completion.md 2>/dev/null || true",
+        f"cat {shlex.quote(working_dir)}/.factory/completion.md 2>/dev/null || true",
         timeout=10,
     ).stdout.strip()
-    if not completion:
-        return
-    from datetime import datetime as _dt
-    date_str = _dt.utcnow().strftime("%Y-%m-%d")
-    status_str = "passed" if passed else "failed"
-    entry = (
-        f"### Run: {task.name} ({run_id}) — {status_str} — {date_str}\n"
-        f"{completion}"
+
+    outcome = f"{'passed' if passed else 'failed'} after {iteration} iteration(s)"
+    prompt = _LESSON_PROMPT.format(
+        task=task.name,
+        outcome=outcome,
+        crucible=crucible_feedback[:500] if crucible_feedback else "none",
+        eval_failures=eval_failures[:500] if eval_failures else "none",
+        completion=completion[:500] if completion else "none",
     )
-    store.append_to_repo_context(slug, entry)
-    _log(run_id, f"  updated repo context: contexts/{slug}.md")
+
+    init_prefix = f"{shell_init} && " if shell_init else ""
+    encoded = base64.b64encode(prompt.encode()).decode()
+    result = client.run(
+        f"{init_prefix}claude -p --dangerously-skip-permissions "
+        f"--model claude-haiku-4-5-20251001 "
+        f'"$(echo \'{encoded}\' | base64 -d)" 2>/dev/null',
+        timeout=60,
+    )
+    lesson = result.stdout.strip()
+    if not lesson:
+        _log(run_id, "  reflexion: lesson generation returned empty response")
+        return
+
+    _log(run_id, f"  reflexion lesson: {lesson[:120]}")
+    from factory.repo_inspector import append_repo_lesson
+    append_repo_lesson(client, task.repo.path, lesson)
 
 
 def _allocate_port(worker: WorkerConfig) -> int:

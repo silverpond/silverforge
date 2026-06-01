@@ -22,21 +22,47 @@ def test_serve_invalid_port_too_high():
     assert "Port must be between 0 and 65535" in result.stdout
 
 
-def test_serve_valid_port_zero():
+def test_serve_valid_port_zero(monkeypatch):
     """Test that port 0 is accepted (auto-select)."""
-    # We can't actually test the server start, but we can verify it doesn't reject the port
-    # This would hang without a timeout, so we just check that the command structure is valid
-    pass
+    import factory.cli as cli_module
+
+    # Mock uvicorn.run to prevent actual server startup
+    def mock_run(*args, **kwargs):
+        pass
+
+    monkeypatch.setattr("uvicorn.run", mock_run)
+
+    result = runner.invoke(app, ["serve", "--port", "0"])
+    assert result.exit_code == 0
 
 
-def test_serve_valid_port_max():
+def test_serve_valid_port_max(monkeypatch):
     """Test that port 65535 is accepted."""
-    # Similar to above, we're just checking the validation logic
-    pass
+    import factory.cli as cli_module
+
+    # Mock uvicorn.run to prevent actual server startup
+    def mock_run(*args, **kwargs):
+        pass
+
+    monkeypatch.setattr("uvicorn.run", mock_run)
+
+    result = runner.invoke(app, ["serve", "--port", "65535"])
+    assert result.exit_code == 0
 
 
-def test_serve_default_host_and_port():
+def test_serve_default_host_and_port(monkeypatch):
     """Test that serve command has correct defaults."""
-    # The defaults are 127.0.0.1:8000
-    # We can't test server startup without special handling
-    pass
+    import factory.cli as cli_module
+
+    # Mock uvicorn.run to capture the arguments
+    captured_args = {}
+
+    def mock_run(*args, **kwargs):
+        captured_args.update(kwargs)
+
+    monkeypatch.setattr("uvicorn.run", mock_run)
+
+    result = runner.invoke(app, ["serve"])
+    assert result.exit_code == 0
+    assert captured_args.get("host") == "127.0.0.1"
+    assert captured_args.get("port") == 8000

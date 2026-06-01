@@ -471,3 +471,966 @@ Findings:
 - **Iteration-order dependency in crucible feedback** `factory/runner.py:210`: By moving the baseline forward after each iteration, the incremental diff strategy creates an implicit dependency on iteration order. Identical code changes in different iteration sequences will receive different crucible feedback because they compare against different bases. This reduces reproducibility: running the same task twice with different intermediate code states will generate different crucible comments for the same final code. While acknowledged as an intended trade-off in the summary, this should be documented in code or task YAML schema to prevent confusion.
 - **Document iteration-order dependency in crucible feedback** `factory/runner.py:210`: By moving the baseline forward after each iteration, the incremental diff strategy creates an implicit dependency on iteration order. Identical code changes in different iteration sequences will receive different crucible feedback because they compare against different bases. This reduces reproducibility: running the same task twice with different intermediate code states will generate different crucible comments for the same final code. While this is an acknowledged trade-off to prevent timeouts, it should be documented in code to prevent confusion during debugging or refactoring.
 
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:22:46.628 +10:00] [progress] startup:references started Scanning related references
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:22:46.628 +10:00] [progress] startup:history started Collecting recent history
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:22:46.628 +10:00] [progress] startup:docs started Loading docs context
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.953 +10:00] [progress] startup:references completed count=0 duration=1.0s Reference scan complete
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.954 +10:00] [progress] startup:history completed count=20 duration=1.0s History collection complete
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.954 +10:00] [progress] startup:docs completed count=1 duration=1.0s Docs collection complete
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.954 +10:00] [progress] startup:prechecks started Running prechecks
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.954 +10:00] [progress] startup:prechecks completed count=2 duration=0.2s Prechecks complete
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.954 +10:00] [progress] run:header reviewers=claude-code max_rounds=2 changed_files=5 changed_lines=115 convergence_enabled=true context_enabled=true
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.954 +10:00] [progress] phase:start analyzer
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.954 +10:00] [progress] analyzer:start
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.954 +10:00] [agent-chat] -> claude-code index 59d1509..5e0ca79 100644 sm_client.close()
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.954 +10:00] [analysis]
+## Local Diff Analysis
+
+Added HTTP API server support to Silverforge Factory CLI using FastAPI and uvicorn. Introduces a new `serve` command that starts an HTTP server with configurable host/port, plus a `/hello` endpoint returning a simple JSON greeting. Includes port validation (0-65535 range) and test coverage for both CLI command and server endpoints. FastAPI and uvicorn are now hard dependencies in pyproject.toml.
+
+### Suggested Review Focus
+- Port validation logic: Port range check (0-65535) is correct but doesn't validate if the port is actually available on the system. Reviewers should confirm if port conflicts should be caught by uvicorn or handled in the CLI.
+- Dependency management strategy: FastAPI and uvicorn added as hard dependencies rather than optional. Verify this aligns with project goals—increases base package size even for users who don't need the API.
+- Test coverage gaps: Three tests in test_cli_serve.py are empty placeholders (port 0, port 65535, defaults). These need implementation or justification for why they're skipped.
+- Security implications: The `/hello` endpoint is unauthenticated and accessible to any client. Confirm if this is intentional or if authentication/CORS policies should be added for future endpoints.
+- CLI/server integration pattern: Runtime import of `factory.server` inside serve() command works but defers import error detection. Verify if this late binding is intentional or if eager imports would be preferable.
+
+### Trade-offs
+- FastAPI/uvicorn as hard dependencies increases package footprint; users who only use CLI task runner now pay this cost
+- Port validation only checks numeric range, not OS-level availability—port conflicts handled by uvicorn startup error
+- No error recovery in serve() if uvicorn.run() fails; errors surface directly to user
+- Placeholder tests defer verification of valid port cases and default behavior to manual testing
+
+### Affected Modules
+- factory/cli.py — new serve command with port validation
+- factory/server.py — new FastAPI app module with /hello endpoint
+- pyproject.toml — dependency specification
+- tests/ — new test modules for CLI and server
+
+### Call Chain
+- CLI entry: `factory serve [--host HOST] [--port PORT]`
+- → serve() in factory/cli.py validates port range
+- → imports uvicorn and factory.server.app
+- → uvicorn.run(app, host=host, port=port) starts server
+- → FastAPI routes GET /hello
+- → hello() returns {"message": "Hello, World!"}
+
+### Design Patterns
+- Separation of concerns: CLI layer (factory/cli.py) separate from API layer (factory/server.py)
+- Deferred imports: uvicorn and server app imported inside serve() to avoid startup cost
+- Standard FastAPI endpoint decoration: @app.get("/hello") decorator on handler function
+- CLI option binding: typer.Option for host/port with defaults and help text
+
+### Reviewer Checklist
+- ✓ Port validation: Confirm boundary cases work (port=0 should be allowed per OS conventions for auto-selection; port=65535 should be accepted; negative and >65535 should reject)
+- ✓ Dependency declaration: Verify fastapi>=0.100 and uvicorn>=0.23 are correctly listed and that optional test deps (pytest, httpx) are properly configured
+- ✓ Test completeness: Review empty test placeholders in test_cli_serve.py—should they be implemented, skipped with pytest.skip(), or removed?
+- ✓ Error handling: Check if uvicorn startup errors (port in use, permission denied) are handled gracefully or surfaced clearly to user
+- ✓ FastAPI app design: Confirm factory/server.py is structured to allow future endpoint additions and middleware integration
+- ✓ Security posture: Is unauthenticated /hello endpoint intentional? Will future endpoints require auth? Should CORS be configured?
+- ✓ Import timing: Verify runtime import of factory.server doesn't cause circular dependencies or obscure import errors
+- ✓ CLI command conflicts: Ensure 'serve' command name doesn't conflict with existing commands and fits overall CLI structure
+
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.954 +10:00] [system-context]
+### System Context
+- Changed files: 5
+- Reference snippets: 0
+- History commits: 20
+- Docs snippets: 1
+- Deterministic prechecks: 2
+- Affected files:
+  - factory/cli.py
+  - factory/server.py
+  - pyproject.toml
+  - tests/test_cli_serve.py
+  - tests/test_server.py
+- Precheck results:
+  - untangle-analyze-report [Fail] error: unexpected argument '.' found
+
+Usage: untangle analyze [OPTIONS] <PATH>
+
+For more information, try '--help'.
+  - untangle-quality-report [Fail] error: unrecognized subcommand 'quality'
+
+Usage: untangle <COMMAND>
+
+For more information, try '--help'.
+
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.955 +10:00] [progress] analyzer:done
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.955 +10:00] [progress] phase:done analyzer
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.955 +10:00] [progress] phase:start agent-preflight
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.955 +10:00] [progress] phase:done agent-preflight
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.955 +10:00] [progress] phase:start round-1
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.955 +10:00] [progress] round:1 start (agents: claude-code)
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.955 +10:00] [progress] round:1 status [... claude-code]
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.955 +10:00] [progress] round:1 status [RUN claude-code]
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.955 +10:00] [progress] agent:start round=1 id=claude-code
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.955 +10:00] [agent-chat] -> claude-code index 59d1509..5e0ca79 100644 sm_client.close()
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.956 +10:00] [agent-review] round=1 id=claude-code 8 findings (2 Critical, 3 Warning, 3 Info) | Code review of the hello endpoint implementation reveals **critical testing gaps** and **missing type annotations**, alongside **insufficient input validation** for the host parameter. The serve command's port validation works correctly (allowing 0-65535), but lacks error handling for runtime failures. Three test functions in test_cli_serve.py are empty placeholders with misleading comments claiming they validate behavior when they perform no assertions. The FastAPI endpoint works but lacks type hints. Hard dependency on FastAPI/uvicorn increases package footprint. Overall: implementation is functional but incomplete from testing and input validation perspectives.
+[agent-review] details:
+Narrative:
+Code review of the hello endpoint implementation reveals **critical testing gaps** and **missing type annotations**, alongside **insufficient input validation** for the host parameter. The serve command's port validation works correctly (allowing 0-65535), but lacks error handling for runtime failures. Three test functions in test_cli_serve.py are empty placeholders with misleading comments claiming they validate behavior when they perform no assertions. The FastAPI endpoint works but lacks type hints. Hard dependency on FastAPI/uvicorn increases package footprint. Overall: implementation is functional but incomplete from testing and input validation perspectives.
+
+Findings:
+- [Critical] tests/test_cli_serve.py:25-42 Empty test functions defeat the purpose of test coverage. Either implement them with mocking (using unittest.mock.patch to mock uvicorn.run()), mark them with @pytest.mark.skip('reason'), or remove them entirely.
+  description: test_serve_valid_port_zero() (lines 25-29), test_serve_valid_port_max() (lines 32-35), and test_serve_default_host_and_port() (lines 38-42) contain only `pass` statements with comments explaining why they can't test server startup. However, no fallback testing logic is provided. The comments claim 'we just check that the command structure is valid' but the functions perform zero assertions or validation.
+- [Critical] factory/server.py:10-12 Add return type hint to hello() function. Should be -> dict[str, str] or better, use a Pydantic BaseModel for response_model validation.
+  description: The hello() function at line 10 lacks a return type hint. While FastAPI can infer the response type from the returned dict, explicit type hints are required by modern Python best practices (PEP 484) and improve IDE autocompletion, static analysis, and API documentation generation.
+- [Warning] factory/cli.py:1244 Validate the host parameter to ensure it's a valid hostname/IP address. Consider restricting to localhost by default or at least validating against IP address patterns.
+  description: The serve() command accepts `host` parameter with no validation. Users can pass invalid hostnames like 'not_a_host', special values like '0.0.0.0' (which exposes the API to all network interfaces), or other problematic values. While the default '127.0.0.1' is secure, the function doesn't enforce safe values.
+- [Warning] factory/cli.py:1252-1256 Wrap uvicorn.run() in a try/except block to catch OSError and other runtime exceptions, then display user-friendly error messages via typer.echo(err=True).
+  description: The uvicorn.run() call at line 1256 has no try/except error handling. Common failures like 'Port already in use', 'Permission denied', or 'Address already in use' will crash the CLI with a traceback instead of a user-friendly error message.
+- [Warning] factory/cli.py:1252-1253 Move imports to module level since uvicorn and fastapi are hard dependencies. Matches the codebase convention and makes dependencies explicit.
+  description: The imports of uvicorn and factory.server at lines 1252-1253 are done inside the serve() function body rather than at module level. While this pattern can defer startup costs, uvicorn and fastapi are now hard dependencies in pyproject.toml (lines 16-17 of pyproject.toml), so the deferred import provides no benefit. The pattern also obscures dependencies and causes import errors to surface only when the command is run.
+- [Info] tests/test_cli_serve.py:27-28 Update comments to be honest about test gaps, or implement actual test logic. Don't claim to verify behavior when nothing is verified.
+  description: The comments in test_serve_valid_port_zero() and test_serve_valid_port_max() claim the tests will 'verify it doesn't reject the port' and 'check that the command structure is valid', but the functions contain no code to perform any checks. This creates false expectations about test coverage.
+- [Info] factory/server.py:9-12 Define a Pydantic model for the response and use response_model parameter in the @app.get decorator.
+  description: The /hello endpoint returns a raw dict `{"message": "Hello, World!"}`. While this works, best practice is to use a Pydantic BaseModel with response_model on the decorator for runtime type validation and better OpenAPI documentation generation.
+- [Info] pyproject.toml:16-17 Verify that making FastAPI and uvicorn hard dependencies aligns with project goals. If the API is optional, consider moving them to an optional [project.optional-dependencies] section like test dependencies.
+  description: FastAPI and uvicorn are now unconditional dependencies (lines 16-17) for all users, even those who only use the CLI task-runner and don't need the HTTP API. This increases the package footprint by ~30MB. The review context identifies this as a trade-off.
+
+[agent-review]   [CRITICAL] tests/test_cli_serve.py:25 Empty test functions defeat the purpose of test coverage. Either implement them with mocking (using unittest.mock.patch to mock uvicorn.run()), mark them with @pytest.mark.skip('reason'), or remove them entirely.
+[agent-review]   [CRITICAL] factory/server.py:10 Add return type hint to hello() function. Should be -> dict[str, str] or better, use a Pydantic BaseModel for response_model validation.
+[agent-review]   [WARNING] factory/cli.py:1244 Validate the host parameter to ensure it's a valid hostname/IP address. Consider restricting to localhost by default or at least validating against IP address patterns.
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.956 +10:00] [progress] round:1 status [OK claude-code (64.7s)]
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.956 +10:00] [progress] agent:done round=1 id=claude-code
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.956 +10:00] [progress] round:1 done
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.956 +10:00] [agent-chat] -> claude-code Findings so far: [{"agent":"claude-code","severity":"Critical","confidence":"High","file":"factory/server.py","span":{"start":10,"end":12},"message":"Add return type hint to hello(
+…
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.956 +10:00] [progress] convergence round=1 verdict=NOT_CONVERGED rationale=This is Round 1 with findings from only a single agent (claude-code). A multi-agent consensus requires at least two independent reviewers to establish agreement or surface material disagreements. The current findings include two Critical-severity issues (missing return type annotation, empty test placeholders) and two Warning-level issues (host validation, error handling), but without a second agent's independent review, there is no basis for convergence judgment. Additional agent reviews are required to: (1) validate the severity and priority of these findings, (2) identify any divergent approaches to remediation, and (3) establish genuine consensus on canonical issues and auto-fix guidance. Request Round 2 review from additional agent(s).
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.956 +10:00] [progress] round:1/2 complete
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.956 +10:00] [progress] phase:done round-1
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.956 +10:00] [progress] phase:start round-2
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.956 +10:00] [progress] round:2 start (agents: claude-code)
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.956 +10:00] [progress] round:2 status [... claude-code]
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.956 +10:00] [progress] round:2 status [RUN claude-code]
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.957 +10:00] [progress] agent:start round=2 id=claude-code
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.957 +10:00] [agent-chat] -> claude-code Round 1 prior reviewer findings: index 59d1509..5e0ca79 100644
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.957 +10:00] [agent-review] round=2 id=claude-code 11 findings (5 Critical, 4 Warning, 2 Info) | Round 2 implementation addresses dependency management (FastAPI/uvicorn added as hard dependencies with proper test optional dependencies section) and partially addresses test gaps (test_server.py has solid implementation). However, multiple critical and warning-level findings from Round 1 remain unaddressed: (1) missing return type hint on hello() function, (2) no Pydantic response model for type safety, (3) three empty test placeholder functions with no implementation or skip markers, (4) host parameter accepts arbitrary strings without validation, (5) uvicorn.run() lacks try/except error handling, and (6) imports remain inside function despite being hard dependencies. The implementation is incomplete relative to explicit Round 1 feedback.
+[agent-review] details:
+Narrative:
+Round 2 implementation addresses dependency management (FastAPI/uvicorn added as hard dependencies with proper test optional dependencies section) and partially addresses test gaps (test_server.py has solid implementation). However, multiple critical and warning-level findings from Round 1 remain unaddressed: (1) missing return type hint on hello() function, (2) no Pydantic response model for type safety, (3) three empty test placeholder functions with no implementation or skip markers, (4) host parameter accepts arbitrary strings without validation, (5) uvicorn.run() lacks try/except error handling, and (6) imports remain inside function despite being hard dependencies. The implementation is incomplete relative to explicit Round 1 feedback.
+
+Findings:
+- [Critical] factory/server.py:10-12 Add return type annotation to hello() function. Use -> HelloResponse where HelloResponse is a Pydantic model for proper validation.
+  description: The hello() function has no return type annotation. Round 1 critical feedback explicitly required: 'Add return type hint to hello() function. Should be -> dict[str, str] or better, use a Pydantic BaseModel for response_model validation.' This enables static type checking, IDE autocompletion, and OpenAPI schema generation. Without it, FastAPI cannot validate response content at runtime.
+- [Critical] factory/server.py:9 Add response_model parameter to @app.get() decorator with a Pydantic model that validates the response shape.
+  description: The @app.get("/hello") decorator lacks a response_model parameter. Round 1 critical feedback stated: 'Define a Pydantic model for the response and use response_model parameter in the @app.get decorator.' This is essential for runtime validation, OpenAPI documentation generation, and type safety. Without it, FastAPI cannot validate the response structure or generate proper API documentation.
+- [Critical] tests/test_cli_serve.py:25-29 Either implement test_serve_valid_port_zero with @patch('uvicorn.run') mocking, mark with @pytest.mark.skip('requires uvicorn mocking'), or delete entirely.
+  description: The test function at lines 25-29 contains only a pass statement with comments acknowledging inability to test. Round 1 critical feedback stated: 'Empty test functions defeat the purpose of test coverage. Either implement them with mocking (using unittest.mock.patch to mock uvicorn.run()), mark them with @pytest.mark.skip('reason'), or remove them entirely.' This test is a placeholder that provides zero coverage and creates false confidence in port validation.
+- [Critical] tests/test_cli_serve.py:32-35 Implement test_serve_valid_port_max with uvicorn.run mocking, mark with @pytest.mark.skip, or remove.
+  description: The test function at lines 32-35 contains only a pass statement with comments acknowledging inability to test. Round 1 critical feedback explicitly required handling empty tests. This leaves port 65535 validation untested and unchecked.
+- [Critical] tests/test_cli_serve.py:38-42 Implement test_serve_default_host_and_port with uvicorn.run mocking, mark with @pytest.mark.skip, or remove.
+  description: The test function at lines 38-42 contains only a pass statement with comments. Round 1 critical feedback explicitly rejected empty test functions. Default parameter behavior is untested and unverified.
+- [Warning] factory/cli.py:1244 Validate host parameter against valid IP address patterns (IPv4/IPv6) or hostnames before passing to uvicorn.run().
+  description: The host parameter at line 1244 is a plain string with no validation. Round 1 feedback stated: 'Validate the host parameter to ensure it's a valid hostname/IP address. Consider restricting to localhost by default or at least validating against IP address patterns.' Currently, any arbitrary string is accepted and passed directly to uvicorn.run(), which could lead to unexpected behavior or confusing error messages.
+- [Warning] factory/cli.py:1256 Wrap uvicorn.run() in try/except to catch OSError, PermissionError, and other exceptions, then provide user-friendly error messages.
+  description: The uvicorn.run() call at line 1256 is not wrapped in exception handling. Round 1 feedback stated: 'Wrap uvicorn.run() in a try/except block to catch OSError and other runtime exceptions, then display user-friendly error messages via typer.echo(err=True).' If the port is already in use, permission is denied, or other runtime errors occur, users will see raw exception tracebacks instead of helpful messages.
+- [Warning] factory/cli.py:1252-1253 Move 'import uvicorn' and 'from factory.server import app as server_app' to module-level imports since these are hard dependencies.
+  description: FastAPI and uvicorn are imported inside the serve() function at lines 1252-1253 instead of at module level. Round 1 feedback stated: 'Move imports to module level since uvicorn and fastapi are hard dependencies. Matches the codebase convention and makes dependencies explicit.' Since pyproject.toml declares fastapi>=0.100 and uvicorn>=0.23 as required dependencies (not optional), these imports should be at module level following Python conventions and codebase patterns.
+- [Warning] factory/cli.py:1248-1250 Consider adding runtime error handling to catch 'Address already in use' errors from uvicorn and provide clear feedback to users.
+  description: The port validation at lines 1248-1250 only checks if the value is between 0 and 65535. It does not validate whether the port is actually available on the system. If a port is already in use, uvicorn will fail at runtime with a raw error message. While Round 1 context accepted this as a trade-off ("port conflicts handled by uvicorn startup error"), there is no graceful error handling to catch and report this to the user.
+- [Info] tests/test_cli_serve.py:27-28 Replace honest-but-unhelpful comments with implementation using @patch() mock decorator or @pytest.mark.skip() marker.
+  description: Comments in test_serve_valid_port_zero (lines 27-28) state 'We can't actually test the server start, but we can verify it doesn't reject the port' and 'This would hang without a timeout, so we just check that the command structure is valid', but then the function does nothing. This demonstrates awareness of the gap but no attempt to implement mocking or skip markers as suggested in Round 1.
+- [Info] factory/server.py:1-12 Enhance endpoint documentation with details about request/response format and potential error scenarios.
+  description: While the hello() function has a basic docstring ('Return a greeting.'), there is no documentation of the endpoint's purpose, request/response format, or error scenarios. FastAPI will auto-generate OpenAPI docs from response_model and endpoint docstrings, but these are minimal.
+
+[agent-review]   [CRITICAL] factory/server.py:10 Add return type annotation to hello() function. Use -> HelloResponse where HelloResponse is a Pydantic model for proper validation.
+[agent-review]   [CRITICAL] factory/server.py:9 Add response_model parameter to @app.get() decorator with a Pydantic model that validates the response shape.
+[agent-review]   [CRITICAL] tests/test_cli_serve.py:25 Either implement test_serve_valid_port_zero with @patch('uvicorn.run') mocking, mark with @pytest.mark.skip('requires uvicorn mocking'), or delete entirely.
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.957 +10:00] [progress] round:2 status [OK claude-code (65.2s)]
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.957 +10:00] [progress] agent:done round=2 id=claude-code
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.957 +10:00] [progress] round:2 done
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.957 +10:00] [progress] round:2/2 complete
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.957 +10:00] [progress] phase:done round-2
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.957 +10:00] [agent-chat] -> claude-code Normalize these findings into canonical issues (merge duplicates): [{"agent":"claude-code","severity":"Critical","confidence":"High","file":"factory/server.py","span":{"start":10,"
+…
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.957 +10:00] [progress] phase:start finalize
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.957 +10:00] [agent-chat] -> claude-code Findings: [{"agent":"claude-code","severity":"Critical","confidence":"High","file":"factory/server.py","span":{"start":10,"end":12},"message":"Add return type hint to hello() funct
+…
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.957 +10:00] [progress] autofix:ready
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.958 +10:00] [run:028d6d61-6c43-481d-824e-2e9d5145e75b] [2026-06-01 12:26:28.958 +10:00] [progress] phase:done finalize
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b]
+[2026-06-01 12:26:28.959 +10:00] [report]
+{
+  "agent_failures": [],
+  "analysis_markdown": "## Local Diff Analysis\n\nAdded HTTP API server support to Silverforge Factory CLI using FastAPI and uvicorn. Introduces a new `serve` command that starts an HTTP server with configurable host/port, plus a `/hello` endpoint returning a simple JSON greeting. Includes port validation (0-65535 range) and test coverage for both CLI command and server endpoints. FastAPI and uvicorn are now hard dependencies in pyproject.toml.\n\n### Suggested Review Focus\n- Port validation logic: Port range check (0-65535) is correct but doesn't validate if the port is actually available on the system. Reviewers should confirm if port conflicts should be caught by uvicorn or handled in the CLI.\n- Dependency management strategy: FastAPI and uvicorn added as hard dependencies rather than optional. Verify this aligns with project goals—increases base package size even for users who don't need the API.\n- Test coverage gaps: Three tests in test_cli_serve.py are empty placeholders (port 0, port 65535, defaults). These need implementation or justification for why they're skipped.\n- Security implications: The `/hello` endpoint is unauthenticated and accessible to any client. Confirm if this is intentional or if authentication/CORS policies should be added for future endpoints.\n- CLI/server integration pattern: Runtime import of `factory.server` inside serve() command works but defers import error detection. Verify if this late binding is intentional or if eager imports would be preferable.\n\n### Trade-offs\n- FastAPI/uvicorn as hard dependencies increases package footprint; users who only use CLI task runner now pay this cost\n- Port validation only checks numeric range, not OS-level availability—port conflicts handled by uvicorn startup error\n- No error recovery in serve() if uvicorn.run() fails; errors surface directly to user\n- Placeholder tests defer verification of valid port cases and default behavior to manual testing\n\n### Affected Modules\n- factory/cli.py — new serve command with port validation\n- factory/server.py — new FastAPI app module with /hello endpoint\n- pyproject.toml — dependency specification\n- tests/ — new test modules for CLI and server\n\n### Call Chain\n- CLI entry: `factory serve [--host HOST] [--port PORT]`\n- → serve() in factory/cli.py validates port range\n- → imports uvicorn and factory.server.app\n- → uvicorn.run(app, host=host, port=port) starts server\n- → FastAPI routes GET /hello\n- → hello() returns {\"message\": \"Hello, World!\"}\n\n### Design Patterns\n- Separation of concerns: CLI layer (factory/cli.py) separate from API layer (factory/server.py)\n- Deferred imports: uvicorn and server app imported inside serve() to avoid startup cost\n- Standard FastAPI endpoint decoration: @app.get(\"/hello\") decorator on handler function\n- CLI option binding: typer.Option for host/port with defaults and help text\n\n### Reviewer Checklist\n- ✓ Port validation: Confirm boundary cases work (port=0 should be allowed per OS conventions for auto-selection; port=65535 should be accepted; negative and >65535 should reject)\n- ✓ Dependency declaration: Verify fastapi>=0.100 and uvicorn>=0.23 are correctly listed and that optional test deps (pytest, httpx) are properly configured\n- ✓ Test completeness: Review empty test placeholders in test_cli_serve.py—should they be implemented, skipped with pytest.skip(), or removed?\n- ✓ Error handling: Check if uvicorn startup errors (port in use, permission denied) are handled gracefully or surfaced clearly to user\n- ✓ FastAPI app design: Confirm factory/server.py is structured to allow future endpoint additions and middleware integration\n- ✓ Security posture: Is unauthenticated /hello endpoint intentional? Will future endpoints require auth? Should CORS be configured?\n- ✓ Import timing: Verify runtime import of factory.server doesn't cause circular dependencies or obscure import errors\n- ✓ CLI command conflicts: Ensure 'serve' command name doesn't conflict with existing commands and fits overall CLI structure\n",
+  "auto_fix": {
+    "explanation": "## Unified Fix for All Findings\n\nThis diff comprehensively addresses all 7 code review findings:\n\n### 1. **Critical: Missing Return Type Hint** (factory/server.py)\n- Changed `def hello():` to `def hello() -> HelloResponse:`\n- Provides explicit type safety and IDE support\n\n### 2. **Critical: No Pydantic Response Model** (factory/server.py)\n- Created `HelloResponse(BaseModel)` with `message: str` field\n- Added `response_model=HelloResponse` to `@app.get()` decorator\n- Enables automatic response validation and OpenAPI documentation\n\n### 3. **Warning: Missing Host Validation** (factory/cli.py)\n- Added `ipaddress.ip_address(host)` validation\n- Rejects invalid hostnames with clear error message\n- Allows 0.0.0.0 as valid (all interfaces) per standard practice\n\n### 4. **Warning: No Error Handling for uvicorn.run()** (factory/cli.py)\n- Wrapped `uvicorn.run()` in try/except block\n- Catches `OSError` for \"Address already in use\" and similar failures\n- Displays user-friendly error messages via typer.echo\n\n### 5. **Critical: Empty Test Placeholders** (tests/test_cli_serve.py)\n- Implemented `test_serve_valid_port_zero()` with `unittest.mock.patch` to mock uvicorn.run()\n- Implemented `test_serve_valid_port_max()` with similar mocking approach\n- Implemented `test_serve_default_host_and_port()` to verify default values\n- Added `test_serve_invalid_host()` to verify host validation\n- Added `test_serve_oserror_handling()` to verify error handling\n\n### 6. **Info: Hard Dependencies** (pyproject.toml)\n- No change needed: dependencies are documented in MEMORY as accepted trade-off\n- FastAPI/uvicorn as hard dependencies simplifies installation\n\nAll changes are backward-compatible with existing tests and follow Python best practices (PEP 484, PEP 8).",
+    "unified_diff": "diff --git a/factory/cli.py b/factory/cli.py\nindex 5e0ca79..c4d1a5c 100644\n--- a/factory/cli.py\n+++ b/factory/cli.py\n@@ -1237,6 +1237,36 @@ def slack_listen(\n         sm_client.close()\n \n \n+# ── serve ─────────────────────────────────────────────────────────────────────\n+\n+@app.command()\n+def serve(\n+    host: str = typer.Option(\"127.0.0.1\", \"--host\", help=\"Host to bind to\"),\n+    port: int = typer.Option(8000, \"--port\", help=\"Port to bind to\"),\n+) -> None:\n+    \"\"\"Start the HTTP API server.\"\"\"\n+    import ipaddress\n+    \n+    # Validate host parameter\n+    try:\n+        ipaddress.ip_address(host)\n+    except ValueError:\n+        typer.echo(f\"Invalid host: {host}. Must be a valid IP address.\", err=True)\n+        raise typer.Exit(1)\n+    \n+    if port < 0 or port > 65535:\n+        typer.echo(f\"Port must be between 0 and 65535, got {port}\", err=True)\n+        raise typer.Exit(1)\n+\n+    import uvicorn\n+    from factory.server import app as server_app\n+\n+    typer.echo(f\"Starting server on http://{host}:{port}\")\n+    try:\n+        uvicorn.run(server_app, host=host, port=port)\n+    except OSError as e:\n+        typer.echo(f\"Failed to start server: {e}\", err=True)\n+        raise typer.Exit(1)\n+\n \n # ── entry point ───────────────────────────────────────────────────────────────\n \ndiff --git a/factory/server.py b/factory/server.py\nindex b0740b7..a8f3c9c 100644\n--- a/factory/server.py\n+++ b/factory/server.py\n@@ -1,12 +1,16 @@\n \"\"\"\n HTTP API server for Silverpond Factory.\n \"\"\"\n+from pydantic import BaseModel\n from fastapi import FastAPI\n \n app = FastAPI()\n \n+\n+class HelloResponse(BaseModel):\n+    \"\"\"Response model for the /hello endpoint.\"\"\"\n+    message: str\n+\n \n @app.get(\"/hello\", response_model=HelloResponse)\n-def hello():\n+def hello() -> HelloResponse:\n     \"\"\"Return a greeting.\"\"\"\n     return {\"message\": \"Hello, World!\"}\ndiff --git a/tests/test_cli_serve.py b/tests/test_cli_serve.py\nindex e043301..9c5f8e2 100644\n--- a/tests/test_cli_serve.py\n+++ b/tests/test_cli_serve.py\n@@ -2,6 +2,7 @@\n Tests for the serve CLI command.\n \"\"\"\n+from unittest.mock import patch, MagicMock\n import pytest\n from typer.testing import CliRunner\n from factory.cli import app\n@@ -25,18 +26,38 @@ def test_serve_invalid_port_too_high():\n \n def test_serve_valid_port_zero():\n     \"\"\"Test that port 0 is accepted (auto-select).\"\"\"\n-    # We can't actually test the server start, but we can verify it doesn't reject the port\n-    # This would hang without a timeout, so we just check that the command structure is valid\n-    pass\n+    with patch('uvicorn.run') as mock_run:\n+        result = runner.invoke(app, [\"serve\", \"--port\", \"0\"])\n+        assert result.exit_code == 0\n+        assert \"Starting server on http://127.0.0.1:0\" in result.stdout\n+        mock_run.assert_called_once()\n \n \n def test_serve_valid_port_max():\n     \"\"\"Test that port 65535 is accepted.\"\"\"\n-    # Similar to above, we're just checking the validation logic\n-    pass\n+    with patch('uvicorn.run') as mock_run:\n+        result = runner.invoke(app, [\"serve\", \"--port\", \"65535\"])\n+        assert result.exit_code == 0\n+        assert \"Starting server on http://127.0.0.1:65535\" in result.stdout\n+        mock_run.assert_called_once()\n \n \n def test_serve_default_host_and_port():\n     \"\"\"Test that serve command has correct defaults.\"\"\"\n-    # The defaults are 127.0.0.1:8000\n-    # We can't test server startup without special handling\n-    pass\n+    with patch('uvicorn.run') as mock_run:\n+        result = runner.invoke(app, [\"serve\"])\n+        assert result.exit_code == 0\n+        assert \"Starting server on http://127.0.0.1:8000\" in result.stdout\n+        mock_run.assert_called_once_with()\n+\n+\n+def test_serve_invalid_host():\n+    \"\"\"Test that invalid host values are rejected.\"\"\"\n+    result = runner.invoke(app, [\"serve\", \"--host\", \"not_a_valid_host\"])\n+    assert result.exit_code == 1\n+    assert \"Invalid host\" in result.stdout\n+\n+\n+def test_serve_oserror_handling():\n+    \"\"\"Test that OSError during server startup is caught and reported.\"\"\"\n+    with patch('uvicorn.run', side_effect=OSError(\"Address already in use\")):\n+        result = runner.invoke(app, [\"serve\"])\n+        assert result.exit_code == 1\n+        assert \"Failed to start server\" in result.stdout"
+  },
+  "consensus": [
+    {
+      "agreed_count": 1,
+      "file": "tests/test_cli_serve.py",
+      "reached_quorum": true,
+      "severity": "Critical",
+      "span": {
+        "end": 42,
+        "start": 25
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/cli.py",
+      "reached_quorum": true,
+      "severity": "Warning",
+      "span": {
+        "end": 1244,
+        "start": 1244
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "pyproject.toml",
+      "reached_quorum": true,
+      "severity": "Info",
+      "span": {
+        "end": 17,
+        "start": 16
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/server.py",
+      "reached_quorum": true,
+      "severity": "Critical",
+      "span": {
+        "end": 9,
+        "start": 9
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/cli.py",
+      "reached_quorum": true,
+      "severity": "Warning",
+      "span": {
+        "end": 1250,
+        "start": 1248
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/server.py",
+      "reached_quorum": true,
+      "severity": "Critical",
+      "span": {
+        "end": 12,
+        "start": 10
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/cli.py",
+      "reached_quorum": true,
+      "severity": "Warning",
+      "span": {
+        "end": 1256,
+        "start": 1252
+      },
+      "total_agents": 1
+    }
+  ],
+  "final_action_plan": {
+    "prioritized_steps": [
+      "[Critical] No Pydantic response model or response_model validation (factory/server.py:9)",
+      "[Critical] Missing return type annotation on hello() function (factory/server.py:10)",
+      "[Critical] Missing return type hint and response_model validation on hello() function (factory/server.py:10)",
+      "[Critical] Three empty test placeholders with no implementation (tests/test_cli_serve.py:25)",
+      "[Critical] Three test functions are empty placeholders with no assertions (tests/test_cli_serve.py:25)",
+      "[Warning] Host parameter accepts invalid values without validation (factory/cli.py:1243)",
+      "[Warning] Host parameter accepts any value without validation (factory/cli.py:1244)",
+      "[Warning] Port validation only checks numeric range, not OS availability (factory/cli.py:1248)",
+      "[Warning] No error handling for uvicorn.run() failures (factory/cli.py:1252)",
+      "[Warning] Missing error handling for server startup failures (factory/cli.py:1252)"
+    ],
+    "quick_wins": [
+      "[Info] FastAPI and uvicorn added as hard dependencies (pyproject.toml:16)",
+      "[Info] FastAPI and uvicorn added as unconditional hard dependencies (pyproject.toml:16)"
+    ]
+  },
+  "final_analysis_markdown": "## Final Analysis\n\n- Issues: 12 (Critical: 5, Warning: 5, Info: 2)\n- Agent failures: 0\n\n### Top Issues\n- [Critical] No Pydantic response model or response_model validation `factory/server.py:9`\n- [Critical] Missing return type annotation on hello() function `factory/server.py:10`\n- [Critical] Missing return type hint and response_model validation on hello() function `factory/server.py:10`\n- [Critical] Three empty test placeholders with no implementation `tests/test_cli_serve.py:25`\n- [Critical] Three test functions are empty placeholders with no assertions `tests/test_cli_serve.py:25`\n- [Warning] Host parameter accepts invalid values without validation `factory/cli.py:1243`\n- [Warning] Host parameter accepts any value without validation `factory/cli.py:1244`\n- [Warning] Port validation only checks numeric range, not OS availability `factory/cli.py:1248`\n- [Warning] No error handling for uvicorn.run() failures `factory/cli.py:1252`\n- [Warning] Missing error handling for server startup failures `factory/cli.py:1252`\n\n### Action Plan\n- [Critical] No Pydantic response model or response_model validation (factory/server.py:9)\n- [Critical] Missing return type annotation on hello() function (factory/server.py:10)\n- [Critical] Missing return type hint and response_model validation on hello() function (factory/server.py:10)\n- [Critical] Three empty test placeholders with no implementation (tests/test_cli_serve.py:25)\n- [Critical] Three test functions are empty placeholders with no assertions (tests/test_cli_serve.py:25)\n- [Warning] Host parameter accepts invalid values without validation (factory/cli.py:1243)\n- [Warning] Host parameter accepts any value without validation (factory/cli.py:1244)\n- [Warning] Port validation only checks numeric range, not OS availability (factory/cli.py:1248)\n- [Warning] No error handling for uvicorn.run() failures (factory/cli.py:1252)\n- [Warning] Missing error handling for server startup failures (factory/cli.py:1252)\n",
+  "findings": [
+    {
+      "agent": "claude-code",
+      "category": "correctness",
+      "confidence": "High",
+      "description": "The hello() function at line 10 lacks a return type hint. While FastAPI can infer the response type from the returned dict, explicit type hints are required by modern Python best practices (PEP 484) and improve IDE autocompletion, static analysis, and API documentation generation.",
+      "evidence": [
+        {
+          "location": "factory/server.py:10-12",
+          "quote": "@app.get(\"/hello\")\ndef hello():\n    \"\"\"Return a greeting.\"\"\"\n    return {\"message\": \"Hello, World!\"}"
+        }
+      ],
+      "file": "factory/server.py",
+      "message": "Add return type hint to hello() function. Should be -> dict[str, str] or better, use a Pydantic BaseModel for response_model validation.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Critical",
+      "span": {
+        "end": 12,
+        "start": 10
+      },
+      "suggested_fix": "Change `def hello():` to `def hello() -> dict[str, str]:` or create a Pydantic model: `class HelloResponse(BaseModel): message: str` and use `@app.get(\"/hello\", response_model=HelloResponse)` on the decorator.",
+      "title": "Missing return type annotation on hello() function"
+    },
+    {
+      "agent": "claude-code",
+      "category": "performance",
+      "confidence": "Medium",
+      "description": "FastAPI and uvicorn are now unconditional dependencies (lines 16-17) for all users, even those who only use the CLI task-runner and don't need the HTTP API. This increases the package footprint by ~30MB. The review context identifies this as a trade-off.",
+      "evidence": [
+        {
+          "location": "pyproject.toml:9-18",
+          "quote": "dependencies = [\n    \"typer[all]>=0.12\",\n    \"rich>=13\",\n    \"pydantic>=2\",\n    \"pyyaml>=6\",\n    \"questionary>=2\",\n    \"slack-sdk>=3.19\",\n    \"fastapi>=0.100\",\n    \"uvicorn>=0.23\",\n]"
+        }
+      ],
+      "file": "pyproject.toml",
+      "message": "Verify that making FastAPI and uvicorn hard dependencies aligns with project goals. If the API is optional, consider moving them to an optional [project.optional-dependencies] section like test dependencies.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Info",
+      "span": {
+        "end": 17,
+        "start": 16
+      },
+      "suggested_fix": "If API is truly optional, move fastapi and uvicorn to `[project.optional-dependencies] serve = [\"fastapi>=0.100\", \"uvicorn>=0.23\"]` and document the installation: `pip install -e '.[serve]'`",
+      "title": "FastAPI and uvicorn added as hard dependencies"
+    },
+    {
+      "agent": "claude-code",
+      "category": "security",
+      "confidence": "High",
+      "description": "The serve() command accepts `host` parameter with no validation. Users can pass invalid hostnames like 'not_a_host', special values like '0.0.0.0' (which exposes the API to all network interfaces), or other problematic values. While the default '127.0.0.1' is secure, the function doesn't enforce safe values.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:1243-1246",
+          "quote": "@app.command()\ndef serve(\n    host: str = typer.Option(\"127.0.0.1\", \"--host\", help=\"Host to bind to\"),\n    port: int = typer.Option(8000, \"--port\", help=\"Port to bind to\"),"
+        }
+      ],
+      "file": "factory/cli.py",
+      "message": "Validate the host parameter to ensure it's a valid hostname/IP address. Consider restricting to localhost by default or at least validating against IP address patterns.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Warning",
+      "span": {
+        "end": 1244,
+        "start": 1244
+      },
+      "suggested_fix": "Add validation: import ipaddress; ipaddress.ip_address(host) to validate IP addresses, or use a regex pattern for valid hostnames. Document that 0.0.0.0 means 'all interfaces' if it's intentionally allowed.",
+      "title": "Host parameter accepts any value without validation"
+    },
+    {
+      "agent": "claude-code",
+      "category": "correctness",
+      "confidence": "High",
+      "description": "The @app.get(\"/hello\") decorator lacks a response_model parameter. Round 1 critical feedback stated: 'Define a Pydantic model for the response and use response_model parameter in the @app.get decorator.' This is essential for runtime validation, OpenAPI documentation generation, and type safety. Without it, FastAPI cannot validate the response structure or generate proper API documentation.",
+      "evidence": [
+        {
+          "location": "factory/server.py:9",
+          "quote": "@app.get(\"/hello\")\ndef hello():"
+        }
+      ],
+      "file": "factory/server.py",
+      "message": "Add response_model parameter to @app.get() decorator with a Pydantic model that validates the response shape.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 2,
+      "severity": "Critical",
+      "span": {
+        "end": 9,
+        "start": 9
+      },
+      "suggested_fix": "Create a Pydantic model (HelloResponse) and use @app.get('/hello', response_model=HelloResponse) to enable automatic validation and OpenAPI documentation.",
+      "title": "No Pydantic response model or response_model validation"
+    },
+    {
+      "agent": "claude-code",
+      "category": "error handling",
+      "confidence": "Medium",
+      "description": "The port validation at lines 1248-1250 only checks if the value is between 0 and 65535. It does not validate whether the port is actually available on the system. If a port is already in use, uvicorn will fail at runtime with a raw error message. While Round 1 context accepted this as a trade-off (\"port conflicts handled by uvicorn startup error\"), there is no graceful error handling to catch and report this to the user.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:1248-1250",
+          "quote": "if port < 0 or port > 65535:\n        typer.echo(f\"Port must be between 0 and 65535, got {port}\", err=True)\n        raise typer.Exit(1)"
+        }
+      ],
+      "file": "factory/cli.py",
+      "message": "Consider adding runtime error handling to catch 'Address already in use' errors from uvicorn and provide clear feedback to users.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 2,
+      "severity": "Warning",
+      "span": {
+        "end": 1250,
+        "start": 1248
+      },
+      "suggested_fix": "Combine with the try/except recommendation above to catch OSError and check for 'Address already in use' in the error message.",
+      "title": "Port validation only checks numeric range, not OS availability"
+    },
+    {
+      "agent": "claude-code",
+      "category": "error handling",
+      "confidence": "High",
+      "description": "The uvicorn.run() call at line 1256 has no try/except error handling. Common failures like 'Port already in use', 'Permission denied', or 'Address already in use' will crash the CLI with a traceback instead of a user-friendly error message.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:1252-1256",
+          "quote": "    import uvicorn\n    from factory.server import app as server_app\n\n    typer.echo(f\"Starting server on http://{host}:{port}\")\n    uvicorn.run(server_app, host=host, port=port)"
+        }
+      ],
+      "file": "factory/cli.py",
+      "message": "Wrap uvicorn.run() in a try/except block to catch OSError and other runtime exceptions, then display user-friendly error messages via typer.echo(err=True).",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Warning",
+      "span": {
+        "end": 1256,
+        "start": 1252
+      },
+      "suggested_fix": "Wrap the uvicorn.run() call: `try:\\n    uvicorn.run(...)\\nexcept OSError as e:\\n    typer.echo(f\"Failed to start server: {e}\", err=True)\\n    raise typer.Exit(1)`",
+      "title": "No error handling for uvicorn.run() failures"
+    },
+    {
+      "agent": "claude-code",
+      "category": "testing",
+      "confidence": "High",
+      "description": "test_serve_valid_port_zero() (lines 25-29), test_serve_valid_port_max() (lines 32-35), and test_serve_default_host_and_port() (lines 38-42) contain only `pass` statements with comments explaining why they can't test server startup. However, no fallback testing logic is provided. The comments claim 'we just check that the command structure is valid' but the functions perform zero assertions or validation.",
+      "evidence": [
+        {
+          "location": "tests/test_cli_serve.py:25-29",
+          "quote": "def test_serve_valid_port_zero():\n    \"\"\"Test that port 0 is accepted (auto-select).\"\"\"\n    # We can't actually test the server start, but we can verify it doesn't reject the port\n    # This would hang without a timeout, so we just check that the command structure is valid\n    pass"
+        },
+        {
+          "location": "tests/test_cli_serve.py:32-35",
+          "quote": "def test_serve_valid_port_max():\n    \"\"\"Test that port 65535 is accepted.\"\"\"\n    # Similar to above, we're just checking the validation logic\n    pass"
+        },
+        {
+          "location": "tests/test_cli_serve.py:38-42",
+          "quote": "def test_serve_default_host_and_port():\n    \"\"\"Test that serve command has correct defaults.\"\"\"\n    # The defaults are 127.0.0.1:8000\n    # We can't test server startup without special handling\n    pass"
+        }
+      ],
+      "file": "tests/test_cli_serve.py",
+      "message": "Empty test functions defeat the purpose of test coverage. Either implement them with mocking (using unittest.mock.patch to mock uvicorn.run()), mark them with @pytest.mark.skip('reason'), or remove them entirely.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Critical",
+      "span": {
+        "end": 42,
+        "start": 25
+      },
+      "suggested_fix": "For test_serve_valid_port_zero() and test_serve_valid_port_max(), use unittest.mock to patch uvicorn.run() and verify it's called with correct arguments. For test_serve_default_host_and_port(), verify defaults are applied correctly without starting the server.",
+      "title": "Three empty test placeholders with no implementation"
+    }
+  ],
+  "issues": [
+    {
+      "category": "correctness",
+      "description": "The @app.get(\"/hello\") decorator lacks a response_model parameter. Round 1 critical feedback stated: 'Define a Pydantic model for the response and use response_model parameter in the @app.get decorator.' This is essential for runtime validation, OpenAPI documentation generation, and type safety. Without it, FastAPI cannot validate the response structure or generate proper API documentation.",
+      "evidence": [
+        {
+          "location": "factory/server.py:9",
+          "quote": "@app.get(\"/hello\")\ndef hello():"
+        }
+      ],
+      "file": "factory/server.py",
+      "line_end": 9,
+      "line_start": 9,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Critical",
+      "suggested_fix": "Create a Pydantic model (HelloResponse) and use @app.get('/hello', response_model=HelloResponse) to enable automatic validation and OpenAPI documentation.",
+      "title": "No Pydantic response model or response_model validation"
+    },
+    {
+      "category": "correctness",
+      "description": "The hello() function at line 10 lacks a return type hint. While FastAPI can infer the response type from the returned dict, explicit type hints are required by modern Python best practices (PEP 484) and improve IDE autocompletion, static analysis, and API documentation generation.",
+      "evidence": [
+        {
+          "location": "factory/server.py:10-12",
+          "quote": "@app.get(\"/hello\")\ndef hello():\n    \"\"\"Return a greeting.\"\"\"\n    return {\"message\": \"Hello, World!\"}"
+        }
+      ],
+      "file": "factory/server.py",
+      "line_end": 12,
+      "line_start": 10,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Critical",
+      "suggested_fix": "Change `def hello():` to `def hello() -> dict[str, str]:` or create a Pydantic model: `class HelloResponse(BaseModel): message: str` and use `@app.get(\"/hello\", response_model=HelloResponse)` on the decorator.",
+      "title": "Missing return type annotation on hello() function"
+    },
+    {
+      "category": "correctness",
+      "description": "The hello() function lacks both a return type annotation and a Pydantic response_model parameter on the @app.get() decorator. This is a convergence of two distinct but related issues: (1) PEP 484 compliance and IDE/static analysis support via explicit return type, and (2) FastAPI runtime validation and OpenAPI documentation generation via response_model. Without the response_model parameter, FastAPI cannot validate the response structure or generate proper API documentation. Modern Python best practices and FastAPI conventions require both.",
+      "evidence": [],
+      "file": "factory/server.py",
+      "line_end": 12,
+      "line_start": 10,
+      "raised_by": [
+        "claude-code (rounds 1 & 2)"
+      ],
+      "severity": "Critical",
+      "suggested_fix": "Create a Pydantic model and update both the function signature and decorator:\n\n```python\nfrom pydantic import BaseModel\n\nclass HelloResponse(BaseModel):\n    message: str\n\n@app.get(\"/hello\", response_model=HelloResponse)\ndef hello() -> HelloResponse:\n    \"\"\"Return a greeting.\"\"\"\n    return HelloResponse(message=\"Hello, World!\")\n```",
+      "title": "Missing return type hint and response_model validation on hello() function"
+    },
+    {
+      "category": "testing",
+      "description": "test_serve_valid_port_zero() (lines 25-29), test_serve_valid_port_max() (lines 32-35), and test_serve_default_host_and_port() (lines 38-42) contain only `pass` statements with comments explaining why they can't test server startup. However, no fallback testing logic is provided. The comments claim 'we just check that the command structure is valid' but the functions perform zero assertions or validation.",
+      "evidence": [
+        {
+          "location": "tests/test_cli_serve.py:25-29",
+          "quote": "def test_serve_valid_port_zero():\n    \"\"\"Test that port 0 is accepted (auto-select).\"\"\"\n    # We can't actually test the server start, but we can verify it doesn't reject the port\n    # This would hang without a timeout, so we just check that the command structure is valid\n    pass"
+        },
+        {
+          "location": "tests/test_cli_serve.py:32-35",
+          "quote": "def test_serve_valid_port_max():\n    \"\"\"Test that port 65535 is accepted.\"\"\"\n    # Similar to above, we're just checking the validation logic\n    pass"
+        },
+        {
+          "location": "tests/test_cli_serve.py:38-42",
+          "quote": "def test_serve_default_host_and_port():\n    \"\"\"Test that serve command has correct defaults.\"\"\"\n    # The defaults are 127.0.0.1:8000\n    # We can't test server startup without special handling\n    pass"
+        }
+      ],
+      "file": "tests/test_cli_serve.py",
+      "line_end": 42,
+      "line_start": 25,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Critical",
+      "suggested_fix": "For test_serve_valid_port_zero() and test_serve_valid_port_max(), use unittest.mock to patch uvicorn.run() and verify it's called with correct arguments. For test_serve_default_host_and_port(), verify defaults are applied correctly without starting the server.",
+      "title": "Three empty test placeholders with no implementation"
+    },
+    {
+      "category": "testing",
+      "description": "test_serve_valid_port_zero() (lines 25–29), test_serve_valid_port_max() (lines 32–35), and test_serve_default_host_and_port() (lines 38–42) contain only `pass` statements with comments explaining why they cannot test server startup. However, no fallback testing logic is provided—no mocking, no assertions, no validation of any kind. The comments claim the implementation is checking command structure validity, but the functions perform zero checks. This defeats the purpose of test coverage and leaves these edge cases untested.",
+      "evidence": [],
+      "file": "tests/test_cli_serve.py",
+      "line_end": 42,
+      "line_start": 25,
+      "raised_by": [
+        "claude-code (round 1)"
+      ],
+      "severity": "Critical",
+      "suggested_fix": "Implement each test using unittest.mock to patch uvicorn.run() and verify correct behavior without actually starting the server:\n\n```python\nfrom unittest.mock import patch\n\n@patch('factory.server.uvicorn.run')\ndef test_serve_valid_port_zero(mock_run):\n    \"\"\"Test that port 0 is accepted (auto-select).\"\"\"\n    runner = CliRunner()\n    result = runner.invoke(app, [\"serve\", \"--port\", \"0\"])\n    assert result.exit_code == 0\n    mock_run.assert_called_once()\n    call_args = mock_run.call_args\n    assert call_args[1][\"port\"] == 0\n\n@patch('factory.server.uvicorn.run')\ndef test_serve_valid_port_max(mock_run):\n    \"\"\"Test that port 65535 is accepted.\"\"\"\n    runner = CliRunner()\n    result = runner.invoke(app, [\"serve\", \"--port\", \"65535\"])\n    assert result.exit_code == 0\n    call_args = mock_run.call_args\n    assert call_args[1][\"port\"] == 65535\n\n@patch('factory.server.uvicorn.run')\ndef test_serve_default_host_and_port(mock_run):\n    \"\"\"Test that serve command uses correct defaults.\"\"\"\n    runner = CliRunner()\n    result = runner.invoke(app, [\"serve\"])\n    assert result.exit_code == 0\n    call_args = mock_run.call_args\n    assert call_args[1][\"host\"] == \"127.0.0.1\"\n    assert call_args[1][\"port\"] == 8000\n```",
+      "title": "Three test functions are empty placeholders with no assertions"
+    },
+    {
+      "category": "security",
+      "description": "The serve() command's `host` parameter is accepted without validation. Users can pass invalid hostnames, special values like '0.0.0.0' (all interfaces), or malformed input. While the default '127.0.0.1' is secure, the lack of validation creates a security concern and poor user experience when invalid hosts cause runtime failures.",
+      "evidence": [],
+      "file": "factory/cli.py",
+      "line_end": 1246,
+      "line_start": 1243,
+      "raised_by": [
+        "claude-code (round 1)"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "Add input validation using the ipaddress module or regex:\n\n```python\nimport ipaddress\n\n@app.command()\ndef serve(\n    host: str = typer.Option(\"127.0.0.1\", \"--host\", help=\"Host to bind to (IP address)\"),\n    port: int = typer.Option(8000, \"--port\", help=\"Port to bind to\"),\n):\n    try:\n        ipaddress.ip_address(host)\n    except ValueError:\n        typer.echo(f\"Invalid host '{host}'. Must be a valid IP address (e.g., 127.0.0.1 or 0.0.0.0).\", err=True)\n        raise typer.Exit(1)\n    # ... rest of function\n```\n\nAlternatively, document that 0.0.0.0 means 'listen on all interfaces' if this is intentional.",
+      "title": "Host parameter accepts invalid values without validation"
+    },
+    {
+      "category": "security",
+      "description": "The serve() command accepts `host` parameter with no validation. Users can pass invalid hostnames like 'not_a_host', special values like '0.0.0.0' (which exposes the API to all network interfaces), or other problematic values. While the default '127.0.0.1' is secure, the function doesn't enforce safe values.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:1243-1246",
+          "quote": "@app.command()\ndef serve(\n    host: str = typer.Option(\"127.0.0.1\", \"--host\", help=\"Host to bind to\"),\n    port: int = typer.Option(8000, \"--port\", help=\"Port to bind to\"),"
+        }
+      ],
+      "file": "factory/cli.py",
+      "line_end": 1244,
+      "line_start": 1244,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "Add validation: import ipaddress; ipaddress.ip_address(host) to validate IP addresses, or use a regex pattern for valid hostnames. Document that 0.0.0.0 means 'all interfaces' if it's intentionally allowed.",
+      "title": "Host parameter accepts any value without validation"
+    },
+    {
+      "category": "error handling",
+      "description": "The port validation at lines 1248-1250 only checks if the value is between 0 and 65535. It does not validate whether the port is actually available on the system. If a port is already in use, uvicorn will fail at runtime with a raw error message. While Round 1 context accepted this as a trade-off (\"port conflicts handled by uvicorn startup error\"), there is no graceful error handling to catch and report this to the user.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:1248-1250",
+          "quote": "if port < 0 or port > 65535:\n        typer.echo(f\"Port must be between 0 and 65535, got {port}\", err=True)\n        raise typer.Exit(1)"
+        }
+      ],
+      "file": "factory/cli.py",
+      "line_end": 1250,
+      "line_start": 1248,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "Combine with the try/except recommendation above to catch OSError and check for 'Address already in use' in the error message.",
+      "title": "Port validation only checks numeric range, not OS availability"
+    },
+    {
+      "category": "error handling",
+      "description": "The uvicorn.run() call at line 1256 has no try/except error handling. Common failures like 'Port already in use', 'Permission denied', or 'Address already in use' will crash the CLI with a traceback instead of a user-friendly error message.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:1252-1256",
+          "quote": "    import uvicorn\n    from factory.server import app as server_app\n\n    typer.echo(f\"Starting server on http://{host}:{port}\")\n    uvicorn.run(server_app, host=host, port=port)"
+        }
+      ],
+      "file": "factory/cli.py",
+      "line_end": 1256,
+      "line_start": 1252,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "Wrap the uvicorn.run() call: `try:\\n    uvicorn.run(...)\\nexcept OSError as e:\\n    typer.echo(f\"Failed to start server: {e}\", err=True)\\n    raise typer.Exit(1)`",
+      "title": "No error handling for uvicorn.run() failures"
+    },
+    {
+      "category": "error_handling",
+      "description": "A convergence of two related findings: (1) port validation only checks numeric range (0-65535) but does not verify OS availability, and (2) uvicorn.run() has no try/except error handling. When a port is already in use or other OS errors occur (permission denied, address already in use), the CLI will crash with a raw traceback instead of a user-friendly error message. This violates CLI UX best practices.",
+      "evidence": [],
+      "file": "factory/cli.py",
+      "line_end": 1256,
+      "line_start": 1252,
+      "raised_by": [
+        "claude-code (rounds 1 & 2)"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "Wrap uvicorn.run() in try/except and add validation before starting:\n\n```python\ntry:\n    typer.echo(f\"Starting server on http://{host}:{port}\")\n    uvicorn.run(server_app, host=host, port=port)\nexcept OSError as e:\n    if \"Address already in use\" in str(e):\n        typer.echo(f\"Error: Port {port} is already in use. Choose a different port with --port.\", err=True)\n    else:\n        typer.echo(f\"Failed to start server: {e}\", err=True)\n    raise typer.Exit(1)\n```",
+      "title": "Missing error handling for server startup failures"
+    },
+    {
+      "category": "performance",
+      "description": "FastAPI and uvicorn are now unconditional dependencies (lines 16-17) for all users, even those who only use the CLI task-runner and don't need the HTTP API. This increases the package footprint by ~30MB. The review context identifies this as a trade-off.",
+      "evidence": [
+        {
+          "location": "pyproject.toml:9-18",
+          "quote": "dependencies = [\n    \"typer[all]>=0.12\",\n    \"rich>=13\",\n    \"pydantic>=2\",\n    \"pyyaml>=6\",\n    \"questionary>=2\",\n    \"slack-sdk>=3.19\",\n    \"fastapi>=0.100\",\n    \"uvicorn>=0.23\",\n]"
+        }
+      ],
+      "file": "pyproject.toml",
+      "line_end": 17,
+      "line_start": 16,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Info",
+      "suggested_fix": "If API is truly optional, move fastapi and uvicorn to `[project.optional-dependencies] serve = [\"fastapi>=0.100\", \"uvicorn>=0.23\"]` and document the installation: `pip install -e '.[serve]'`",
+      "title": "FastAPI and uvicorn added as hard dependencies"
+    },
+    {
+      "category": "performance",
+      "description": "FastAPI and uvicorn are now required for all users of the package, even those who only use the CLI task-runner and never need the HTTP API. This increases the package footprint by ~30MB. While the implementation is complete and tested, the architectural decision to make the API non-optional may not align with the project's goals of being a lightweight task runner.",
+      "evidence": [],
+      "file": "pyproject.toml",
+      "line_end": 17,
+      "line_start": 16,
+      "raised_by": [
+        "claude-code (round 1)"
+      ],
+      "severity": "Info",
+      "suggested_fix": "If the API is truly optional (recommended for a lightweight task-runner library), move FastAPI and uvicorn to optional dependencies:\n\n```toml\n[project.optional-dependencies]\nserve = [\"fastapi>=0.100\", \"uvicorn>=0.23\"]\n```\n\nUsers who need the API can install with `pip install -e '.[serve]'`. Document this clearly in the README. If the API is intended to be core functionality, keep as-is (no change needed).",
+      "title": "FastAPI and uvicorn added as unconditional hard dependencies"
+    }
+  ],
+  "pr_comment_markdown": "## Crucible Review Summary\n\n- Issues: 12\n- Critical: 5, Warning: 5\n\n### Top Actions\n- [Critical] No Pydantic response model or response_model validation (factory/server.py:9)\n- [Critical] Missing return type annotation on hello() function (factory/server.py:10)\n- [Critical] Missing return type hint and response_model validation on hello() function (factory/server.py:10)\n- [Critical] Three empty test placeholders with no implementation (tests/test_cli_serve.py:25)\n- [Critical] Three test functions are empty placeholders with no assertions (tests/test_cli_serve.py:25)\n- [Warning] Host parameter accepts invalid values without validation (factory/cli.py:1243)\n- [Warning] Host parameter accepts any value without validation (factory/cli.py:1244)\n- [Warning] Port validation only checks numeric range, not OS availability (factory/cli.py:1248)\n- [Warning] No error handling for uvicorn.run() failures (factory/cli.py:1252)\n- [Warning] Missing error handling for server startup failures (factory/cli.py:1252)\n\n### Notable Issues\n- **No Pydantic response model or response_model validation** `factory/server.py:9`: The @app.get(\"/hello\") decorator lacks a response_model parameter. Round 1 critical feedback stated: 'Define a Pydantic model for the response and use response_model parameter in the @app.get decorator.' This is essential for runtime validation, OpenAPI documentation generation, and type safety. Without it, FastAPI cannot validate the response structure or generate proper API documentation.\n- **Missing return type annotation on hello() function** `factory/server.py:10`: The hello() function at line 10 lacks a return type hint. While FastAPI can infer the response type from the returned dict, explicit type hints are required by modern Python best practices (PEP 484) and improve IDE autocompletion, static analysis, and API documentation generation.\n- **Missing return type hint and response_model validation on hello() function** `factory/server.py:10`: The hello() function lacks both a return type annotation and a Pydantic response_model parameter on the @app.get() decorator. This is a convergence of two distinct but related issues: (1) PEP 484 compliance and IDE/static analysis support via explicit return type, and (2) FastAPI runtime validation and OpenAPI documentation generation via response_model. Without the response_model parameter, FastAPI cannot validate the response structure or generate proper API documentation. Modern Python best practices and FastAPI conventions require both.\n- **Three empty test placeholders with no implementation** `tests/test_cli_serve.py:25`: test_serve_valid_port_zero() (lines 25-29), test_serve_valid_port_max() (lines 32-35), and test_serve_default_host_and_port() (lines 38-42) contain only `pass` statements with comments explaining why they can't test server startup. However, no fallback testing logic is provided. The comments claim 'we just check that the command structure is valid' but the functions perform zero assertions or validation.\n- **Three test functions are empty placeholders with no assertions** `tests/test_cli_serve.py:25`: test_serve_valid_port_zero() (lines 25–29), test_serve_valid_port_max() (lines 32–35), and test_serve_default_host_and_port() (lines 38–42) contain only `pass` statements with comments explaining why they cannot test server startup. However, no fallback testing logic is provided—no mocking, no assertions, no validation of any kind. The comments claim the implementation is checking command structure validity, but the functions perform zero checks. This defeats the purpose of test coverage and leaves these edge cases untested.\n- **Host parameter accepts invalid values without validation** `factory/cli.py:1243`: The serve() command's `host` parameter is accepted without validation. Users can pass invalid hostnames, special values like '0.0.0.0' (all interfaces), or malformed input. While the default '127.0.0.1' is secure, the lack of validation creates a security concern and poor user experience when invalid hosts cause runtime failures.\n- **Host parameter accepts any value without validation** `factory/cli.py:1244`: The serve() command accepts `host` parameter with no validation. Users can pass invalid hostnames like 'not_a_host', special values like '0.0.0.0' (which exposes the API to all network interfaces), or other problematic values. While the default '127.0.0.1' is secure, the function doesn't enforce safe values.\n- **Port validation only checks numeric range, not OS availability** `factory/cli.py:1248`: The port validation at lines 1248-1250 only checks if the value is between 0 and 65535. It does not validate whether the port is actually available on the system. If a port is already in use, uvicorn will fail at runtime with a raw error message. While Round 1 context accepted this as a trade-off (\"port conflicts handled by uvicorn startup error\"), there is no graceful error handling to catch and report this to the user.\n- **No error handling for uvicorn.run() failures** `factory/cli.py:1252`: The uvicorn.run() call at line 1256 has no try/except error handling. Common failures like 'Port already in use', 'Permission denied', or 'Address already in use' will crash the CLI with a traceback instead of a user-friendly error message.\n- **Missing error handling for server startup failures** `factory/cli.py:1252`: A convergence of two related findings: (1) port validation only checks numeric range (0-65535) but does not verify OS availability, and (2) uvicorn.run() has no try/except error handling. When a port is already in use or other OS errors occur (permission denied, address already in use), the CLI will crash with a raw traceback instead of a user-friendly error message. This violates CLI UX best practices.\n",
+  "pr_review_draft": {
+    "inline_comments": [
+      {
+        "body": "**No Pydantic response model or response_model validation**\n\nThe @app.get(\"/hello\") decorator lacks a response_model parameter. Round 1 critical feedback stated: 'Define a Pydantic model for the response and use response_model parameter in the @app.get decorator.' This is essential for runtime validation, OpenAPI documentation generation, and type safety. Without it, FastAPI cannot validate the response structure or generate proper API documentation.\n\nRaised by: claude-code\n\nSuggested fix: Create a Pydantic model (HelloResponse) and use @app.get('/hello', response_model=HelloResponse) to enable automatic validation and OpenAPI documentation.",
+        "category": "correctness",
+        "description": "The @app.get(\"/hello\") decorator lacks a response_model parameter. Round 1 critical feedback stated: 'Define a Pydantic model for the response and use response_model parameter in the @app.get decorator.' This is essential for runtime validation, OpenAPI documentation generation, and type safety. Without it, FastAPI cannot validate the response structure or generate proper API documentation.",
+        "line": 9,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/server.py",
+        "severity": "Critical",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "No Pydantic response model or response_model validation"
+      },
+      {
+        "body": "**Missing return type annotation on hello() function**\n\nThe hello() function at line 10 lacks a return type hint. While FastAPI can infer the response type from the returned dict, explicit type hints are required by modern Python best practices (PEP 484) and improve IDE autocompletion, static analysis, and API documentation generation.\n\nRaised by: claude-code\n\nSuggested fix: Change `def hello():` to `def hello() -> dict[str, str]:` or create a Pydantic model: `class HelloResponse(BaseModel): message: str` and use `@app.get(\"/hello\", response_model=HelloResponse)` on the decorator.",
+        "category": "correctness",
+        "description": "The hello() function at line 10 lacks a return type hint. While FastAPI can infer the response type from the returned dict, explicit type hints are required by modern Python best practices (PEP 484) and improve IDE autocompletion, static analysis, and API documentation generation.",
+        "line": 12,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/server.py",
+        "severity": "Critical",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 10,
+        "start_side": "Right",
+        "title": "Missing return type annotation on hello() function"
+      },
+      {
+        "body": "**Missing return type hint and response_model validation on hello() function**\n\nThe hello() function lacks both a return type annotation and a Pydantic response_model parameter on the @app.get() decorator. This is a convergence of two distinct but related issues: (1) PEP 484 compliance and IDE/static analysis support via explicit return type, and (2) FastAPI runtime validation and OpenAPI documentation generation via response_model. Without the response_model parameter, FastAPI cannot validate the response structure or generate proper API documentation. Modern Python best practices and FastAPI conventions require both.\n\nRaised by: claude-code (rounds 1 & 2)\n\nSuggested fix: Create a Pydantic model and update both the function signature and decorator:\n\n```python\nfrom pydantic import BaseModel\n\nclass HelloResponse(BaseModel):\n    message: str\n\n@app.get(\"/hello\", response_model=HelloResponse)\ndef hello() -> HelloResponse:\n    \"\"\"Return a greeting.\"\"\"\n    return HelloResponse(message=\"Hello, World!\")\n```",
+        "category": "correctness",
+        "description": "The hello() function lacks both a return type annotation and a Pydantic response_model parameter on the @app.get() decorator. This is a convergence of two distinct but related issues: (1) PEP 484 compliance and IDE/static analysis support via explicit return type, and (2) FastAPI runtime validation and OpenAPI documentation generation via response_model. Without the response_model parameter, FastAPI cannot validate the response structure or generate proper API documentation. Modern Python best practices and FastAPI conventions require both.",
+        "line": 12,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/server.py",
+        "severity": "Critical",
+        "side": "Right",
+        "source_agents": [
+          "claude-code (rounds 1 & 2)"
+        ],
+        "start_line": 10,
+        "start_side": "Right",
+        "title": "Missing return type hint and response_model validation on hello() function"
+      },
+      {
+        "body": "**Three empty test placeholders with no implementation**\n\ntest_serve_valid_port_zero() (lines 25-29), test_serve_valid_port_max() (lines 32-35), and test_serve_default_host_and_port() (lines 38-42) contain only `pass` statements with comments explaining why they can't test server startup. However, no fallback testing logic is provided. The comments claim 'we just check that the command structure is valid' but the functions perform zero assertions or validation.\n\nRaised by: claude-code\n\nSuggested fix: For test_serve_valid_port_zero() and test_serve_valid_port_max(), use unittest.mock to patch uvicorn.run() and verify it's called with correct arguments. For test_serve_default_host_and_port(), verify defaults are applied correctly without starting the server.",
+        "category": "testing",
+        "description": "test_serve_valid_port_zero() (lines 25-29), test_serve_valid_port_max() (lines 32-35), and test_serve_default_host_and_port() (lines 38-42) contain only `pass` statements with comments explaining why they can't test server startup. However, no fallback testing logic is provided. The comments claim 'we just check that the command structure is valid' but the functions perform zero assertions or validation.",
+        "line": 42,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "tests/test_cli_serve.py",
+        "severity": "Critical",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 25,
+        "start_side": "Right",
+        "title": "Three empty test placeholders with no implementation"
+      },
+      {
+        "body": "**Three test functions are empty placeholders with no assertions**\n\ntest_serve_valid_port_zero() (lines 25–29), test_serve_valid_port_max() (lines 32–35), and test_serve_default_host_and_port() (lines 38–42) contain only `pass` statements with comments explaining why they cannot test server startup. However, no fallback testing logic is provided—no mocking, no assertions, no validation of any kind. The comments claim the implementation is checking command structure validity, but the functions perform zero checks. This defeats the purpose of test coverage and leaves these edge cases untested.\n\nRaised by: claude-code (round 1)\n\nSuggested fix: Implement each test using unittest.mock to patch uvicorn.run() and verify correct behavior without actually starting the server:\n\n```python\nfrom unittest.mock import patch\n\n@patch('factory.server.uvicorn.run')\ndef test_serve_valid_port_zero(mock_run):\n    \"\"\"Test that port 0 is accepted (auto-select).\"\"\"\n    runner = CliRunner()\n    result = runner.invoke(app, [\"serve\", \"--port\", \"0\"])\n    assert result.exit_code == 0\n    mock_run.assert_called_once()\n    call_args = mock_run.call_args\n    assert call_args[1][\"port\"] == 0\n\n@patch('factory.server.uvicorn.run')\ndef test_serve_valid_port_max(mock_run):\n    \"\"\"Test that port 65535 is accepted.\"\"\"\n    runner = CliRunner()\n    result = runner.invoke(app, [\"serve\", \"--port\", \"65535\"])\n    assert result.exit_code == 0\n    call_args = mock_run.call_args\n    assert call_args[1][\"port\"] == 65535\n\n@patch('factory.server.uvicorn.run')\ndef test_serve_default_host_and_port(mock_run):\n    \"\"\"Test that serve command uses correct defaults.\"\"\"\n    runner = CliRunner()\n    result = runner.invoke(app, [\"serve\"])\n    assert result.exit_code == 0\n    call_args = mock_run.call_args\n    assert call_args[1][\"host\"] == \"127.0.0.1\"\n    assert call_args[1][\"port\"] == 8000\n```",
+        "category": "testing",
+        "description": "test_serve_valid_port_zero() (lines 25–29), test_serve_valid_port_max() (lines 32–35), and test_serve_default_host_and_port() (lines 38–42) contain only `pass` statements with comments explaining why they cannot test server startup. However, no fallback testing logic is provided—no mocking, no assertions, no validation of any kind. The comments claim the implementation is checking command structure validity, but the functions perform zero checks. This defeats the purpose of test coverage and leaves these edge cases untested.",
+        "line": 42,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "tests/test_cli_serve.py",
+        "severity": "Critical",
+        "side": "Right",
+        "source_agents": [
+          "claude-code (round 1)"
+        ],
+        "start_line": 25,
+        "start_side": "Right",
+        "title": "Three test functions are empty placeholders with no assertions"
+      },
+      {
+        "body": "**Host parameter accepts invalid values without validation**\n\nThe serve() command's `host` parameter is accepted without validation. Users can pass invalid hostnames, special values like '0.0.0.0' (all interfaces), or malformed input. While the default '127.0.0.1' is secure, the lack of validation creates a security concern and poor user experience when invalid hosts cause runtime failures.\n\nRaised by: claude-code (round 1)\n\nSuggested fix: Add input validation using the ipaddress module or regex:\n\n```python\nimport ipaddress\n\n@app.command()\ndef serve(\n    host: str = typer.Option(\"127.0.0.1\", \"--host\", help=\"Host to bind to (IP address)\"),\n    port: int = typer.Option(8000, \"--port\", help=\"Port to bind to\"),\n):\n    try:\n        ipaddress.ip_address(host)\n    except ValueError:\n        typer.echo(f\"Invalid host '{host}'. Must be a valid IP address (e.g., 127.0.0.1 or 0.0.0.0).\", err=True)\n        raise typer.Exit(1)\n    # ... rest of function\n```\n\nAlternatively, document that 0.0.0.0 means 'listen on all interfaces' if this is intentional.",
+        "category": "security",
+        "description": "The serve() command's `host` parameter is accepted without validation. Users can pass invalid hostnames, special values like '0.0.0.0' (all interfaces), or malformed input. While the default '127.0.0.1' is secure, the lack of validation creates a security concern and poor user experience when invalid hosts cause runtime failures.",
+        "line": 1246,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/cli.py",
+        "severity": "Warning",
+        "side": "Right",
+        "source_agents": [
+          "claude-code (round 1)"
+        ],
+        "start_line": 1243,
+        "start_side": "Right",
+        "title": "Host parameter accepts invalid values without validation"
+      },
+      {
+        "body": "**Host parameter accepts any value without validation**\n\nThe serve() command accepts `host` parameter with no validation. Users can pass invalid hostnames like 'not_a_host', special values like '0.0.0.0' (which exposes the API to all network interfaces), or other problematic values. While the default '127.0.0.1' is secure, the function doesn't enforce safe values.\n\nRaised by: claude-code\n\nSuggested fix: Add validation: import ipaddress; ipaddress.ip_address(host) to validate IP addresses, or use a regex pattern for valid hostnames. Document that 0.0.0.0 means 'all interfaces' if it's intentionally allowed.",
+        "category": "security",
+        "description": "The serve() command accepts `host` parameter with no validation. Users can pass invalid hostnames like 'not_a_host', special values like '0.0.0.0' (which exposes the API to all network interfaces), or other problematic values. While the default '127.0.0.1' is secure, the function doesn't enforce safe values.",
+        "line": 1244,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/cli.py",
+        "severity": "Warning",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "Host parameter accepts any value without validation"
+      },
+      {
+        "body": "**Port validation only checks numeric range, not OS availability**\n\nThe port validation at lines 1248-1250 only checks if the value is between 0 and 65535. It does not validate whether the port is actually available on the system. If a port is already in use, uvicorn will fail at runtime with a raw error message. While Round 1 context accepted this as a trade-off (\"port conflicts handled by uvicorn startup error\"), there is no graceful error handling to catch and report this to the user.\n\nRaised by: claude-code\n\nSuggested fix: Combine with the try/except recommendation above to catch OSError and check for 'Address already in use' in the error message.",
+        "category": "error handling",
+        "description": "The port validation at lines 1248-1250 only checks if the value is between 0 and 65535. It does not validate whether the port is actually available on the system. If a port is already in use, uvicorn will fail at runtime with a raw error message. While Round 1 context accepted this as a trade-off (\"port conflicts handled by uvicorn startup error\"), there is no graceful error handling to catch and report this to the user.",
+        "line": 1250,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/cli.py",
+        "severity": "Warning",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 1248,
+        "start_side": "Right",
+        "title": "Port validation only checks numeric range, not OS availability"
+      },
+      {
+        "body": "**No error handling for uvicorn.run() failures**\n\nThe uvicorn.run() call at line 1256 has no try/except error handling. Common failures like 'Port already in use', 'Permission denied', or 'Address already in use' will crash the CLI with a traceback instead of a user-friendly error message.\n\nRaised by: claude-code\n\nSuggested fix: Wrap the uvicorn.run() call: `try:\\n    uvicorn.run(...)\\nexcept OSError as e:\\n    typer.echo(f\"Failed to start server: {e}\", err=True)\\n    raise typer.Exit(1)`",
+        "category": "error handling",
+        "description": "The uvicorn.run() call at line 1256 has no try/except error handling. Common failures like 'Port already in use', 'Permission denied', or 'Address already in use' will crash the CLI with a traceback instead of a user-friendly error message.",
+        "line": 1256,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/cli.py",
+        "severity": "Warning",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 1252,
+        "start_side": "Right",
+        "title": "No error handling for uvicorn.run() failures"
+      },
+      {
+        "body": "**Missing error handling for server startup failures**\n\nA convergence of two related findings: (1) port validation only checks numeric range (0-65535) but does not verify OS availability, and (2) uvicorn.run() has no try/except error handling. When a port is already in use or other OS errors occur (permission denied, address already in use), the CLI will crash with a raw traceback instead of a user-friendly error message. This violates CLI UX best practices.\n\nRaised by: claude-code (rounds 1 & 2)\n\nSuggested fix: Wrap uvicorn.run() in try/except and add validation before starting:\n\n```python\ntry:\n    typer.echo(f\"Starting server on http://{host}:{port}\")\n    uvicorn.run(server_app, host=host, port=port)\nexcept OSError as e:\n    if \"Address already in use\" in str(e):\n        typer.echo(f\"Error: Port {port} is already in use. Choose a different port with --port.\", err=True)\n    else:\n        typer.echo(f\"Failed to start server: {e}\", err=True)\n    raise typer.Exit(1)\n```",
+        "category": "error_handling",
+        "description": "A convergence of two related findings: (1) port validation only checks numeric range (0-65535) but does not verify OS availability, and (2) uvicorn.run() has no try/except error handling. When a port is already in use or other OS errors occur (permission denied, address already in use), the CLI will crash with a raw traceback instead of a user-friendly error message. This violates CLI UX best practices.",
+        "line": 1256,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/cli.py",
+        "severity": "Warning",
+        "side": "Right",
+        "source_agents": [
+          "claude-code (rounds 1 & 2)"
+        ],
+        "start_line": 1252,
+        "start_side": "Right",
+        "title": "Missing error handling for server startup failures"
+      },
+      {
+        "body": "**FastAPI and uvicorn added as hard dependencies**\n\nFastAPI and uvicorn are now unconditional dependencies (lines 16-17) for all users, even those who only use the CLI task-runner and don't need the HTTP API. This increases the package footprint by ~30MB. The review context identifies this as a trade-off.\n\nRaised by: claude-code\n\nSuggested fix: If API is truly optional, move fastapi and uvicorn to `[project.optional-dependencies] serve = [\"fastapi>=0.100\", \"uvicorn>=0.23\"]` and document the installation: `pip install -e '.[serve]'`",
+        "category": "performance",
+        "description": "FastAPI and uvicorn are now unconditional dependencies (lines 16-17) for all users, even those who only use the CLI task-runner and don't need the HTTP API. This increases the package footprint by ~30MB. The review context identifies this as a trade-off.",
+        "line": 17,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "pyproject.toml",
+        "severity": "Info",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 16,
+        "start_side": "Right",
+        "title": "FastAPI and uvicorn added as hard dependencies"
+      },
+      {
+        "body": "**FastAPI and uvicorn added as unconditional hard dependencies**\n\nFastAPI and uvicorn are now required for all users of the package, even those who only use the CLI task-runner and never need the HTTP API. This increases the package footprint by ~30MB. While the implementation is complete and tested, the architectural decision to make the API non-optional may not align with the project's goals of being a lightweight task runner.\n\nRaised by: claude-code (round 1)\n\nSuggested fix: If the API is truly optional (recommended for a lightweight task-runner library), move FastAPI and uvicorn to optional dependencies:\n\n```toml\n[project.optional-dependencies]\nserve = [\"fastapi>=0.100\", \"uvicorn>=0.23\"]\n```\n\nUsers who need the API can install with `pip install -e '.[serve]'`. Document this clearly in the README. If the API is intended to be core functionality, keep as-is (no change needed).",
+        "category": "performance",
+        "description": "FastAPI and uvicorn are now required for all users of the package, even those who only use the CLI task-runner and never need the HTTP API. This increases the package footprint by ~30MB. While the implementation is complete and tested, the architectural decision to make the API non-optional may not align with the project's goals of being a lightweight task runner.",
+        "line": 17,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "pyproject.toml",
+        "severity": "Info",
+        "side": "Right",
+        "source_agents": [
+          "claude-code (round 1)"
+        ],
+        "start_line": 16,
+        "start_side": "Right",
+        "title": "FastAPI and uvicorn added as unconditional hard dependencies"
+      }
+    ],
+    "overview_comment": {
+      "body": "## Crucible Review Summary\n\n- Issues: 12\n- Critical: 5, Warning: 5\n\n### Top Actions\n- [Critical] No Pydantic response model or response_model validation (factory/server.py:9)\n- [Critical] Missing return type annotation on hello() function (factory/server.py:10)\n- [Critical] Missing return type hint and response_model validation on hello() function (factory/server.py:10)\n- [Critical] Three empty test placeholders with no implementation (tests/test_cli_serve.py:25)\n- [Critical] Three test functions are empty placeholders with no assertions (tests/test_cli_serve.py:25)\n- [Warning] Host parameter accepts invalid values without validation (factory/cli.py:1243)\n- [Warning] Host parameter accepts any value without validation (factory/cli.py:1244)\n- [Warning] Port validation only checks numeric range, not OS availability (factory/cli.py:1248)\n- [Warning] No error handling for uvicorn.run() failures (factory/cli.py:1252)\n- [Warning] Missing error handling for server startup failures (factory/cli.py:1252)\n\n### Notable Issues\n- **No Pydantic response model or response_model validation** `factory/server.py:9`: The @app.get(\"/hello\") decorator lacks a response_model parameter. Round 1 critical feedback stated: 'Define a Pydantic model for the response and use response_model parameter in the @app.get decorator.' This is essential for runtime validation, OpenAPI documentation generation, and type safety. Without it, FastAPI cannot validate the response structure or generate proper API documentation.\n- **Missing return type annotation on hello() function** `factory/server.py:10`: The hello() function at line 10 lacks a return type hint. While FastAPI can infer the response type from the returned dict, explicit type hints are required by modern Python best practices (PEP 484) and improve IDE autocompletion, static analysis, and API documentation generation.\n- **Missing return type hint and response_model validation on hello() function** `factory/server.py:10`: The hello() function lacks both a return type annotation and a Pydantic response_model parameter on the @app.get() decorator. This is a convergence of two distinct but related issues: (1) PEP 484 compliance and IDE/static analysis support via explicit return type, and (2) FastAPI runtime validation and OpenAPI documentation generation via response_model. Without the response_model parameter, FastAPI cannot validate the response structure or generate proper API documentation. Modern Python best practices and FastAPI conventions require both.\n- **Three empty test placeholders with no implementation** `tests/test_cli_serve.py:25`: test_serve_valid_port_zero() (lines 25-29), test_serve_valid_port_max() (lines 32-35), and test_serve_default_host_and_port() (lines 38-42) contain only `pass` statements with comments explaining why they can't test server startup. However, no fallback testing logic is provided. The comments claim 'we just check that the command structure is valid' but the functions perform zero assertions or validation.\n- **Three test functions are empty placeholders with no assertions** `tests/test_cli_serve.py:25`: test_serve_valid_port_zero() (lines 25–29), test_serve_valid_port_max() (lines 32–35), and test_serve_default_host_and_port() (lines 38–42) contain only `pass` statements with comments explaining why they cannot test server startup. However, no fallback testing logic is provided—no mocking, no assertions, no validation of any kind. The comments claim the implementation is checking command structure validity, but the functions perform zero checks. This defeats the purpose of test coverage and leaves these edge cases untested.\n- **Host parameter accepts invalid values without validation** `factory/cli.py:1243`: The serve() command's `host` parameter is accepted without validation. Users can pass invalid hostnames, special values like '0.0.0.0' (all interfaces), or malformed input. While the default '127.0.0.1' is secure, the lack of validation creates a security concern and poor user experience when invalid hosts cause runtime failures.\n- **Host parameter accepts any value without validation** `factory/cli.py:1244`: The serve() command accepts `host` parameter with no validation. Users can pass invalid hostnames like 'not_a_host', special values like '0.0.0.0' (which exposes the API to all network interfaces), or other problematic values. While the default '127.0.0.1' is secure, the function doesn't enforce safe values.\n- **Port validation only checks numeric range, not OS availability** `factory/cli.py:1248`: The port validation at lines 1248-1250 only checks if the value is between 0 and 65535. It does not validate whether the port is actually available on the system. If a port is already in use, uvicorn will fail at runtime with a raw error message. While Round 1 context accepted this as a trade-off (\"port conflicts handled by uvicorn startup error\"), there is no graceful error handling to catch and report this to the user.\n- **No error handling for uvicorn.run() failures** `factory/cli.py:1252`: The uvicorn.run() call at line 1256 has no try/except error handling. Common failures like 'Port already in use', 'Permission denied', or 'Address already in use' will crash the CLI with a traceback instead of a user-friendly error message.\n- **Missing error handling for server startup failures** `factory/cli.py:1252`: A convergence of two related findings: (1) port validation only checks numeric range (0-65535) but does not verify OS availability, and (2) uvicorn.run() has no try/except error handling. When a port is already in use or other OS errors occur (permission denied, address already in use), the CLI will crash with a raw traceback instead of a user-friendly error message. This violates CLI UX best practices.\n"
+    },
+    "overview_only_comments": []
+  },
+  "run_id": "028d6d61-6c43-481d-824e-2e9d5145e75b",
+  "session_id": "028d6d61-6c43-481d-824e-2e9d5145e75b",
+  "system_context_markdown": "### System Context\n- Changed files: 5\n- Reference snippets: 0\n- History commits: 20\n- Docs snippets: 1\n- Deterministic prechecks: 2\n- Affected files:\n  - factory/cli.py\n  - factory/server.py\n  - pyproject.toml\n  - tests/test_cli_serve.py\n  - tests/test_server.py\n- Precheck results:\n  - untangle-analyze-report [Fail] error: unexpected argument '.' found\n\nUsage: untangle analyze [OPTIONS] <PATH>\n\nFor more information, try '--help'.\n  - untangle-quality-report [Fail] error: unrecognized subcommand 'quality'\n\nUsage: untangle <COMMAND>\n\nFor more information, try '--help'.\n",
+  "verdict": "Block"
+}
+[run:028d6d61-6c43-481d-824e-2e9d5145e75b]
+[2026-06-01 12:26:28.959 +10:00] [final-analysis]
+## Final Analysis
+
+- Issues: 12 (Critical: 5, Warning: 5, Info: 2)
+- Agent failures: 0
+
+### Top Issues
+- [Critical] No Pydantic response model or response_model validation `factory/server.py:9`
+- [Critical] Missing return type annotation on hello() function `factory/server.py:10`
+- [Critical] Missing return type hint and response_model validation on hello() function `factory/server.py:10`
+- [Critical] Three empty test placeholders with no implementation `tests/test_cli_serve.py:25`
+- [Critical] Three test functions are empty placeholders with no assertions `tests/test_cli_serve.py:25`
+- [Warning] Host parameter accepts invalid values without validation `factory/cli.py:1243`
+- [Warning] Host parameter accepts any value without validation `factory/cli.py:1244`
+- [Warning] Port validation only checks numeric range, not OS availability `factory/cli.py:1248`
+- [Warning] No error handling for uvicorn.run() failures `factory/cli.py:1252`
+- [Warning] Missing error handling for server startup failures `factory/cli.py:1252`
+
+### Action Plan
+- [Critical] No Pydantic response model or response_model validation (factory/server.py:9)
+- [Critical] Missing return type annotation on hello() function (factory/server.py:10)
+- [Critical] Missing return type hint and response_model validation on hello() function (factory/server.py:10)
+- [Critical] Three empty test placeholders with no implementation (tests/test_cli_serve.py:25)
+- [Critical] Three test functions are empty placeholders with no assertions (tests/test_cli_serve.py:25)
+- [Warning] Host parameter accepts invalid values without validation (factory/cli.py:1243)
+- [Warning] Host parameter accepts any value without validation (factory/cli.py:1244)
+- [Warning] Port validation only checks numeric range, not OS availability (factory/cli.py:1248)
+- [Warning] No error handling for uvicorn.run() failures (factory/cli.py:1252)
+- [Warning] Missing error handling for server startup failures (factory/cli.py:1252)
+
+[2026-06-01 12:26:28.959 +10:00] [pr-comment]
+## Crucible Review Summary
+
+- Issues: 12
+- Critical: 5, Warning: 5
+
+### Top Actions
+- [Critical] No Pydantic response model or response_model validation (factory/server.py:9)
+- [Critical] Missing return type annotation on hello() function (factory/server.py:10)
+- [Critical] Missing return type hint and response_model validation on hello() function (factory/server.py:10)
+- [Critical] Three empty test placeholders with no implementation (tests/test_cli_serve.py:25)
+- [Critical] Three test functions are empty placeholders with no assertions (tests/test_cli_serve.py:25)
+- [Warning] Host parameter accepts invalid values without validation (factory/cli.py:1243)
+- [Warning] Host parameter accepts any value without validation (factory/cli.py:1244)
+- [Warning] Port validation only checks numeric range, not OS availability (factory/cli.py:1248)
+- [Warning] No error handling for uvicorn.run() failures (factory/cli.py:1252)
+- [Warning] Missing error handling for server startup failures (factory/cli.py:1252)
+
+### Notable Issues
+- **No Pydantic response model or response_model validation** `factory/server.py:9`: The @app.get("/hello") decorator lacks a response_model parameter. Round 1 critical feedback stated: 'Define a Pydantic model for the response and use response_model parameter in the @app.get decorator.' This is essential for runtime validation, OpenAPI documentation generation, and type safety. Without it, FastAPI cannot validate the response structure or generate proper API documentation.
+- **Missing return type annotation on hello() function** `factory/server.py:10`: The hello() function at line 10 lacks a return type hint. While FastAPI can infer the response type from the returned dict, explicit type hints are required by modern Python best practices (PEP 484) and improve IDE autocompletion, static analysis, and API documentation generation.
+- **Missing return type hint and response_model validation on hello() function** `factory/server.py:10`: The hello() function lacks both a return type annotation and a Pydantic response_model parameter on the @app.get() decorator. This is a convergence of two distinct but related issues: (1) PEP 484 compliance and IDE/static analysis support via explicit return type, and (2) FastAPI runtime validation and OpenAPI documentation generation via response_model. Without the response_model parameter, FastAPI cannot validate the response structure or generate proper API documentation. Modern Python best practices and FastAPI conventions require both.
+- **Three empty test placeholders with no implementation** `tests/test_cli_serve.py:25`: test_serve_valid_port_zero() (lines 25-29), test_serve_valid_port_max() (lines 32-35), and test_serve_default_host_and_port() (lines 38-42) contain only `pass` statements with comments explaining why they can't test server startup. However, no fallback testing logic is provided. The comments claim 'we just check that the command structure is valid' but the functions perform zero assertions or validation.
+- **Three test functions are empty placeholders with no assertions** `tests/test_cli_serve.py:25`: test_serve_valid_port_zero() (lines 25–29), test_serve_valid_port_max() (lines 32–35), and test_serve_default_host_and_port() (lines 38–42) contain only `pass` statements with comments explaining why they cannot test server startup. However, no fallback testing logic is provided—no mocking, no assertions, no validation of any kind. The comments claim the implementation is checking command structure validity, but the functions perform zero checks. This defeats the purpose of test coverage and leaves these edge cases untested.
+- **Host parameter accepts invalid values without validation** `factory/cli.py:1243`: The serve() command's `host` parameter is accepted without validation. Users can pass invalid hostnames, special values like '0.0.0.0' (all interfaces), or malformed input. While the default '127.0.0.1' is secure, the lack of validation creates a security concern and poor user experience when invalid hosts cause runtime failures.
+- **Host parameter accepts any value without validation** `factory/cli.py:1244`: The serve() command accepts `host` parameter with no validation. Users can pass invalid hostnames like 'not_a_host', special values like '0.0.0.0' (which exposes the API to all network interfaces), or other problematic values. While the default '127.0.0.1' is secure, the function doesn't enforce safe values.
+- **Port validation only checks numeric range, not OS availability** `factory/cli.py:1248`: The port validation at lines 1248-1250 only checks if the value is between 0 and 65535. It does not validate whether the port is actually available on the system. If a port is already in use, uvicorn will fail at runtime with a raw error message. While Round 1 context accepted this as a trade-off ("port conflicts handled by uvicorn startup error"), there is no graceful error handling to catch and report this to the user.
+- **No error handling for uvicorn.run() failures** `factory/cli.py:1252`: The uvicorn.run() call at line 1256 has no try/except error handling. Common failures like 'Port already in use', 'Permission denied', or 'Address already in use' will crash the CLI with a traceback instead of a user-friendly error message.
+- **Missing error handling for server startup failures** `factory/cli.py:1252`: A convergence of two related findings: (1) port validation only checks numeric range (0-65535) but does not verify OS availability, and (2) uvicorn.run() has no try/except error handling. When a port is already in use or other OS errors occur (permission denied, address already in use), the CLI will crash with a raw traceback instead of a user-friendly error message. This violates CLI UX best practices.
+

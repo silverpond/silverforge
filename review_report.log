@@ -471,3 +471,590 @@ Findings:
 - **Iteration-order dependency in crucible feedback** `factory/runner.py:210`: By moving the baseline forward after each iteration, the incremental diff strategy creates an implicit dependency on iteration order. Identical code changes in different iteration sequences will receive different crucible feedback because they compare against different bases. This reduces reproducibility: running the same task twice with different intermediate code states will generate different crucible comments for the same final code. While acknowledged as an intended trade-off in the summary, this should be documented in code or task YAML schema to prevent confusion.
 - **Document iteration-order dependency in crucible feedback** `factory/runner.py:210`: By moving the baseline forward after each iteration, the incremental diff strategy creates an implicit dependency on iteration order. Identical code changes in different iteration sequences will receive different crucible feedback because they compare against different bases. This reduces reproducibility: running the same task twice with different intermediate code states will generate different crucible comments for the same final code. While this is an acknowledged trade-off to prevent timeouts, it should be documented in code to prevent confusion during debugging or refactoring.
 
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:29:00.934 +10:00] [progress] startup:references started Scanning related references
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:29:00.934 +10:00] [progress] startup:history started Collecting recent history
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:29:00.935 +10:00] [progress] startup:docs started Loading docs context
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.155 +10:00] [progress] startup:references completed count=0 duration=0.1s Reference scan complete
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.155 +10:00] [progress] startup:history completed count=20 duration=0.1s History collection complete
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.155 +10:00] [progress] startup:docs completed count=1 duration=0.1s Docs collection complete
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.155 +10:00] [progress] startup:prechecks started Running prechecks
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.155 +10:00] [progress] startup:prechecks completed count=2 duration=0.1s Prechecks complete
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.155 +10:00] [progress] run:header reviewers=claude-code max_rounds=2 changed_files=3 changed_lines=30 convergence_enabled=true context_enabled=true
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.155 +10:00] [progress] phase:start analyzer
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.155 +10:00] [progress] analyzer:start
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.155 +10:00] [agent-chat] -> claude-code index 59d1509..1773c87 100644 raise typer.Exit(1)
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.156 +10:00] [analysis]
+## Local Diff Analysis
+
+Adds HTTP API capability to the Factory CLI tool by introducing a FastAPI server with a `/hello` endpoint. A new `factory serve` CLI command starts an HTTP server on configurable host/port (defaults to 127.0.0.1:8000). New module `factory/server.py` defines the FastAPI app; CLI layer handles argument parsing and port validation (0-65535 range). Two new runtime dependencies added: fastapi>=0.100 and uvicorn>=0.23. This extends the tool from a command-line orchestrator into a server application, enabling programmatic access to Factory capabilities via HTTP.
+
+### Suggested Review Focus
+- Port validation boundary conditions: Port range check (0-65535) is correct, but reviewers should confirm this handles edge cases properly: port 0 (OS auto-assigns), max valid port 65535, negative values, and >65535 are all tested
+- Dependency compatibility: fastapi>=0.100 and uvicorn>=0.23 are new dependencies with transitive deps. Need to verify no conflicts with pyyaml, questionary, slack-sdk versions and Python 3.10+ compatibility
+- Security model of /hello endpoint: Endpoint is unauthenticated and currently accepts requests from anywhere with network access. Verify this is intentional for a dev-only feature or if authentication/localhost-only binding is needed
+- CLI command integration: Verify `serve` command doesn't conflict with existing commands in the CLI structure and that the import of uvicorn/server_app inside the function is intentional (lazy loading)
+- FastAPI app initialization: Minimal app setup in server.py is correct for this use case, but confirm: no middleware, error handlers, or CORS setup needed; response format matches expected API contract
+
+### Trade-offs
+- New runtime dependencies (fastapi, uvicorn) increase supply-chain attack surface and dependency management complexity
+- Server binds to localhost by default—users can override to 0.0.0.0 but may not realize the security implications of exposing to the network
+- No HTTPS/TLS support—suitable only for development/localhost; production deployments would need reverse proxy (nginx) or gunicorn with SSL
+- Endpoint is unauthenticated—anyone with network access can call /hello; future endpoints may need auth layer
+- Uvicorn runs directly (not gunicorn with worker pools)—acceptable for development but may need hardening for production workloads
+- Endpoint provides no request validation, error handling, or structured logging—minimal but could mask issues in production
+
+### Affected Modules
+- factory/cli.py — new `serve` command added to the root Typer app
+- factory/server.py — NEW module defining FastAPI app and /hello endpoint
+- pyproject.toml — dependencies section: added fastapi and uvicorn
+- tests/ — test_server.py and test_cli_serve.py (per memory context) test endpoint and CLI integration
+
+### Call Chain
+- User: `factory serve` → typer.run(app) dispatches to serve() function
+- serve() → validates port argument (0 ≤ port ≤ 65535) or raises Exit(1)
+- serve() → imports uvicorn and FastAPI app instance from factory.server
+- serve() → uvicorn.run(server_app, host=host, port=port) starts HTTP server in current process
+- Client: GET /hello → Starlette (FastAPI's ASGI layer) routes to hello() function
+- hello() → returns dict {'message': 'Hello, Factory!'} → FastAPI JSONResponse serializes + sends with Content-Type: application/json
+
+### Design Patterns
+- Separation of Concerns: server logic isolated in server.py, CLI handling in cli.py
+- Input Validation: port range check in CLI layer before passing to uvicorn (fail-fast principle)
+- Lazy Module Import: uvicorn and server.app imported inside serve() function to avoid import-time overhead if command not used
+- Configuration as CLI Options: host/port are parameterized with sensible defaults (127.0.0.1:8000)
+- ASGI Application: FastAPI is an ASGI framework, compatible with various deployment options (uvicorn, gunicorn, etc.)
+- Factory Pattern: server.py exports a pre-configured FastAPI instance ready for uvicorn.run()
+
+### Reviewer Checklist
+- ✓ Port validation: confirm 0 and 65535 are accepted, negative and >65535 are rejected, error message is user-friendly
+- ✓ Dependency versions: verify fastapi>=0.100 and uvicorn>=0.23 are compatible with Python 3.10+ and existing deps
+- ✓ Import safety: confirm lazy import of uvicorn/server_app doesn't cause issues on systems without fastapi installed (should fail gracefully at runtime if serve is called)
+- ✓ CLI integration: check serve command doesn't conflict with existing commands (run, ping, poll, status, attach, workers) and help text is present
+- ✓ Endpoint contract: verify /hello returns {'message': 'Hello, Factory!'} as JSON with 200 status and Content-Type: application/json
+- ✓ Default configuration: confirm 127.0.0.1:8000 is the intended default (localhost-only) or if open binding is needed
+- ✓ Error handling: check that invalid ports produce clear error messages to stderr before Exit(1)
+- ✓ No hardcoded assumptions: verify no PYTHONPATH, working directory, or environment variable assumptions in server.py
+- ✓ FastAPI app naming: confirm 'app' variable in server.py is exported correctly for uvicorn discovery
+- ✓ Test coverage: review test_server.py and test_cli_serve.py cover happy path, port validation, HTTP method validation, and 404 responses
+- ✓ Missing features: confirm no authentication, CORS, middleware, or request logging is needed for MVP /hello endpoint
+
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.156 +10:00] [system-context]
+### System Context
+- Changed files: 3
+- Reference snippets: 0
+- History commits: 20
+- Docs snippets: 1
+- Deterministic prechecks: 2
+- Affected files:
+  - factory/cli.py
+  - factory/server.py
+  - pyproject.toml
+- Precheck results:
+  - untangle-analyze-report [Fail] error: unexpected argument '.' found
+
+Usage: untangle analyze [OPTIONS] <PATH>
+
+For more information, try '--help'.
+  - untangle-quality-report [Fail] error: unrecognized subcommand 'quality'
+
+Usage: untangle <COMMAND>
+
+For more information, try '--help'.
+
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.156 +10:00] [progress] analyzer:done
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.156 +10:00] [progress] phase:done analyzer
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.156 +10:00] [progress] phase:start agent-preflight
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.156 +10:00] [progress] phase:done agent-preflight
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.156 +10:00] [progress] phase:start round-1
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.156 +10:00] [progress] round:1 start (agents: claude-code)
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.156 +10:00] [progress] round:1 status [... claude-code]
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.156 +10:00] [progress] round:1 status [RUN claude-code]
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.157 +10:00] [progress] agent:start round=1 id=claude-code
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.157 +10:00] [agent-chat] -> claude-code index 59d1509..1773c87 100644 raise typer.Exit(1)
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.157 +10:00] [agent-review] round=1 id=claude-code 8 findings (0 Critical, 4 Warning, 4 Info) | Review of HTTP API addition to Factory CLI. The implementation adds a FastAPI server with /hello endpoint via new `factory serve` command. Core functionality is sound: port validation is correct (0-65535), CLI integration follows existing patterns, FastAPI app setup is minimal and appropriate for MVP. However, several robustness and security gaps exist: (1) uvicorn.run() lacks error handling, so socket errors (port-in-use, invalid host) will show tracebacks instead of user-friendly messages; (2) host parameter accepts any string without validation, deferring errors to uvicorn's startup; (3) hello() endpoint lacks return type annotation, reducing code quality and IDE support; (4) endpoint is unauthenticated and will be accessible from any IP if user runs with --host 0.0.0.0, though default localhost binding is safe. No critical correctness bugs, but UX and error handling could be improved. Dependency versions are appropriate and compatible with existing stack.
+[agent-review] details:
+Narrative:
+Review of HTTP API addition to Factory CLI. The implementation adds a FastAPI server with /hello endpoint via new `factory serve` command. Core functionality is sound: port validation is correct (0-65535), CLI integration follows existing patterns, FastAPI app setup is minimal and appropriate for MVP. However, several robustness and security gaps exist: (1) uvicorn.run() lacks error handling, so socket errors (port-in-use, invalid host) will show tracebacks instead of user-friendly messages; (2) host parameter accepts any string without validation, deferring errors to uvicorn's startup; (3) hello() endpoint lacks return type annotation, reducing code quality and IDE support; (4) endpoint is unauthenticated and will be accessible from any IP if user runs with --host 0.0.0.0, though default localhost binding is safe. No critical correctness bugs, but UX and error handling could be improved. Dependency versions are appropriate and compatible with existing stack.
+
+Findings:
+- [Warning] factory/cli.py:107 Wrap uvicorn.run() in try/except to catch socket errors (port in use, invalid host, permission denied) and print user-friendly error messages to stderr before exiting.
+  description: The uvicorn.run() call lacks try/except handling. If the port is already in use or host is invalid, uvicorn will raise socket.error or OSError. These exceptions will propagate unhandled, displaying a Python traceback to the user instead of a user-friendly error message. This is inconsistent with the port validation above which provides clear feedback.
+- [Warning] factory/cli.py:96 Add validation to ensure host is a valid IP address (IPv4/IPv6) or known resolvable hostname before passing to uvicorn, or at least catch socket errors and provide clear feedback.
+  description: The host parameter accepts any string without validation (e.g., 'invalid-host!@#' or 'not-a-real-host-name'). Invalid hostnames will only be caught when uvicorn tries to bind, resulting in cryptic socket errors at runtime rather than immediate user-friendly feedback. The port parameter is validated proactively (lines 103-105), but host has no equivalent check.
+- [Warning] factory/server.py:8 Add return type annotation to hello() function for consistency and better IDE/type-checker support.
+  description: The hello() function lacks a return type annotation. While FastAPI handles the serialization correctly at runtime (dict → JSON), the missing annotation reduces code quality, IDE support, and would be flagged by type checkers like mypy or pyright in strict mode. The codebase already uses type annotations elsewhere (see cli.py imports and function signatures).
+- [Warning] factory/server.py:7-10 Either (1) document that binding to 0.0.0.0 exposes the endpoint publicly with no auth, (2) warn users if they use a non-localhost host, or (3) add authentication (API key header, basic auth, or JWT). For MVP, documentation is acceptable; production endpoints should require auth.
+  description: The /hello endpoint has no authentication mechanism. While the default host is 127.0.0.1 (localhost-only, safe), users can override it with --host 0.0.0.0 to expose the endpoint to the entire network. For an internal tool, this may be intentional, but it's a potential security concern if the endpoint carries business logic or sensitive data in the future. The issue is not critical for a simple /hello greeting, but should be documented or addressed.
+- [Info] factory/cli.py:107 Print startup information to stdout after uvicorn.run() is called (or before if passing callback). This improves UX by confirming server is ready.
+  description: When serve() runs successfully, there is no output to the user indicating that the server has started or what address/port it's listening on. Users must infer this from the defaults or test connectivity. Other CLI tools typically print 'Server running at http://127.0.0.1:8000' or similar.
+- [Info] factory/server.py:7-10 Add response_model to @app.get() to provide explicit response schema for API documentation and validation. Optional enhancement for MVP.
+  description: The endpoint could specify a response_model in the @app.get() decorator for better API documentation and runtime validation. This is a minor improvement that would make the OpenAPI schema more explicit. Not required for MVP, but recommended for production APIs.
+- [Info] factory/cli.py:103-105 Port validation is correct: allows 0 and 65535, rejects negative and >65535. No changes needed.
+  description: The port validation correctly allows the full valid range 0-65535 (inclusive). Port 0 is valid (OS auto-assigns ephemeral port), port 65535 is the highest valid port. Negative values and values >65535 are properly rejected. This matches the focus area requirement and is correct.
+- [Info] pyproject.toml:16-17 Dependency versions are correct and compatible. No changes needed.
+  description: fastapi>=0.100 and uvicorn>=0.23 are reasonable version constraints. Both libraries support Python 3.10+ as required by the project. No obvious conflicts with existing dependencies (typer, pydantic, pyyaml, questionary, slack-sdk). Versions are stable and well-maintained. No compatibility issues detected.
+
+[agent-review]   [WARNING] factory/cli.py:107 Wrap uvicorn.run() in try/except to catch socket errors (port in use, invalid host, permission denied) and print user-friendly error messages to stderr before exiting.
+[agent-review]   [WARNING] factory/cli.py:96 Add validation to ensure host is a valid IP address (IPv4/IPv6) or known resolvable hostname before passing to uvicorn, or at least catch socket errors and provide clear feedback.
+[agent-review]   [WARNING] factory/server.py:8 Add return type annotation to hello() function for consistency and better IDE/type-checker support.
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.157 +10:00] [progress] round:1 status [OK claude-code (104.2s)]
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.157 +10:00] [progress] agent:done round=1 id=claude-code
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.157 +10:00] [progress] round:1 done
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.157 +10:00] [agent-chat] -> claude-code Findings so far: [{"agent":"claude-code","severity":"Warning","confidence":"High","file":"factory/cli.py","span":{"start":107,"end":107},"message":"Wrap uvicorn.run() in try/except
+…
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.157 +10:00] [progress] convergence round=1 verdict=CONVERGED rationale=Round 1 review from claude-code identified two valid 'Warning'-severity issues (uvicorn.run() error handling and host parameter validation) and two 'Info' items (dependency versions and port validation boundaries). No net-new high-severity risks detected. Code correctly implements /hello endpoint with proper port validation (0-65535 range) and required dependencies. No material disagreements exist (single-agent review). The identified robustness improvements—wrapping uvicorn.run() in try/except for socket errors and validating host before binding—are legitimate but non-critical enhancements. Core functionality is sound. Convergence achieved; robustness suggestions suitable for tracked improvements in next iteration.
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.157 +10:00] [progress] round:1/2 complete
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.158 +10:00] [progress] phase:done round-1
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.158 +10:00] [agent-chat] -> claude-code Normalize these findings into canonical issues (merge duplicates): [{"agent":"claude-code","severity":"Warning","confidence":"High","file":"factory/cli.py","span":{"start":107,"end
+…
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.158 +10:00] [progress] phase:start finalize
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.158 +10:00] [agent-chat] -> claude-code Findings: [{"agent":"claude-code","severity":"Warning","confidence":"High","file":"factory/cli.py","span":{"start":107,"end":107},"message":"Wrap uvicorn.run() in try/except to cat
+…
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.158 +10:00] [progress] autofix:ready
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.158 +10:00] [run:d0169890-be3c-48c6-a895-2cb4c3725ad5] [2026-06-02 16:32:49.158 +10:00] [progress] phase:done finalize
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5]
+[2026-06-02 16:32:49.159 +10:00] [report]
+{
+  "agent_failures": [],
+  "analysis_markdown": "## Local Diff Analysis\n\nAdds HTTP API capability to the Factory CLI tool by introducing a FastAPI server with a `/hello` endpoint. A new `factory serve` CLI command starts an HTTP server on configurable host/port (defaults to 127.0.0.1:8000). New module `factory/server.py` defines the FastAPI app; CLI layer handles argument parsing and port validation (0-65535 range). Two new runtime dependencies added: fastapi>=0.100 and uvicorn>=0.23. This extends the tool from a command-line orchestrator into a server application, enabling programmatic access to Factory capabilities via HTTP.\n\n### Suggested Review Focus\n- Port validation boundary conditions: Port range check (0-65535) is correct, but reviewers should confirm this handles edge cases properly: port 0 (OS auto-assigns), max valid port 65535, negative values, and >65535 are all tested\n- Dependency compatibility: fastapi>=0.100 and uvicorn>=0.23 are new dependencies with transitive deps. Need to verify no conflicts with pyyaml, questionary, slack-sdk versions and Python 3.10+ compatibility\n- Security model of /hello endpoint: Endpoint is unauthenticated and currently accepts requests from anywhere with network access. Verify this is intentional for a dev-only feature or if authentication/localhost-only binding is needed\n- CLI command integration: Verify `serve` command doesn't conflict with existing commands in the CLI structure and that the import of uvicorn/server_app inside the function is intentional (lazy loading)\n- FastAPI app initialization: Minimal app setup in server.py is correct for this use case, but confirm: no middleware, error handlers, or CORS setup needed; response format matches expected API contract\n\n### Trade-offs\n- New runtime dependencies (fastapi, uvicorn) increase supply-chain attack surface and dependency management complexity\n- Server binds to localhost by default—users can override to 0.0.0.0 but may not realize the security implications of exposing to the network\n- No HTTPS/TLS support—suitable only for development/localhost; production deployments would need reverse proxy (nginx) or gunicorn with SSL\n- Endpoint is unauthenticated—anyone with network access can call /hello; future endpoints may need auth layer\n- Uvicorn runs directly (not gunicorn with worker pools)—acceptable for development but may need hardening for production workloads\n- Endpoint provides no request validation, error handling, or structured logging—minimal but could mask issues in production\n\n### Affected Modules\n- factory/cli.py — new `serve` command added to the root Typer app\n- factory/server.py — NEW module defining FastAPI app and /hello endpoint\n- pyproject.toml — dependencies section: added fastapi and uvicorn\n- tests/ — test_server.py and test_cli_serve.py (per memory context) test endpoint and CLI integration\n\n### Call Chain\n- User: `factory serve` → typer.run(app) dispatches to serve() function\n- serve() → validates port argument (0 ≤ port ≤ 65535) or raises Exit(1)\n- serve() → imports uvicorn and FastAPI app instance from factory.server\n- serve() → uvicorn.run(server_app, host=host, port=port) starts HTTP server in current process\n- Client: GET /hello → Starlette (FastAPI's ASGI layer) routes to hello() function\n- hello() → returns dict {'message': 'Hello, Factory!'} → FastAPI JSONResponse serializes + sends with Content-Type: application/json\n\n### Design Patterns\n- Separation of Concerns: server logic isolated in server.py, CLI handling in cli.py\n- Input Validation: port range check in CLI layer before passing to uvicorn (fail-fast principle)\n- Lazy Module Import: uvicorn and server.app imported inside serve() function to avoid import-time overhead if command not used\n- Configuration as CLI Options: host/port are parameterized with sensible defaults (127.0.0.1:8000)\n- ASGI Application: FastAPI is an ASGI framework, compatible with various deployment options (uvicorn, gunicorn, etc.)\n- Factory Pattern: server.py exports a pre-configured FastAPI instance ready for uvicorn.run()\n\n### Reviewer Checklist\n- ✓ Port validation: confirm 0 and 65535 are accepted, negative and >65535 are rejected, error message is user-friendly\n- ✓ Dependency versions: verify fastapi>=0.100 and uvicorn>=0.23 are compatible with Python 3.10+ and existing deps\n- ✓ Import safety: confirm lazy import of uvicorn/server_app doesn't cause issues on systems without fastapi installed (should fail gracefully at runtime if serve is called)\n- ✓ CLI integration: check serve command doesn't conflict with existing commands (run, ping, poll, status, attach, workers) and help text is present\n- ✓ Endpoint contract: verify /hello returns {'message': 'Hello, Factory!'} as JSON with 200 status and Content-Type: application/json\n- ✓ Default configuration: confirm 127.0.0.1:8000 is the intended default (localhost-only) or if open binding is needed\n- ✓ Error handling: check that invalid ports produce clear error messages to stderr before Exit(1)\n- ✓ No hardcoded assumptions: verify no PYTHONPATH, working directory, or environment variable assumptions in server.py\n- ✓ FastAPI app naming: confirm 'app' variable in server.py is exported correctly for uvicorn discovery\n- ✓ Test coverage: review test_server.py and test_cli_serve.py cover happy path, port validation, HTTP method validation, and 404 responses\n- ✓ Missing features: confirm no authentication, CORS, middleware, or request logging is needed for MVP /hello endpoint\n",
+  "auto_fix": {
+    "explanation": "## Unified Auto-Fix for Agreed Findings\n\n### Issues Addressed\n\nThree high-confidence warnings were identified in the implementation and have been fixed:\n\n#### 1. **Missing Error Handling for uvicorn.run() Network Failures** (Warning)\n**Location:** `factory/cli.py:107`\n\n**Problem:** The `uvicorn.run()` call can raise `socket.error` or `OSError` if the port is already in use, the host is invalid, or permissions are denied. Without try/except handling, raw Python tracebacks are shown instead of user-friendly messages.\n\n**Fix:** Wrapped `uvicorn.run()` in a try/except block that catches `socket.error` and `OSError`, printing a clear error message to stderr and exiting gracefully with code 1.\n\n**Code:**\n```python\ntry:\n    uvicorn.run(server_app, host=host, port=port)\nexcept (socket.error, OSError) as e:\n    typer.echo(f\"Failed to start server: {e}\", err=True)\n    raise typer.Exit(1)\n```\n\n#### 2. **Missing Host Parameter Validation** (Warning)\n**Location:** `factory/cli.py:96`\n\n**Problem:** The `host` parameter accepted any string without validation (e.g., 'invalid-host!@#'), resulting in cryptic socket errors at runtime. Port validation existed (lines 103-105) but host had no equivalent check.\n\n**Fix:** Added proactive validation before uvicorn.run():\n- Common hostnames (localhost, 127.0.0.1, 0.0.0.0, ::1, ::) are whitelisted\n- Other values are validated as IPv4 addresses using `socket.inet_pton(AF_INET, ...)`\n- Falls back to IPv6 validation using `socket.inet_pton(AF_INET6, ...)`\n- Finally attempts hostname resolution via `socket.getaddrinfo()`\n- On all validation failures, prints a clear error message and exits with code 1\n\nThis matches the user-friendly approach already applied to port validation and leverages standard library socket utilities.\n\n#### 3. **Missing Return Type Annotation on hello()** (Warning)\n**Location:** `factory/server.py:8`\n\n**Problem:** The `hello()` function lacked return type annotation, reducing IDE support, type-checker coverage, and code quality. The codebase already uses type annotations elsewhere.\n\n**Fix:** Added explicit return type annotation `-> Dict[str, str]` to the function signature, with corresponding import from `typing`.\n\n**Code:**\n```python\nfrom typing import Dict\n\n@app.get(\"/hello\")\ndef hello() -> Dict[str, str]:\n    \"\"\"Hello endpoint that returns a JSON greeting.\"\"\"\n    return {\"message\": \"Hello, Factory!\"}\n```\n\n### No Changes Needed\n\nTwo informational findings confirmed existing correctness:\n- **Port validation boundary conditions are correct** — allows 0–65535 (inclusive) as required\n- **Dependency versions are appropriate and compatible** — fastapi≥0.100 and uvicorn≥0.23 support Python 3.10+ with no conflicts\n\n### Summary\n\nThe fixes close all three identified gaps while maintaining consistency with existing error-handling patterns (port validation) and code style. The implementation now provides graceful error handling, validates all user inputs before attempting to start the server, and includes proper type annotations for better maintainability.",
+    "unified_diff": "--- a/factory/cli.py\n+++ b/factory/cli.py\n@@ -1,5 +1,6 @@\n \"\"\"Command-line interface for Silverpond Factory.\"\"\"\n import os\n import subprocess\n+import socket\n from typing import Optional\n from pathlib import Path\n \n@@ -103,7 +104,27 @@ def serve(\n     if port < 0 or port > 65535:\n         typer.echo(f\"Invalid port {port}: must be between 0 and 65535\", err=True)\n         raise typer.Exit(1)\n-\n+    \n+    # Validate host is a valid IP address or resolvable hostname\n+    if host not in (\"localhost\", \"127.0.0.1\", \"0.0.0.0\", \"::1\", \"::\"):\n+        try:\n+            socket.inet_pton(socket.AF_INET, host)\n+        except (socket.error, OSError):\n+            try:\n+                socket.inet_pton(socket.AF_INET6, host)\n+            except (socket.error, OSError):\n+                try:\n+                    socket.getaddrinfo(host, port)\n+                except socket.gaierror:\n+                    typer.echo(f\"Invalid host '{host}': not a valid IP address or resolvable hostname\", err=True)\n+                    raise typer.Exit(1)\n+    \n+    try:\n+        uvicorn.run(server_app, host=host, port=port)\n+    except (socket.error, OSError) as e:\n+        typer.echo(f\"Failed to start server: {e}\", err=True)\n+        raise typer.Exit(1)\n+\n \n # ── inline task helpers ───────────────────────────────────────────────────────\n \ndiff --git a/factory/server.py b/factory/server.py\nindex 1b32e3a..7f4a81c 100644\n--- a/factory/server.py\n+++ b/factory/server.py\n@@ -1,10 +1,11 @@\n \"\"\"HTTP API server for Silverpond Factory.\"\"\"\n from fastapi import FastAPI\n+from typing import Dict\n \n app = FastAPI()\n \n \n @app.get(\"/hello\")\n-def hello():\n+def hello() -> Dict[str, str]:\n     \"\"\"Hello endpoint that returns a JSON greeting.\"\"\"\n     return {\"message\": \"Hello, Factory!\"}\n"
+  },
+  "consensus": [
+    {
+      "agreed_count": 1,
+      "file": "factory/cli.py",
+      "reached_quorum": true,
+      "severity": "Warning",
+      "span": {
+        "end": 96,
+        "start": 96
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/cli.py",
+      "reached_quorum": true,
+      "severity": "Warning",
+      "span": {
+        "end": 107,
+        "start": 107
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/server.py",
+      "reached_quorum": true,
+      "severity": "Warning",
+      "span": {
+        "end": 8,
+        "start": 8
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/cli.py",
+      "reached_quorum": true,
+      "severity": "Info",
+      "span": {
+        "end": 105,
+        "start": 103
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "pyproject.toml",
+      "reached_quorum": true,
+      "severity": "Info",
+      "span": {
+        "end": 17,
+        "start": 16
+      },
+      "total_agents": 1
+    }
+  ],
+  "final_action_plan": {
+    "prioritized_steps": [
+      "[Warning] Host parameter lacks validation (factory/cli.py:96)",
+      "[Warning] No error handling for uvicorn.run() network failures (factory/cli.py:107)",
+      "[Warning] Missing return type annotation on hello() endpoint (factory/server.py:8)"
+    ],
+    "quick_wins": [
+      "[Info] Port validation boundary conditions are correct (factory/cli.py:103)",
+      "[Info] Dependency versions are appropriate and compatible (pyproject.toml:16)"
+    ]
+  },
+  "final_analysis_markdown": "## Final Analysis\n\n- Issues: 5 (Critical: 0, Warning: 3, Info: 2)\n- Agent failures: 0\n\n### Top Issues\n- [Warning] Host parameter lacks validation `factory/cli.py:96`\n- [Warning] No error handling for uvicorn.run() network failures `factory/cli.py:107`\n- [Warning] Missing return type annotation on hello() endpoint `factory/server.py:8`\n- [Info] Port validation boundary conditions are correct `factory/cli.py:103`\n- [Info] Dependency versions are appropriate and compatible `pyproject.toml:16`\n\n### Action Plan\n- [Warning] Host parameter lacks validation (factory/cli.py:96)\n- [Warning] No error handling for uvicorn.run() network failures (factory/cli.py:107)\n- [Warning] Missing return type annotation on hello() endpoint (factory/server.py:8)\n",
+  "findings": [
+    {
+      "agent": "claude-code",
+      "category": "error_handling",
+      "confidence": "High",
+      "description": "The uvicorn.run() call lacks try/except handling. If the port is already in use or host is invalid, uvicorn will raise socket.error or OSError. These exceptions will propagate unhandled, displaying a Python traceback to the user instead of a user-friendly error message. This is inconsistent with the port validation above which provides clear feedback.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:107",
+          "quote": "uvicorn.run(server_app, host=host, port=port)"
+        }
+      ],
+      "file": "factory/cli.py",
+      "message": "Wrap uvicorn.run() in try/except to catch socket errors (port in use, invalid host, permission denied) and print user-friendly error messages to stderr before exiting.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Warning",
+      "span": {
+        "end": 107,
+        "start": 107
+      },
+      "suggested_fix": "try:\\n    uvicorn.run(server_app, host=host, port=port)\\nexcept socket.error as e:\\n    typer.echo(f\"Failed to start server: {e}\", err=True)\\n    raise typer.Exit(1)",
+      "title": "No error handling for uvicorn.run() network failures"
+    },
+    {
+      "agent": "claude-code",
+      "category": "correctness",
+      "confidence": "High",
+      "description": "The host parameter accepts any string without validation (e.g., 'invalid-host!@#' or 'not-a-real-host-name'). Invalid hostnames will only be caught when uvicorn tries to bind, resulting in cryptic socket errors at runtime rather than immediate user-friendly feedback. The port parameter is validated proactively (lines 103-105), but host has no equivalent check.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:96",
+          "quote": "host: str = typer.Option(\"127.0.0.1\", \"--host\", help=\"Host to bind to\")"
+        },
+        {
+          "location": "factory/cli.py:103-105",
+          "quote": "if port < 0 or port > 65535:\\n        typer.echo(f\"Invalid port {port}: must be between 0 and 65535\", err=True)\\n        raise typer.Exit(1)"
+        }
+      ],
+      "file": "factory/cli.py",
+      "message": "Add validation to ensure host is a valid IP address (IPv4/IPv6) or known resolvable hostname before passing to uvicorn, or at least catch socket errors and provide clear feedback.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Warning",
+      "span": {
+        "end": 96,
+        "start": 96
+      },
+      "suggested_fix": "Validate host is either a valid IP (IPv4/IPv6) or a simple hostname (no special characters). Use socket.inet_pton() for IP validation or a hostname regex. Alternatively, handle socket.gaierror and socket.error from uvicorn.run() with clear error messages.",
+      "title": "Host parameter lacks validation"
+    },
+    {
+      "agent": "claude-code",
+      "category": "correctness",
+      "confidence": "High",
+      "description": "fastapi>=0.100 and uvicorn>=0.23 are reasonable version constraints. Both libraries support Python 3.10+ as required by the project. No obvious conflicts with existing dependencies (typer, pydantic, pyyaml, questionary, slack-sdk). Versions are stable and well-maintained. No compatibility issues detected.",
+      "evidence": [
+        {
+          "location": "pyproject.toml:8-17",
+          "quote": "requires-python = \">=3.10\"\\ndependencies = [\\n    \"typer[all]>=0.12\",\\n    \"rich>=13\",\\n    \"pydantic>=2\",\\n    \"pyyaml>=6\",\\n    \"questionary>=2\",\\n    \"slack-sdk>=3.19\",\\n    \"fastapi>=0.100\",\\n    \"uvicorn>=0.23\",\\n]"
+        }
+      ],
+      "file": "pyproject.toml",
+      "message": "Dependency versions are correct and compatible. No changes needed.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Info",
+      "span": {
+        "end": 17,
+        "start": 16
+      },
+      "suggested_fix": null,
+      "title": "Dependency versions are appropriate and compatible"
+    },
+    {
+      "agent": "claude-code",
+      "category": "maintainability",
+      "confidence": "High",
+      "description": "The hello() function lacks a return type annotation. While FastAPI handles the serialization correctly at runtime (dict → JSON), the missing annotation reduces code quality, IDE support, and would be flagged by type checkers like mypy or pyright in strict mode. The codebase already uses type annotations elsewhere (see cli.py imports and function signatures).",
+      "evidence": [
+        {
+          "location": "factory/server.py:8",
+          "quote": "def hello():"
+        }
+      ],
+      "file": "factory/server.py",
+      "message": "Add return type annotation to hello() function for consistency and better IDE/type-checker support.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Warning",
+      "span": {
+        "end": 8,
+        "start": 8
+      },
+      "suggested_fix": "def hello() -> dict:\\n    \"\"\"Hello endpoint that returns a JSON greeting.\"\"\"\\n    return {\"message\": \"Hello, Factory!\"}\n\nOr with explicit type: from typing import Dict\\ndef hello() -> Dict[str, str]:",
+      "title": "Missing return type annotation on hello() endpoint"
+    },
+    {
+      "agent": "claude-code",
+      "category": "correctness",
+      "confidence": "High",
+      "description": "The port validation correctly allows the full valid range 0-65535 (inclusive). Port 0 is valid (OS auto-assigns ephemeral port), port 65535 is the highest valid port. Negative values and values >65535 are properly rejected. This matches the focus area requirement and is correct.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:103-105",
+          "quote": "if port < 0 or port > 65535:\\n        typer.echo(f\"Invalid port {port}: must be between 0 and 65535\", err=True)\\n        raise typer.Exit(1)"
+        }
+      ],
+      "file": "factory/cli.py",
+      "message": "Port validation is correct: allows 0 and 65535, rejects negative and >65535. No changes needed.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Info",
+      "span": {
+        "end": 105,
+        "start": 103
+      },
+      "suggested_fix": null,
+      "title": "Port validation boundary conditions are correct"
+    }
+  ],
+  "issues": [
+    {
+      "category": "correctness",
+      "description": "The host parameter accepts any string without validation (e.g., 'invalid-host!@#' or 'not-a-real-host-name'). Invalid hostnames will only be caught when uvicorn tries to bind, resulting in cryptic socket errors at runtime rather than immediate user-friendly feedback. The port parameter is validated proactively (lines 103-105), but host has no equivalent check.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:96",
+          "quote": "host: str = typer.Option(\"127.0.0.1\", \"--host\", help=\"Host to bind to\")"
+        },
+        {
+          "location": "factory/cli.py:103-105",
+          "quote": "if port < 0 or port > 65535:\\n        typer.echo(f\"Invalid port {port}: must be between 0 and 65535\", err=True)\\n        raise typer.Exit(1)"
+        }
+      ],
+      "file": "factory/cli.py",
+      "line_end": 96,
+      "line_start": 96,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "Validate host is either a valid IP (IPv4/IPv6) or a simple hostname (no special characters). Use socket.inet_pton() for IP validation or a hostname regex. Alternatively, handle socket.gaierror and socket.error from uvicorn.run() with clear error messages.",
+      "title": "Host parameter lacks validation"
+    },
+    {
+      "category": "error_handling",
+      "description": "The uvicorn.run() call lacks try/except handling. If the port is already in use or host is invalid, uvicorn will raise socket.error or OSError. These exceptions will propagate unhandled, displaying a Python traceback to the user instead of a user-friendly error message. This is inconsistent with the port validation above which provides clear feedback.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:107",
+          "quote": "uvicorn.run(server_app, host=host, port=port)"
+        }
+      ],
+      "file": "factory/cli.py",
+      "line_end": 107,
+      "line_start": 107,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "try:\\n    uvicorn.run(server_app, host=host, port=port)\\nexcept socket.error as e:\\n    typer.echo(f\"Failed to start server: {e}\", err=True)\\n    raise typer.Exit(1)",
+      "title": "No error handling for uvicorn.run() network failures"
+    },
+    {
+      "category": "maintainability",
+      "description": "The hello() function lacks a return type annotation. While FastAPI handles the serialization correctly at runtime (dict → JSON), the missing annotation reduces code quality, IDE support, and would be flagged by type checkers like mypy or pyright in strict mode. The codebase already uses type annotations elsewhere (see cli.py imports and function signatures).",
+      "evidence": [
+        {
+          "location": "factory/server.py:8",
+          "quote": "def hello():"
+        }
+      ],
+      "file": "factory/server.py",
+      "line_end": 8,
+      "line_start": 8,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "def hello() -> dict:\\n    \"\"\"Hello endpoint that returns a JSON greeting.\"\"\"\\n    return {\"message\": \"Hello, Factory!\"}\n\nOr with explicit type: from typing import Dict\\ndef hello() -> Dict[str, str]:",
+      "title": "Missing return type annotation on hello() endpoint"
+    },
+    {
+      "category": "correctness",
+      "description": "The port validation correctly allows the full valid range 0-65535 (inclusive). Port 0 is valid (OS auto-assigns ephemeral port), port 65535 is the highest valid port. Negative values and values >65535 are properly rejected. This matches the focus area requirement and is correct.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:103-105",
+          "quote": "if port < 0 or port > 65535:\\n        typer.echo(f\"Invalid port {port}: must be between 0 and 65535\", err=True)\\n        raise typer.Exit(1)"
+        }
+      ],
+      "file": "factory/cli.py",
+      "line_end": 105,
+      "line_start": 103,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Info",
+      "suggested_fix": null,
+      "title": "Port validation boundary conditions are correct"
+    },
+    {
+      "category": "correctness",
+      "description": "fastapi>=0.100 and uvicorn>=0.23 are reasonable version constraints. Both libraries support Python 3.10+ as required by the project. No obvious conflicts with existing dependencies (typer, pydantic, pyyaml, questionary, slack-sdk). Versions are stable and well-maintained. No compatibility issues detected.",
+      "evidence": [
+        {
+          "location": "pyproject.toml:8-17",
+          "quote": "requires-python = \">=3.10\"\\ndependencies = [\\n    \"typer[all]>=0.12\",\\n    \"rich>=13\",\\n    \"pydantic>=2\",\\n    \"pyyaml>=6\",\\n    \"questionary>=2\",\\n    \"slack-sdk>=3.19\",\\n    \"fastapi>=0.100\",\\n    \"uvicorn>=0.23\",\\n]"
+        }
+      ],
+      "file": "pyproject.toml",
+      "line_end": 17,
+      "line_start": 16,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Info",
+      "suggested_fix": null,
+      "title": "Dependency versions are appropriate and compatible"
+    }
+  ],
+  "pr_comment_markdown": "## Crucible Review Summary\n\n- Issues: 5\n- Critical: 0, Warning: 3\n\n### Top Actions\n- [Warning] Host parameter lacks validation (factory/cli.py:96)\n- [Warning] No error handling for uvicorn.run() network failures (factory/cli.py:107)\n- [Warning] Missing return type annotation on hello() endpoint (factory/server.py:8)\n\n### Notable Issues\n- **Host parameter lacks validation** `factory/cli.py:96`: The host parameter accepts any string without validation (e.g., 'invalid-host!@#' or 'not-a-real-host-name'). Invalid hostnames will only be caught when uvicorn tries to bind, resulting in cryptic socket errors at runtime rather than immediate user-friendly feedback. The port parameter is validated proactively (lines 103-105), but host has no equivalent check.\n- **No error handling for uvicorn.run() network failures** `factory/cli.py:107`: The uvicorn.run() call lacks try/except handling. If the port is already in use or host is invalid, uvicorn will raise socket.error or OSError. These exceptions will propagate unhandled, displaying a Python traceback to the user instead of a user-friendly error message. This is inconsistent with the port validation above which provides clear feedback.\n- **Missing return type annotation on hello() endpoint** `factory/server.py:8`: The hello() function lacks a return type annotation. While FastAPI handles the serialization correctly at runtime (dict → JSON), the missing annotation reduces code quality, IDE support, and would be flagged by type checkers like mypy or pyright in strict mode. The codebase already uses type annotations elsewhere (see cli.py imports and function signatures).\n- **Port validation boundary conditions are correct** `factory/cli.py:103`: The port validation correctly allows the full valid range 0-65535 (inclusive). Port 0 is valid (OS auto-assigns ephemeral port), port 65535 is the highest valid port. Negative values and values >65535 are properly rejected. This matches the focus area requirement and is correct.\n- **Dependency versions are appropriate and compatible** `pyproject.toml:16`: fastapi>=0.100 and uvicorn>=0.23 are reasonable version constraints. Both libraries support Python 3.10+ as required by the project. No obvious conflicts with existing dependencies (typer, pydantic, pyyaml, questionary, slack-sdk). Versions are stable and well-maintained. No compatibility issues detected.\n",
+  "pr_review_draft": {
+    "inline_comments": [
+      {
+        "body": "**Host parameter lacks validation**\n\nThe host parameter accepts any string without validation (e.g., 'invalid-host!@#' or 'not-a-real-host-name'). Invalid hostnames will only be caught when uvicorn tries to bind, resulting in cryptic socket errors at runtime rather than immediate user-friendly feedback. The port parameter is validated proactively (lines 103-105), but host has no equivalent check.\n\nRaised by: claude-code\n\nSuggested fix: Validate host is either a valid IP (IPv4/IPv6) or a simple hostname (no special characters). Use socket.inet_pton() for IP validation or a hostname regex. Alternatively, handle socket.gaierror and socket.error from uvicorn.run() with clear error messages.",
+        "category": "correctness",
+        "description": "The host parameter accepts any string without validation (e.g., 'invalid-host!@#' or 'not-a-real-host-name'). Invalid hostnames will only be caught when uvicorn tries to bind, resulting in cryptic socket errors at runtime rather than immediate user-friendly feedback. The port parameter is validated proactively (lines 103-105), but host has no equivalent check.",
+        "line": 96,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/cli.py",
+        "severity": "Warning",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "Host parameter lacks validation"
+      },
+      {
+        "body": "**No error handling for uvicorn.run() network failures**\n\nThe uvicorn.run() call lacks try/except handling. If the port is already in use or host is invalid, uvicorn will raise socket.error or OSError. These exceptions will propagate unhandled, displaying a Python traceback to the user instead of a user-friendly error message. This is inconsistent with the port validation above which provides clear feedback.\n\nRaised by: claude-code\n\nSuggested fix: try:\\n    uvicorn.run(server_app, host=host, port=port)\\nexcept socket.error as e:\\n    typer.echo(f\"Failed to start server: {e}\", err=True)\\n    raise typer.Exit(1)",
+        "category": "error_handling",
+        "description": "The uvicorn.run() call lacks try/except handling. If the port is already in use or host is invalid, uvicorn will raise socket.error or OSError. These exceptions will propagate unhandled, displaying a Python traceback to the user instead of a user-friendly error message. This is inconsistent with the port validation above which provides clear feedback.",
+        "line": 107,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/cli.py",
+        "severity": "Warning",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "No error handling for uvicorn.run() network failures"
+      },
+      {
+        "body": "**Missing return type annotation on hello() endpoint**\n\nThe hello() function lacks a return type annotation. While FastAPI handles the serialization correctly at runtime (dict → JSON), the missing annotation reduces code quality, IDE support, and would be flagged by type checkers like mypy or pyright in strict mode. The codebase already uses type annotations elsewhere (see cli.py imports and function signatures).\n\nRaised by: claude-code\n\nSuggested fix: def hello() -> dict:\\n    \"\"\"Hello endpoint that returns a JSON greeting.\"\"\"\\n    return {\"message\": \"Hello, Factory!\"}\n\nOr with explicit type: from typing import Dict\\ndef hello() -> Dict[str, str]:",
+        "category": "maintainability",
+        "description": "The hello() function lacks a return type annotation. While FastAPI handles the serialization correctly at runtime (dict → JSON), the missing annotation reduces code quality, IDE support, and would be flagged by type checkers like mypy or pyright in strict mode. The codebase already uses type annotations elsewhere (see cli.py imports and function signatures).",
+        "line": 8,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/server.py",
+        "severity": "Warning",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "Missing return type annotation on hello() endpoint"
+      },
+      {
+        "body": "**Port validation boundary conditions are correct**\n\nThe port validation correctly allows the full valid range 0-65535 (inclusive). Port 0 is valid (OS auto-assigns ephemeral port), port 65535 is the highest valid port. Negative values and values >65535 are properly rejected. This matches the focus area requirement and is correct.\n\nRaised by: claude-code",
+        "category": "correctness",
+        "description": "The port validation correctly allows the full valid range 0-65535 (inclusive). Port 0 is valid (OS auto-assigns ephemeral port), port 65535 is the highest valid port. Negative values and values >65535 are properly rejected. This matches the focus area requirement and is correct.",
+        "line": 105,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/cli.py",
+        "severity": "Info",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 103,
+        "start_side": "Right",
+        "title": "Port validation boundary conditions are correct"
+      },
+      {
+        "body": "**Dependency versions are appropriate and compatible**\n\nfastapi>=0.100 and uvicorn>=0.23 are reasonable version constraints. Both libraries support Python 3.10+ as required by the project. No obvious conflicts with existing dependencies (typer, pydantic, pyyaml, questionary, slack-sdk). Versions are stable and well-maintained. No compatibility issues detected.\n\nRaised by: claude-code",
+        "category": "correctness",
+        "description": "fastapi>=0.100 and uvicorn>=0.23 are reasonable version constraints. Both libraries support Python 3.10+ as required by the project. No obvious conflicts with existing dependencies (typer, pydantic, pyyaml, questionary, slack-sdk). Versions are stable and well-maintained. No compatibility issues detected.",
+        "line": 17,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "pyproject.toml",
+        "severity": "Info",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 16,
+        "start_side": "Right",
+        "title": "Dependency versions are appropriate and compatible"
+      }
+    ],
+    "overview_comment": {
+      "body": "## Crucible Review Summary\n\n- Issues: 5\n- Critical: 0, Warning: 3\n\n### Top Actions\n- [Warning] Host parameter lacks validation (factory/cli.py:96)\n- [Warning] No error handling for uvicorn.run() network failures (factory/cli.py:107)\n- [Warning] Missing return type annotation on hello() endpoint (factory/server.py:8)\n\n### Notable Issues\n- **Host parameter lacks validation** `factory/cli.py:96`: The host parameter accepts any string without validation (e.g., 'invalid-host!@#' or 'not-a-real-host-name'). Invalid hostnames will only be caught when uvicorn tries to bind, resulting in cryptic socket errors at runtime rather than immediate user-friendly feedback. The port parameter is validated proactively (lines 103-105), but host has no equivalent check.\n- **No error handling for uvicorn.run() network failures** `factory/cli.py:107`: The uvicorn.run() call lacks try/except handling. If the port is already in use or host is invalid, uvicorn will raise socket.error or OSError. These exceptions will propagate unhandled, displaying a Python traceback to the user instead of a user-friendly error message. This is inconsistent with the port validation above which provides clear feedback.\n- **Missing return type annotation on hello() endpoint** `factory/server.py:8`: The hello() function lacks a return type annotation. While FastAPI handles the serialization correctly at runtime (dict → JSON), the missing annotation reduces code quality, IDE support, and would be flagged by type checkers like mypy or pyright in strict mode. The codebase already uses type annotations elsewhere (see cli.py imports and function signatures).\n- **Port validation boundary conditions are correct** `factory/cli.py:103`: The port validation correctly allows the full valid range 0-65535 (inclusive). Port 0 is valid (OS auto-assigns ephemeral port), port 65535 is the highest valid port. Negative values and values >65535 are properly rejected. This matches the focus area requirement and is correct.\n- **Dependency versions are appropriate and compatible** `pyproject.toml:16`: fastapi>=0.100 and uvicorn>=0.23 are reasonable version constraints. Both libraries support Python 3.10+ as required by the project. No obvious conflicts with existing dependencies (typer, pydantic, pyyaml, questionary, slack-sdk). Versions are stable and well-maintained. No compatibility issues detected.\n"
+    },
+    "overview_only_comments": []
+  },
+  "run_id": "d0169890-be3c-48c6-a895-2cb4c3725ad5",
+  "session_id": "d0169890-be3c-48c6-a895-2cb4c3725ad5",
+  "system_context_markdown": "### System Context\n- Changed files: 3\n- Reference snippets: 0\n- History commits: 20\n- Docs snippets: 1\n- Deterministic prechecks: 2\n- Affected files:\n  - factory/cli.py\n  - factory/server.py\n  - pyproject.toml\n- Precheck results:\n  - untangle-analyze-report [Fail] error: unexpected argument '.' found\n\nUsage: untangle analyze [OPTIONS] <PATH>\n\nFor more information, try '--help'.\n  - untangle-quality-report [Fail] error: unrecognized subcommand 'quality'\n\nUsage: untangle <COMMAND>\n\nFor more information, try '--help'.\n",
+  "verdict": "Warn"
+}
+[run:d0169890-be3c-48c6-a895-2cb4c3725ad5]
+[2026-06-02 16:32:49.160 +10:00] [final-analysis]
+## Final Analysis
+
+- Issues: 5 (Critical: 0, Warning: 3, Info: 2)
+- Agent failures: 0
+
+### Top Issues
+- [Warning] Host parameter lacks validation `factory/cli.py:96`
+- [Warning] No error handling for uvicorn.run() network failures `factory/cli.py:107`
+- [Warning] Missing return type annotation on hello() endpoint `factory/server.py:8`
+- [Info] Port validation boundary conditions are correct `factory/cli.py:103`
+- [Info] Dependency versions are appropriate and compatible `pyproject.toml:16`
+
+### Action Plan
+- [Warning] Host parameter lacks validation (factory/cli.py:96)
+- [Warning] No error handling for uvicorn.run() network failures (factory/cli.py:107)
+- [Warning] Missing return type annotation on hello() endpoint (factory/server.py:8)
+
+[2026-06-02 16:32:49.160 +10:00] [pr-comment]
+## Crucible Review Summary
+
+- Issues: 5
+- Critical: 0, Warning: 3
+
+### Top Actions
+- [Warning] Host parameter lacks validation (factory/cli.py:96)
+- [Warning] No error handling for uvicorn.run() network failures (factory/cli.py:107)
+- [Warning] Missing return type annotation on hello() endpoint (factory/server.py:8)
+
+### Notable Issues
+- **Host parameter lacks validation** `factory/cli.py:96`: The host parameter accepts any string without validation (e.g., 'invalid-host!@#' or 'not-a-real-host-name'). Invalid hostnames will only be caught when uvicorn tries to bind, resulting in cryptic socket errors at runtime rather than immediate user-friendly feedback. The port parameter is validated proactively (lines 103-105), but host has no equivalent check.
+- **No error handling for uvicorn.run() network failures** `factory/cli.py:107`: The uvicorn.run() call lacks try/except handling. If the port is already in use or host is invalid, uvicorn will raise socket.error or OSError. These exceptions will propagate unhandled, displaying a Python traceback to the user instead of a user-friendly error message. This is inconsistent with the port validation above which provides clear feedback.
+- **Missing return type annotation on hello() endpoint** `factory/server.py:8`: The hello() function lacks a return type annotation. While FastAPI handles the serialization correctly at runtime (dict → JSON), the missing annotation reduces code quality, IDE support, and would be flagged by type checkers like mypy or pyright in strict mode. The codebase already uses type annotations elsewhere (see cli.py imports and function signatures).
+- **Port validation boundary conditions are correct** `factory/cli.py:103`: The port validation correctly allows the full valid range 0-65535 (inclusive). Port 0 is valid (OS auto-assigns ephemeral port), port 65535 is the highest valid port. Negative values and values >65535 are properly rejected. This matches the focus area requirement and is correct.
+- **Dependency versions are appropriate and compatible** `pyproject.toml:16`: fastapi>=0.100 and uvicorn>=0.23 are reasonable version constraints. Both libraries support Python 3.10+ as required by the project. No obvious conflicts with existing dependencies (typer, pydantic, pyyaml, questionary, slack-sdk). Versions are stable and well-maintained. No compatibility issues detected.
+

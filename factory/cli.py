@@ -1249,11 +1249,38 @@ def serve(
         typer.echo(f"Port must be between 0 and 65535, got {port}", err=True)
         raise typer.Exit(1)
 
-    from factory.server import app as server_app
-    import uvicorn
+    try:
+        from factory.server import app as server_app
+        import uvicorn
+    except ImportError as e:
+        typer.echo(
+            "FastAPI and uvicorn are required for the serve command. "
+            "Install with: pip install -e '.[server]'",
+            err=True,
+        )
+        raise typer.Exit(1)
 
     console.print(f"Starting server on http://{host}:{port}")
-    uvicorn.run(server_app, host=host, port=port)
+    try:
+        uvicorn.run(server_app, host=host, port=port)
+    except OSError as e:
+        if "Address already in use" in str(e) or "port is already in use" in str(e).lower():
+            typer.echo(
+                f"Port {port} is already in use. Try a different port with --port.",
+                err=True,
+            )
+        elif "Permission denied" in str(e):
+            typer.echo(
+                f"Permission denied binding to {host}:{port}. "
+                f"Ports below 1024 require administrative privileges.",
+                err=True,
+            )
+        else:
+            typer.echo(f"Failed to bind to {host}:{port}: {e}", err=True)
+        raise typer.Exit(1)
+    except KeyboardInterrupt:
+        console.print("\nServer stopped.")
+        raise typer.Exit(0)
 
 
 # ── entry point ───────────────────────────────────────────────────────────────

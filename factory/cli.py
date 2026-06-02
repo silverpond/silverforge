@@ -1035,6 +1035,24 @@ def poll(
     console.print()
 
 
+# ── serve ────────────────────────────────────────────────────────────────────
+
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host", "-H", help="Host to bind to"),
+    port: int = typer.Option(8000, "--port", "-p", help="Port to listen on"),
+) -> None:
+    """Start the HTTP API server."""
+    if port < 0 or port > 65535:
+        typer.echo(f"Port must be between 0 and 65535, got {port}", err=True)
+        raise typer.Exit(1)
+
+    import uvicorn
+    from factory.server import app
+
+    uvicorn.run(app, host=host, port=port)
+
+
 # ── slack-listen ─────────────────────────────────────────────────────────────
 
 @app.command(name="slack-listen")

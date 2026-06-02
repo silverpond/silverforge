@@ -471,3 +471,588 @@ Findings:
 - **Iteration-order dependency in crucible feedback** `factory/runner.py:210`: By moving the baseline forward after each iteration, the incremental diff strategy creates an implicit dependency on iteration order. Identical code changes in different iteration sequences will receive different crucible feedback because they compare against different bases. This reduces reproducibility: running the same task twice with different intermediate code states will generate different crucible comments for the same final code. While acknowledged as an intended trade-off in the summary, this should be documented in code or task YAML schema to prevent confusion.
 - **Document iteration-order dependency in crucible feedback** `factory/runner.py:210`: By moving the baseline forward after each iteration, the incremental diff strategy creates an implicit dependency on iteration order. Identical code changes in different iteration sequences will receive different crucible feedback because they compare against different bases. This reduces reproducibility: running the same task twice with different intermediate code states will generate different crucible comments for the same final code. While this is an acknowledged trade-off to prevent timeouts, it should be documented in code to prevent confusion during debugging or refactoring.
 
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:02:24.334 +10:00] [progress] startup:references started Scanning related references
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:02:24.338 +10:00] [progress] startup:history started Collecting recent history
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:02:24.338 +10:00] [progress] startup:docs started Loading docs context
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:05:29.702 +10:00] [progress] startup:references completed count=0 duration=0.1s Reference scan complete
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:05:29.702 +10:00] [progress] startup:history completed count=20 duration=0.1s History collection complete
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:05:29.702 +10:00] [progress] startup:docs completed count=1 duration=0.1s Docs collection complete
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:05:29.702 +10:00] [progress] startup:prechecks started Running prechecks
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:05:29.702 +10:00] [progress] startup:prechecks completed count=2 duration=0.1s Prechecks complete
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:05:29.702 +10:00] [progress] run:header reviewers=claude-code max_rounds=1 changed_files=3 changed_lines=30 convergence_enabled=false context_enabled=true
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:05:29.703 +10:00] [progress] phase:start analyzer
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:05:29.703 +10:00] [progress] analyzer:start
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:05:29.703 +10:00] [agent-chat] -> claude-code index 59d1509..11ba378 100644 console.print()
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:05:29.703 +10:00] [analysis]
+## Local Diff Analysis
+
+Added HTTP API server capability to Factory CLI via FastAPI integration. New `serve` command starts an HTTP server with configurable host/port, exposing a simple `/hello` endpoint. Dependencies added: fastapi>=0.100, uvicorn>=0.23. Separates HTTP server logic into dedicated factory/server.py module, enabling dual CLI/HTTP runtime modes.
+
+### Suggested Review Focus
+- Port validation edge cases: Port 0 is valid in Unix (OS-assigned dynamic port), but current validation `if port < 0 or port > 65535` will reject it. Clarify: should range be 0-65535 or 1-65535? If 0 is invalid, add explicit check.
+- Error handling for socket bind failures: No try/catch around uvicorn.run() for 'port already in use' or permission errors. Server startup failures will crash the CLI without user-friendly messaging.
+- Import placement and module coupling: uvicorn and factory.server imported inside serve() function. Verify: does this deferred-import pattern align with project conventions? Could mask missing dependencies until command execution.
+- API surface scope and scaling: Single /hello endpoint is minimal. Confirm scope: is this exploration/PoC phase, or should health-check/status endpoints be included for production use?
+- Host binding security and deployment: Default 127.0.0.1 is correct for dev, but users may need 0.0.0.0 for containerized/cloud deployments. Verify docs clarify security implications and guide users appropriately.
+
+### Trade-offs
+- Deferred imports improve CLI startup time when not using serve, but delay dependency validation until command runs
+- No error handling for socket bind failures — port conflicts or permission issues will crash the process ungracefully
+- No authentication, rate-limiting, or CORS on HTTP endpoints — acceptable for internal/dev use but should be documented explicitly
+- FastAPI app is minimal; scaling to multiple endpoints may require middleware decisions (logging, versioning, exception handlers)
+
+### Affected Modules
+- factory/cli.py — new serve command integrated with typer dispatcher
+- factory/server.py — new module, FastAPI app with /hello route
+- pyproject.toml — added fastapi>=0.100 and uvicorn>=0.23 dependencies
+
+### Call Chain
+- Entry: `factory serve` → typer.command dispatcher
+- factory.cli.serve() → port validation → import uvicorn, factory.server.app
+- uvicorn.run(app, host=host, port=port) → HTTP server startup
+- Client: GET /hello → FastAPI routing → factory.server.hello()
+- Response: 200 OK, Content-Type: application/json, Body: {"message": "hello"}
+
+### Design Patterns
+- REST API (FastAPI): decorator-based routing (@app.get) with type hints
+- CLI framework (Typer): option-based argument parsing with validation
+- Lazy imports: deferred module loading to avoid hard dependency on uvicorn/FastAPI unless serve command is used
+- Separation of concerns: HTTP layer (server.py) isolated from CLI layer (cli.py)
+
+### Reviewer Checklist
+- ✓ Verify port validation: is port 0 (OS-assigned dynamic port) truly invalid for this use case, or is the range check wrong?
+- ✓ Add error handling: wrap uvicorn.run() in try/except to catch AddressAlreadyInUse, PermissionError, and similar exceptions
+- ✓ Confirm dependency versions are compatible with Python 3.10+ requirement (fastapi>=0.100, uvicorn>=0.23)
+- ✓ Verify test coverage exists: unit tests for /hello endpoint, CLI integration tests for serve command with port validation
+- ✓ Review FastAPI configuration: determine if CORS, exception handlers, request/response middleware are needed
+- ✓ Validate no circular imports between factory.cli and factory.server modules
+- ✓ Check documentation: verify serve command is documented in CLAUDE.md or README with usage examples and security caveats
+- ✓ Assess expansion scope: are additional endpoints planned (health, status, metrics)? If so, consider app structure now.
+- ✓ Security review: confirm default 127.0.0.1 binding is intentional and document why 0.0.0.0 is not recommended
+
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:05:29.703 +10:00] [system-context]
+### System Context
+- Changed files: 3
+- Reference snippets: 0
+- History commits: 20
+- Docs snippets: 1
+- Deterministic prechecks: 2
+- Affected files:
+  - factory/cli.py
+  - factory/server.py
+  - pyproject.toml
+- Precheck results:
+  - untangle-analyze-report [Fail] error: unexpected argument '.' found
+
+Usage: untangle analyze [OPTIONS] <PATH>
+
+For more information, try '--help'.
+  - untangle-quality-report [Fail] error: unrecognized subcommand 'quality'
+
+Usage: untangle <COMMAND>
+
+For more information, try '--help'.
+
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:05:29.703 +10:00] [progress] analyzer:done
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:05:29.703 +10:00] [progress] phase:done analyzer
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:05:29.703 +10:00] [progress] phase:start agent-preflight
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:05:29.704 +10:00] [progress] phase:done agent-preflight
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:05:29.704 +10:00] [progress] phase:start round-1
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:05:29.704 +10:00] [progress] round:1 start (agents: claude-code)
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:05:29.704 +10:00] [progress] round:1 status [... claude-code]
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:05:29.704 +10:00] [progress] round:1 status [RUN claude-code]
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:05:29.704 +10:00] [progress] agent:start round=1 id=claude-code
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:05:29.704 +10:00] [agent-chat] -> claude-code index 59d1509..11ba378 100644 console.print()
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:05:29.704 +10:00] [agent-review] round=1 id=claude-code 7 findings (2 Critical, 2 Warning, 3 Info) | Review of Factory CLI HTTP API server integration (serve command, FastAPI app, dependencies). Code is functionally correct for basic endpoint serving but has critical gaps in error handling, test coverage, and security documentation. The serve() command lacks exception handling for common socket bind failures (port already in use, permission denied), which will cause ungraceful CLI crashes. Test files mentioned in project memory are missing entirely. Variable shadowing (local `app` shadows module-level typer `app`) reduces code clarity. Dependency versions are compatible with Python 3.10+.
+[agent-review] details:
+Narrative:
+Review of Factory CLI HTTP API server integration (serve command, FastAPI app, dependencies). Code is functionally correct for basic endpoint serving but has critical gaps in error handling, test coverage, and security documentation. The serve() command lacks exception handling for common socket bind failures (port already in use, permission denied), which will cause ungraceful CLI crashes. Test files mentioned in project memory are missing entirely. Variable shadowing (local `app` shadows module-level typer `app`) reduces code clarity. Dependency versions are compatible with Python 3.10+.
+
+Findings:
+- [Critical] factory/cli.py:1050-1053 Wrap uvicorn.run() in try/except to catch socket-related exceptions and provide clear error messages to the user.
+  description: The uvicorn.run() call has no try/except wrapper to handle common socket errors such as AddressAlreadyInUse (port already in use), PermissionError (non-root binding to privileged port), or OSError (network issues). When these errors occur, the CLI will crash with an unhandled exception instead of providing user-friendly error messages.
+- [Critical] <unknown> Create test suite for HTTP server functionality: unit tests for /hello endpoint (response format, content-type, HTTP methods) and CLI integration tests (port validation, host/port parameters, error handling for bind failures).
+  description: The project memory (MEMORY.md) explicitly lists test files that should exist: tests/test_server.py and tests/test_cli_serve.py. However, neither file exists in the worktree. These tests were described as covering endpoint functionality, CLI parameter validation, port validation edge cases, and HTTP method validation. The absence of these tests is a critical gap that prevents verification of the implementation.
+- [Warning] factory/cli.py:1051 Import the FastAPI app with an alias to avoid shadowing the module-level typer app object.
+  description: The import statement `from factory.server import app` creates a local variable `app` that shadows the module-level typer application object also named `app`. While technically correct due to function-local scope, this naming collision reduces code clarity and could lead to confusion during maintenance. The two `app` objects have completely different purposes (FastAPI vs Typer).
+- [Warning] factory/cli.py:1050-1051 Consider either: (1) keeping deferred imports but adding explicit error handling for ImportError, or (2) moving imports to module level if startup performance is not a concern.
+  description: The imports of uvicorn and factory.server are deferred to runtime (inside the serve() function) rather than at module load time. Although uvicorn and fastapi are now listed as required dependencies in pyproject.toml, deferred imports mean that import errors (due to incomplete installation, version conflicts, or environment issues) won't be detected until the serve command is explicitly invoked. The project memory mentions 'Eliminated unnecessary try/except ImportError handling' which suggests imports were previously guarded.
+- [Info] factory/cli.py:1042 Add documentation or warning about host binding security implications, especially if 0.0.0.0 is used.
+  description: The `--host` option defaults to '127.0.0.1' (loopback only), which is secure for development. However, users can override this to bind to '0.0.0.0' (all interfaces) without any warning or documentation about the security implications. If more endpoints are added in the future, exposing them to the network could be a significant security issue. There is no docstring or help text explaining the security trade-offs.
+- [Info] factory/cli.py:1046-1048 Clarify port validation message or explicitly document whether port 0 (OS-assigned dynamic port) is intended to be supported.
+  description: The error message states 'Port must be between 0 and 65535' but the check `if port < 0 or port > 65535` technically allows port 0 (OS-assigned dynamic port). While port 0 is valid in Unix systems for dynamic port assignment, the error message should clarify this, or the validation range should exclude 0 if dynamic ports are not intended.
+- [Info] factory/server.py:7-10 If future endpoints are planned, consider adding a base structure for middleware (logging, error handling, CORS) even if not used initially.
+  description: The /hello endpoint is extremely minimal and serves only as a PoC. However, no middleware, error handlers, or logging infrastructure is in place. If the API is intended to grow beyond a single endpoint, the current structure may need refactoring to add authentication, CORS, request/response logging, or exception handling.
+
+[agent-review]   [CRITICAL] factory/cli.py:1050 Wrap uvicorn.run() in try/except to catch socket-related exceptions and provide clear error messages to the user.
+[agent-review]   [CRITICAL] <unknown> Create test suite for HTTP server functionality: unit tests for /hello endpoint (response format, content-type, HTTP methods) and CLI integration tests (port validation, host/port parameters, error handling for bind failures).
+[agent-review]   [WARNING] factory/cli.py:1051 Import the FastAPI app with an alias to avoid shadowing the module-level typer app object.
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:05:29.705 +10:00] [progress] round:1 status [OK claude-code (96.4s)]
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:05:29.705 +10:00] [progress] agent:done round=1 id=claude-code
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:05:29.705 +10:00] [progress] round:1 done
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:05:29.705 +10:00] [progress] round:1/1 complete
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:05:29.705 +10:00] [progress] phase:done round-1
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:05:29.705 +10:00] [agent-chat] -> claude-code Normalize these findings into canonical issues (merge duplicates): [{"agent":"claude-code","severity":"Info","confidence":"Low","file":"factory/server.py","span":{"start":7,"end":1
+…
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:05:29.706 +10:00] [progress] phase:start finalize
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:05:29.706 +10:00] [agent-chat] -> claude-code Findings: [{"agent":"claude-code","severity":"Info","confidence":"Low","file":"factory/server.py","span":{"start":7,"end":10},"message":"If future endpoints are planned, consider a
+…
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:05:29.706 +10:00] [progress] autofix:ready
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:05:29.706 +10:00] [run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d] [2026-06-02 17:05:29.706 +10:00] [progress] phase:done finalize
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d]
+[2026-06-02 17:05:29.707 +10:00] [report]
+{
+  "agent_failures": [],
+  "analysis_markdown": "## Local Diff Analysis\n\nAdded HTTP API server capability to Factory CLI via FastAPI integration. New `serve` command starts an HTTP server with configurable host/port, exposing a simple `/hello` endpoint. Dependencies added: fastapi>=0.100, uvicorn>=0.23. Separates HTTP server logic into dedicated factory/server.py module, enabling dual CLI/HTTP runtime modes.\n\n### Suggested Review Focus\n- Port validation edge cases: Port 0 is valid in Unix (OS-assigned dynamic port), but current validation `if port < 0 or port > 65535` will reject it. Clarify: should range be 0-65535 or 1-65535? If 0 is invalid, add explicit check.\n- Error handling for socket bind failures: No try/catch around uvicorn.run() for 'port already in use' or permission errors. Server startup failures will crash the CLI without user-friendly messaging.\n- Import placement and module coupling: uvicorn and factory.server imported inside serve() function. Verify: does this deferred-import pattern align with project conventions? Could mask missing dependencies until command execution.\n- API surface scope and scaling: Single /hello endpoint is minimal. Confirm scope: is this exploration/PoC phase, or should health-check/status endpoints be included for production use?\n- Host binding security and deployment: Default 127.0.0.1 is correct for dev, but users may need 0.0.0.0 for containerized/cloud deployments. Verify docs clarify security implications and guide users appropriately.\n\n### Trade-offs\n- Deferred imports improve CLI startup time when not using serve, but delay dependency validation until command runs\n- No error handling for socket bind failures — port conflicts or permission issues will crash the process ungracefully\n- No authentication, rate-limiting, or CORS on HTTP endpoints — acceptable for internal/dev use but should be documented explicitly\n- FastAPI app is minimal; scaling to multiple endpoints may require middleware decisions (logging, versioning, exception handlers)\n\n### Affected Modules\n- factory/cli.py — new serve command integrated with typer dispatcher\n- factory/server.py — new module, FastAPI app with /hello route\n- pyproject.toml — added fastapi>=0.100 and uvicorn>=0.23 dependencies\n\n### Call Chain\n- Entry: `factory serve` → typer.command dispatcher\n- factory.cli.serve() → port validation → import uvicorn, factory.server.app\n- uvicorn.run(app, host=host, port=port) → HTTP server startup\n- Client: GET /hello → FastAPI routing → factory.server.hello()\n- Response: 200 OK, Content-Type: application/json, Body: {\"message\": \"hello\"}\n\n### Design Patterns\n- REST API (FastAPI): decorator-based routing (@app.get) with type hints\n- CLI framework (Typer): option-based argument parsing with validation\n- Lazy imports: deferred module loading to avoid hard dependency on uvicorn/FastAPI unless serve command is used\n- Separation of concerns: HTTP layer (server.py) isolated from CLI layer (cli.py)\n\n### Reviewer Checklist\n- ✓ Verify port validation: is port 0 (OS-assigned dynamic port) truly invalid for this use case, or is the range check wrong?\n- ✓ Add error handling: wrap uvicorn.run() in try/except to catch AddressAlreadyInUse, PermissionError, and similar exceptions\n- ✓ Confirm dependency versions are compatible with Python 3.10+ requirement (fastapi>=0.100, uvicorn>=0.23)\n- ✓ Verify test coverage exists: unit tests for /hello endpoint, CLI integration tests for serve command with port validation\n- ✓ Review FastAPI configuration: determine if CORS, exception handlers, request/response middleware are needed\n- ✓ Validate no circular imports between factory.cli and factory.server modules\n- ✓ Check documentation: verify serve command is documented in CLAUDE.md or README with usage examples and security caveats\n- ✓ Assess expansion scope: are additional endpoints planned (health, status, metrics)? If so, consider app structure now.\n- ✓ Security review: confirm default 127.0.0.1 binding is intentional and document why 0.0.0.0 is not recommended\n",
+  "auto_fix": {
+    "explanation": "## Unified Fix for Agreed Findings\n\nThis auto-fix addresses all five findings, prioritizing the two critical issues:\n\n### Critical Issues Fixed:\n\n**1. Socket Error Handling (factory/cli.py, lines 1050-1053)**\n- **Issue**: `uvicorn.run()` had no exception handling for AddressAlreadyInUse, PermissionError, or OSError\n- **Fix**: Added try/except block catching OSError with pattern-matched error messages:\n  - \"Address already in use\" → suggests trying different port\n  - \"Permission denied\" → suggests higher port number (>1024)\n  - Other errors → generic fallback message\n- **Impact**: Users now get actionable error messages instead of stack traces\n\n**2. Missing Test Files**\n- **Issue**: MEMORY.md referenced tests/test_server.py and tests/test_cli_serve.py but neither existed\n- **Fix**: \n  - **tests/test_server.py**: 5 endpoint tests covering response format, content-type, HTTP method validation, and 404 handling\n  - **tests/test_cli_serve.py**: 8 CLI tests with mocked uvicorn covering validation edge cases (port 0, 65535, negative, >65535), default/custom parameters, and socket error scenarios\n- **Impact**: Implementation is now fully testable and verifiable\n\n### Info Issues Fixed:\n\n**3. Port Validation Message Clarity (line 1046)**\n- **Issue**: Error message said \"between 0 and 65535\" but didn't explain port 0 is OS-assigned dynamic\n- **Fix**: Updated help text to clarify: \"(0 for OS-assigned dynamic port)\" and error message includes note\n- **Impact**: Prevents user confusion about port 0 validity\n\n**4. Security Warning for Host Binding (lines 1041-1045)**\n- **Issue**: No docstring warning about security implications of binding to 0.0.0.0\n- **Fix**: Added docstring with explicit warning about exposing to all interfaces\n- **Impact**: Users understand security trade-offs of host choice\n\n**5. Middleware Structure (factory/server.py)**\n- **Assessment**: Marked as optional for current PoC scope. Test infrastructure now provides the foundation for future middleware additions without refactoring required\n\n### Test Coverage Summary:\n- **Endpoint tests**: Response format, content-type, HTTP method handling, 404s\n- **CLI validation tests**: Boundary cases (0, 65535), invalid ranges, default behavior\n- **Error handling tests**: Port in use, permission denied with realistic OSError mocking\n\nAll fixes maintain backward compatibility while resolving critical gaps in error handling and test coverage.",
+    "unified_diff": "diff --git a/factory/cli.py b/factory/cli.py\nindex 11ba378..a1c2d3e 100644\n--- a/factory/cli.py\n+++ b/factory/cli.py\n@@ -1039,16 +1039,47 @@ def poll(\n \n @app.command()\n def serve(\n     host: str = typer.Option(\"127.0.0.1\", \"--host\", \"-H\", help=\"Host to bind to\"),\n     port: int = typer.Option(8000, \"--port\", \"-p\", help=\"Port to listen on (0 for OS-assigned dynamic port)\"),\n ) -> None:\n-    \"\"\"Start the HTTP API server.\"\"\"\n+    \"\"\"Start the HTTP API server.\n+    \n+    Warning: Binding to 0.0.0.0 exposes the server to all network interfaces.\n+    Use 127.0.0.1 (default) for local development only.\n+    \"\"\"\n     if port < 0 or port > 65535:\n-        typer.echo(f\"Port must be between 0 and 65535, got {port}\", err=True)\n+        typer.echo(f\"Port must be between 0 and 65535 (0=dynamic), got {port}\", err=True)\n         raise typer.Exit(1)\n \n-    import uvicorn\n-    from factory.server import app\n-\n-    uvicorn.run(app, host=host, port=port)\n+    try:\n+        import uvicorn\n+        from factory.server import app\n+\n+        uvicorn.run(app, host=host, port=port)\n+    except OSError as e:\n+        error_msg = str(e)\n+        if 'Address already in use' in error_msg or 'Address already in use' in error_msg:\n+            typer.echo(f\"Port {port} is already in use. Try a different port.\", err=True)\n+        elif 'Permission denied' in error_msg:\n+            typer.echo(f\"Permission denied binding to {host}:{port}. Try a higher port number (>1024).\", err=True)\n+        else:\n+            typer.echo(f\"Failed to start server: {e}\", err=True)\n+        raise typer.Exit(1)\n \n \n # ── slack-listen ─────────────────────────────────────────────────────────────\ndiff --git a/tests/test_server.py b/tests/test_server.py\nnew file mode 100644\nindex 0000000..1234567\n--- /dev/null\n+++ b/tests/test_server.py\n@@ -0,0 +1,36 @@\n+\"\"\"Tests for the HTTP API server.\"\"\"\n+import pytest\n+from fastapi.testclient import TestClient\n+\n+from factory.server import app\n+\n+\n+client = TestClient(app)\n+\n+\n+def test_hello_endpoint_returns_json():\n+    \"\"\"Test that /hello returns valid JSON response.\"\"\"\n+    response = client.get(\"/hello\")\n+    assert response.status_code == 200\n+    assert response.json() == {\"message\": \"hello\"}\n+\n+\n+def test_hello_endpoint_content_type():\n+    \"\"\"Test that /hello returns correct content type.\"\"\"\n+    response = client.get(\"/hello\")\n+    assert response.headers[\"content-type\"] == \"application/json\"\n+\n+\n+def test_hello_endpoint_post_not_allowed():\n+    \"\"\"Test that /hello rejects POST requests.\"\"\"\n+    response = client.post(\"/hello\")\n+    assert response.status_code == 405  # Method Not Allowed\n+\n+\n+def test_hello_endpoint_put_not_allowed():\n+    \"\"\"Test that /hello rejects PUT requests.\"\"\"\n+    response = client.put(\"/hello\")\n+    assert response.status_code == 405\n+\n+\n+def test_404_for_nonexistent_endpoint():\n+    \"\"\"Test that nonexistent endpoints return 404.\"\"\"\n+    response = client.get(\"/nonexistent\")\n+    assert response.status_code == 404\ndiff --git a/tests/test_cli_serve.py b/tests/test_cli_serve.py\nnew file mode 100644\nindex 0000000..2345678\n--- /dev/null\n+++ b/tests/test_cli_serve.py\n@@ -0,0 +1,67 @@\n+\"\"\"Tests for the serve CLI command.\"\"\"\n+from unittest.mock import patch, MagicMock\n+\n+import pytest\n+from typer.testing import CliRunner\n+\n+from factory.cli import app\n+\n+\n+runner = CliRunner()\n+\n+\n+def test_serve_port_validation_negative():\n+    \"\"\"Test that negative port numbers are rejected.\"\"\"\n+    result = runner.invoke(app, [\"serve\", \"--port\", \"-1\"])\n+    assert result.exit_code == 1\n+    assert \"Port must be between 0 and 65535\" in result.output\n+\n+\n+def test_serve_port_validation_too_high():\n+    \"\"\"Test that port numbers above 65535 are rejected.\"\"\"\n+    result = runner.invoke(app, [\"serve\", \"--port\", \"65536\"])\n+    assert result.exit_code == 1\n+    assert \"Port must be between 0 and 65535\" in result.output\n+\n+\n+def test_serve_port_zero_valid():\n+    \"\"\"Test that port 0 (OS-assigned dynamic port) passes validation.\"\"\"\n+    # Port 0 should pass validation (negative check fails for 0)\n+    # But we can't actually start the server, so we mock uvicorn.run\n+    with patch('uvicorn.run'):\n+        result = runner.invoke(app, [\"serve\", \"--port\", \"0\"])\n+        # Should not fail validation\n+        assert \"Port must be between 0 and 65535\" not in result.output\n+\n+\n+def test_serve_port_max_valid():\n+    \"\"\"Test that port 65535 (max valid port) passes validation.\"\"\"\n+    with patch('uvicorn.run'):\n+        result = runner.invoke(app, [\"serve\", \"--port\", \"65535\"])\n+        assert \"Port must be between 0 and 65535\" not in result.output\n+\n+\n+@patch('uvicorn.run')\n+def test_serve_default_host_and_port(mock_run):\n+    \"\"\"Test that default host and port are used.\"\"\"\n+    runner.invoke(app, [\"serve\"])\n+    mock_run.assert_called_once()\n+    call_kwargs = mock_run.call_args[1]\n+    assert call_kwargs['host'] == '127.0.0.1'\n+    assert call_kwargs['port'] == 8000\n+\n+\n+@patch('uvicorn.run')\n+def test_serve_custom_host_and_port(mock_run):\n+    \"\"\"Test that custom host and port are passed to uvicorn.\"\"\"\n+    runner.invoke(app, [\"serve\", \"--host\", \"0.0.0.0\", \"--port\", \"5000\"])\n+    call_kwargs = mock_run.call_args[1]\n+    assert call_kwargs['host'] == '0.0.0.0'\n+    assert call_kwargs['port'] == 5000\n+\n+\n+@patch('uvicorn.run')\n+def test_serve_address_already_in_use(mock_run):\n+    \"\"\"Test user-friendly error when port is already in use.\"\"\"\n+    mock_run.side_effect = OSError(\"Address already in use\")\n+    result = runner.invoke(app, [\"serve\", \"--port\", \"8000\"])\n+    assert result.exit_code == 1\n+    assert \"already in use\" in result.output\n+\n+\n+@patch('uvicorn.run')\n+def test_serve_permission_denied(mock_run):\n+    \"\"\"Test user-friendly error for privileged port permission denied.\"\"\"\n+    mock_run.side_effect = OSError(\"Permission denied\")\n+    result = runner.invoke(app, [\"serve\", \"--port\", \"80\"])\n+    assert result.exit_code == 1\n+    assert \"Permission denied\" in result.output\n"
+  },
+  "consensus": [
+    {
+      "agreed_count": 1,
+      "file": "factory/cli.py",
+      "reached_quorum": true,
+      "severity": "Critical",
+      "span": {
+        "end": 1053,
+        "start": 1050
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/cli.py",
+      "reached_quorum": true,
+      "severity": "Info",
+      "span": {
+        "end": 1048,
+        "start": 1046
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/cli.py",
+      "reached_quorum": true,
+      "severity": "Info",
+      "span": {
+        "end": 1042,
+        "start": 1042
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/server.py",
+      "reached_quorum": true,
+      "severity": "Info",
+      "span": {
+        "end": 10,
+        "start": 7
+      },
+      "total_agents": 1
+    }
+  ],
+  "final_action_plan": {
+    "prioritized_steps": [
+      "[Critical] Missing test files referenced in project memory (<unknown>)",
+      "[Critical] No error handling for socket bind failures in uvicorn.run() (factory/cli.py:1050)"
+    ],
+    "quick_wins": [
+      "[Info] No warning about security implications of host binding (factory/cli.py:1041)",
+      "[Info] No warning about security implications of host binding (factory/cli.py:1042)",
+      "[Info] Port validation message is inconsistent with actual behavior (factory/cli.py:1046)",
+      "[Info] Minimal endpoint implementation without future-proofing for scalability (factory/server.py:7)"
+    ]
+  },
+  "final_analysis_markdown": "## Final Analysis\n\n- Issues: 6 (Critical: 2, Warning: 0, Info: 4)\n- Agent failures: 0\n\n### Top Issues\n- [Critical] Missing test files referenced in project memory `<unknown>`\n- [Critical] No error handling for socket bind failures in uvicorn.run() `factory/cli.py:1050`\n- [Info] No warning about security implications of host binding `factory/cli.py:1041`\n- [Info] No warning about security implications of host binding `factory/cli.py:1042`\n- [Info] Port validation message is inconsistent with actual behavior `factory/cli.py:1046`\n- [Info] Minimal endpoint implementation without future-proofing for scalability `factory/server.py:7`\n\n### Action Plan\n- [Critical] Missing test files referenced in project memory (<unknown>)\n- [Critical] No error handling for socket bind failures in uvicorn.run() (factory/cli.py:1050)\n",
+  "findings": [
+    {
+      "agent": "claude-code",
+      "category": "style",
+      "confidence": "Low",
+      "description": "The /hello endpoint is extremely minimal and serves only as a PoC. However, no middleware, error handlers, or logging infrastructure is in place. If the API is intended to grow beyond a single endpoint, the current structure may need refactoring to add authentication, CORS, request/response logging, or exception handling.",
+      "evidence": [
+        {
+          "location": "factory/server.py:1-10",
+          "quote": "\"\"\"HTTP API server for Factory.\"\"\"\nfrom fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/hello\")\ndef hello() -> dict[str, str]:\n    \"\"\"Simple hello endpoint.\"\"\"\n    return {\"message\": \"hello\"}"
+        }
+      ],
+      "file": "factory/server.py",
+      "message": "If future endpoints are planned, consider adding a base structure for middleware (logging, error handling, CORS) even if not used initially.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Info",
+      "span": {
+        "end": 10,
+        "start": 7
+      },
+      "suggested_fix": "Consider adding a minimal middleware/exception handler structure:\n    from fastapi import FastAPI, Request\n    from fastapi.responses import JSONResponse\n    import logging\n    \n    logger = logging.getLogger(__name__)\n    app = FastAPI()\n    \n    @app.exception_handler(Exception)\n    async def global_exception_handler(request: Request, exc: Exception):\n        logger.error(f\"Unhandled exception: {exc}\")\n        return JSONResponse(\n            status_code=500,\n            content={\"error\": \"Internal server error\"},\n        )\n\nBut this is optional for current PoC scope.",
+      "title": "Minimal endpoint implementation without future-proofing for scalability"
+    },
+    {
+      "agent": "claude-code",
+      "category": "correctness",
+      "confidence": "Low",
+      "description": "The error message states 'Port must be between 0 and 65535' but the check `if port < 0 or port > 65535` technically allows port 0 (OS-assigned dynamic port). While port 0 is valid in Unix systems for dynamic port assignment, the error message should clarify this, or the validation range should exclude 0 if dynamic ports are not intended.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:1046-1048",
+          "quote": "if port < 0 or port > 65535:\n        typer.echo(f\"Port must be between 0 and 65535, got {port}\", err=True)"
+        }
+      ],
+      "file": "factory/cli.py",
+      "message": "Clarify port validation message or explicitly document whether port 0 (OS-assigned dynamic port) is intended to be supported.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Info",
+      "span": {
+        "end": 1048,
+        "start": 1046
+      },
+      "suggested_fix": "If port 0 is intentional (OS-assigned dynamic port):\n    Error message is correct as-is.\n\nIf port 0 should be rejected, change line 1046 to:\n    if port <= 0 or port > 65535:\n        typer.echo(f\"Port must be between 1 and 65535, got {port}\", err=True)\n\nIf supporting port 0, update the help text (line 1043) to clarify:\n    port: int = typer.Option(8000, \"--port\", \"-p\", help=\"Port to listen on (0 for OS-assigned dynamic port)\"),",
+      "title": "Port validation message is inconsistent with actual behavior"
+    },
+    {
+      "agent": "claude-code",
+      "category": "error_handling",
+      "confidence": "High",
+      "description": "The uvicorn.run() call has no try/except wrapper to handle common socket errors such as AddressAlreadyInUse (port already in use), PermissionError (non-root binding to privileged port), or OSError (network issues). When these errors occur, the CLI will crash with an unhandled exception instead of providing user-friendly error messages.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:1050-1053",
+          "quote": "import uvicorn\n    from factory.server import app\n\n    uvicorn.run(app, host=host, port=port)"
+        }
+      ],
+      "file": "factory/cli.py",
+      "message": "Wrap uvicorn.run() in try/except to catch socket-related exceptions and provide clear error messages to the user.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Critical",
+      "span": {
+        "end": 1053,
+        "start": 1050
+      },
+      "suggested_fix": "Replace lines 1050-1053 with:\n    try:\n        import uvicorn\n        from factory.server import app\n        uvicorn.run(app, host=host, port=port)\n    except OSError as e:\n        if 'Address already in use' in str(e):\n            typer.echo(f\"Port {port} is already in use. Try a different port.\", err=True)\n        elif 'Permission denied' in str(e):\n            typer.echo(f\"Permission denied binding to {host}:{port}. Try a higher port number (>1024).\", err=True)\n        else:\n            typer.echo(f\"Failed to start server: {e}\", err=True)\n        raise typer.Exit(1)",
+      "title": "No error handling for socket bind failures in uvicorn.run()"
+    },
+    {
+      "agent": "claude-code",
+      "category": "security",
+      "confidence": "Medium",
+      "description": "The `--host` option defaults to '127.0.0.1' (loopback only), which is secure for development. However, users can override this to bind to '0.0.0.0' (all interfaces) without any warning or documentation about the security implications. If more endpoints are added in the future, exposing them to the network could be a significant security issue. There is no docstring or help text explaining the security trade-offs.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:1041-1045",
+          "quote": "def serve(\n    host: str = typer.Option(\"127.0.0.1\", \"--host\", \"-H\", help=\"Host to bind to\"),\n    port: int = typer.Option(8000, \"--port\", \"-p\", help=\"Port to listen on\"),\n) -> None:\n    \"\"\"Start the HTTP API server.\"\"\""
+        }
+      ],
+      "file": "factory/cli.py",
+      "message": "Add documentation or warning about host binding security implications, especially if 0.0.0.0 is used.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Info",
+      "span": {
+        "end": 1042,
+        "start": 1042
+      },
+      "suggested_fix": "Add to the serve() docstring:\n    \"\"\"Start the HTTP API server.\n    \n    Warning: Binding to 0.0.0.0 exposes the server to all network interfaces.\n    Use 127.0.0.1 (default) for local development only.\n    \"\"\"\n\nOr add explicit validation:\n    if host == \"0.0.0.0\":\n        typer.echo(\"Warning: Binding to 0.0.0.0 exposes server to all network interfaces!\", err=False)\n        typer.echo(\"Use --host 127.0.0.1 for local development only.\", err=False)",
+      "title": "No warning about security implications of host binding"
+    },
+    {
+      "agent": "claude-code",
+      "category": "testing",
+      "confidence": "High",
+      "description": "The project memory (MEMORY.md) explicitly lists test files that should exist: tests/test_server.py and tests/test_cli_serve.py. However, neither file exists in the worktree. These tests were described as covering endpoint functionality, CLI parameter validation, port validation edge cases, and HTTP method validation. The absence of these tests is a critical gap that prevents verification of the implementation.",
+      "evidence": [
+        {
+          "location": "MEMORY.md (not shown in diff)",
+          "quote": "### Files Modified:\n- **tests/test_server.py**: Endpoint unit tests (JSON response, content type, method validation, 404 handling)\n- **tests/test_cli_serve.py**: CLI command tests (port validation, host/port parameters)"
+        }
+      ],
+      "file": null,
+      "message": "Create test suite for HTTP server functionality: unit tests for /hello endpoint (response format, content-type, HTTP methods) and CLI integration tests (port validation, host/port parameters, error handling for bind failures).",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Critical",
+      "span": null,
+      "suggested_fix": "Add tests/test_server.py with endpoint tests and tests/test_cli_serve.py with CLI command tests, covering both success cases and error scenarios (port already in use, invalid port numbers, permission denied on privileged ports).",
+      "title": "Missing test files referenced in project memory"
+    }
+  ],
+  "issues": [
+    {
+      "category": "testing",
+      "description": "The project memory (MEMORY.md) explicitly lists test files that should exist: tests/test_server.py and tests/test_cli_serve.py. However, neither file exists in the worktree. These tests were described as covering endpoint functionality, CLI parameter validation, port validation edge cases, and HTTP method validation. The absence of these tests is a critical gap that prevents verification of the implementation.",
+      "evidence": [
+        {
+          "location": "MEMORY.md (not shown in diff)",
+          "quote": "### Files Modified:\n- **tests/test_server.py**: Endpoint unit tests (JSON response, content type, method validation, 404 handling)\n- **tests/test_cli_serve.py**: CLI command tests (port validation, host/port parameters)"
+        }
+      ],
+      "file": null,
+      "line_end": null,
+      "line_start": null,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Critical",
+      "suggested_fix": "Add tests/test_server.py with endpoint tests and tests/test_cli_serve.py with CLI command tests, covering both success cases and error scenarios (port already in use, invalid port numbers, permission denied on privileged ports).",
+      "title": "Missing test files referenced in project memory"
+    },
+    {
+      "category": "error_handling",
+      "description": "The uvicorn.run() call has no try/except wrapper to handle common socket errors such as AddressAlreadyInUse (port already in use), PermissionError (non-root binding to privileged port), or OSError (network issues). When these errors occur, the CLI will crash with an unhandled exception instead of providing user-friendly error messages.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:1050-1053",
+          "quote": "import uvicorn\n    from factory.server import app\n\n    uvicorn.run(app, host=host, port=port)"
+        }
+      ],
+      "file": "factory/cli.py",
+      "line_end": 1053,
+      "line_start": 1050,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Critical",
+      "suggested_fix": "Replace lines 1050-1053 with:\n    try:\n        import uvicorn\n        from factory.server import app\n        uvicorn.run(app, host=host, port=port)\n    except OSError as e:\n        if 'Address already in use' in str(e):\n            typer.echo(f\"Port {port} is already in use. Try a different port.\", err=True)\n        elif 'Permission denied' in str(e):\n            typer.echo(f\"Permission denied binding to {host}:{port}. Try a higher port number (>1024).\", err=True)\n        else:\n            typer.echo(f\"Failed to start server: {e}\", err=True)\n        raise typer.Exit(1)",
+      "title": "No error handling for socket bind failures in uvicorn.run()"
+    },
+    {
+      "category": "security",
+      "description": "The `--host` option defaults to '127.0.0.1' (secure) but users can override this to '0.0.0.0' without any warning about exposing the server to all network interfaces. There is no docstring or help text explaining the security trade-offs.",
+      "evidence": [],
+      "file": "factory/cli.py",
+      "line_end": 1045,
+      "line_start": 1041,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Info",
+      "suggested_fix": "Add documentation to serve() docstring warning about 0.0.0.0 binding, or add a runtime warning if host equals '0.0.0.0' to inform users of the security implications.",
+      "title": "No warning about security implications of host binding"
+    },
+    {
+      "category": "security",
+      "description": "The `--host` option defaults to '127.0.0.1' (loopback only), which is secure for development. However, users can override this to bind to '0.0.0.0' (all interfaces) without any warning or documentation about the security implications. If more endpoints are added in the future, exposing them to the network could be a significant security issue. There is no docstring or help text explaining the security trade-offs.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:1041-1045",
+          "quote": "def serve(\n    host: str = typer.Option(\"127.0.0.1\", \"--host\", \"-H\", help=\"Host to bind to\"),\n    port: int = typer.Option(8000, \"--port\", \"-p\", help=\"Port to listen on\"),\n) -> None:\n    \"\"\"Start the HTTP API server.\"\"\""
+        }
+      ],
+      "file": "factory/cli.py",
+      "line_end": 1042,
+      "line_start": 1042,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Info",
+      "suggested_fix": "Add to the serve() docstring:\n    \"\"\"Start the HTTP API server.\n    \n    Warning: Binding to 0.0.0.0 exposes the server to all network interfaces.\n    Use 127.0.0.1 (default) for local development only.\n    \"\"\"\n\nOr add explicit validation:\n    if host == \"0.0.0.0\":\n        typer.echo(\"Warning: Binding to 0.0.0.0 exposes server to all network interfaces!\", err=False)\n        typer.echo(\"Use --host 127.0.0.1 for local development only.\", err=False)",
+      "title": "No warning about security implications of host binding"
+    },
+    {
+      "category": "correctness",
+      "description": "The error message states 'Port must be between 0 and 65535' but the check `if port < 0 or port > 65535` technically allows port 0 (OS-assigned dynamic port). While port 0 is valid in Unix systems for dynamic port assignment, the error message should clarify this, or the validation range should exclude 0 if dynamic ports are not intended.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:1046-1048",
+          "quote": "if port < 0 or port > 65535:\n        typer.echo(f\"Port must be between 0 and 65535, got {port}\", err=True)"
+        }
+      ],
+      "file": "factory/cli.py",
+      "line_end": 1048,
+      "line_start": 1046,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Info",
+      "suggested_fix": "If port 0 is intentional (OS-assigned dynamic port):\n    Error message is correct as-is.\n\nIf port 0 should be rejected, change line 1046 to:\n    if port <= 0 or port > 65535:\n        typer.echo(f\"Port must be between 1 and 65535, got {port}\", err=True)\n\nIf supporting port 0, update the help text (line 1043) to clarify:\n    port: int = typer.Option(8000, \"--port\", \"-p\", help=\"Port to listen on (0 for OS-assigned dynamic port)\"),",
+      "title": "Port validation message is inconsistent with actual behavior"
+    },
+    {
+      "category": "style",
+      "description": "The /hello endpoint is extremely minimal and serves only as a PoC. However, no middleware, error handlers, or logging infrastructure is in place. If the API is intended to grow beyond a single endpoint, the current structure may need refactoring to add authentication, CORS, request/response logging, or exception handling.",
+      "evidence": [
+        {
+          "location": "factory/server.py:1-10",
+          "quote": "\"\"\"HTTP API server for Factory.\"\"\"\nfrom fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/hello\")\ndef hello() -> dict[str, str]:\n    \"\"\"Simple hello endpoint.\"\"\"\n    return {\"message\": \"hello\"}"
+        }
+      ],
+      "file": "factory/server.py",
+      "line_end": 10,
+      "line_start": 7,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Info",
+      "suggested_fix": "Consider adding a minimal middleware/exception handler structure:\n    from fastapi import FastAPI, Request\n    from fastapi.responses import JSONResponse\n    import logging\n    \n    logger = logging.getLogger(__name__)\n    app = FastAPI()\n    \n    @app.exception_handler(Exception)\n    async def global_exception_handler(request: Request, exc: Exception):\n        logger.error(f\"Unhandled exception: {exc}\")\n        return JSONResponse(\n            status_code=500,\n            content={\"error\": \"Internal server error\"},\n        )\n\nBut this is optional for current PoC scope.",
+      "title": "Minimal endpoint implementation without future-proofing for scalability"
+    }
+  ],
+  "pr_comment_markdown": "## Crucible Review Summary\n\n- Issues: 6\n- Critical: 2, Warning: 0\n\n### Top Actions\n- [Critical] Missing test files referenced in project memory (<unknown>)\n- [Critical] No error handling for socket bind failures in uvicorn.run() (factory/cli.py:1050)\n\n### Notable Issues\n- **Missing test files referenced in project memory** `<unknown>`: The project memory (MEMORY.md) explicitly lists test files that should exist: tests/test_server.py and tests/test_cli_serve.py. However, neither file exists in the worktree. These tests were described as covering endpoint functionality, CLI parameter validation, port validation edge cases, and HTTP method validation. The absence of these tests is a critical gap that prevents verification of the implementation.\n- **No error handling for socket bind failures in uvicorn.run()** `factory/cli.py:1050`: The uvicorn.run() call has no try/except wrapper to handle common socket errors such as AddressAlreadyInUse (port already in use), PermissionError (non-root binding to privileged port), or OSError (network issues). When these errors occur, the CLI will crash with an unhandled exception instead of providing user-friendly error messages.\n- **No warning about security implications of host binding** `factory/cli.py:1041`: The `--host` option defaults to '127.0.0.1' (secure) but users can override this to '0.0.0.0' without any warning about exposing the server to all network interfaces. There is no docstring or help text explaining the security trade-offs.\n- **No warning about security implications of host binding** `factory/cli.py:1042`: The `--host` option defaults to '127.0.0.1' (loopback only), which is secure for development. However, users can override this to bind to '0.0.0.0' (all interfaces) without any warning or documentation about the security implications. If more endpoints are added in the future, exposing them to the network could be a significant security issue. There is no docstring or help text explaining the security trade-offs.\n- **Port validation message is inconsistent with actual behavior** `factory/cli.py:1046`: The error message states 'Port must be between 0 and 65535' but the check `if port < 0 or port > 65535` technically allows port 0 (OS-assigned dynamic port). While port 0 is valid in Unix systems for dynamic port assignment, the error message should clarify this, or the validation range should exclude 0 if dynamic ports are not intended.\n- **Minimal endpoint implementation without future-proofing for scalability** `factory/server.py:7`: The /hello endpoint is extremely minimal and serves only as a PoC. However, no middleware, error handlers, or logging infrastructure is in place. If the API is intended to grow beyond a single endpoint, the current structure may need refactoring to add authentication, CORS, request/response logging, or exception handling.\n",
+  "pr_review_draft": {
+    "inline_comments": [
+      {
+        "body": "**No error handling for socket bind failures in uvicorn.run()**\n\nThe uvicorn.run() call has no try/except wrapper to handle common socket errors such as AddressAlreadyInUse (port already in use), PermissionError (non-root binding to privileged port), or OSError (network issues). When these errors occur, the CLI will crash with an unhandled exception instead of providing user-friendly error messages.\n\nRaised by: claude-code\n\nSuggested fix: Replace lines 1050-1053 with:\n    try:\n        import uvicorn\n        from factory.server import app\n        uvicorn.run(app, host=host, port=port)\n    except OSError as e:\n        if 'Address already in use' in str(e):\n            typer.echo(f\"Port {port} is already in use. Try a different port.\", err=True)\n        elif 'Permission denied' in str(e):\n            typer.echo(f\"Permission denied binding to {host}:{port}. Try a higher port number (>1024).\", err=True)\n        else:\n            typer.echo(f\"Failed to start server: {e}\", err=True)\n        raise typer.Exit(1)",
+        "category": "error_handling",
+        "description": "The uvicorn.run() call has no try/except wrapper to handle common socket errors such as AddressAlreadyInUse (port already in use), PermissionError (non-root binding to privileged port), or OSError (network issues). When these errors occur, the CLI will crash with an unhandled exception instead of providing user-friendly error messages.",
+        "line": 1053,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/cli.py",
+        "severity": "Critical",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 1050,
+        "start_side": "Right",
+        "title": "No error handling for socket bind failures in uvicorn.run()"
+      },
+      {
+        "body": "**No warning about security implications of host binding**\n\nThe `--host` option defaults to '127.0.0.1' (secure) but users can override this to '0.0.0.0' without any warning about exposing the server to all network interfaces. There is no docstring or help text explaining the security trade-offs.\n\nRaised by: claude-code\n\nSuggested fix: Add documentation to serve() docstring warning about 0.0.0.0 binding, or add a runtime warning if host equals '0.0.0.0' to inform users of the security implications.",
+        "category": "security",
+        "description": "The `--host` option defaults to '127.0.0.1' (secure) but users can override this to '0.0.0.0' without any warning about exposing the server to all network interfaces. There is no docstring or help text explaining the security trade-offs.",
+        "line": 1045,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/cli.py",
+        "severity": "Info",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 1041,
+        "start_side": "Right",
+        "title": "No warning about security implications of host binding"
+      },
+      {
+        "body": "**No warning about security implications of host binding**\n\nThe `--host` option defaults to '127.0.0.1' (loopback only), which is secure for development. However, users can override this to bind to '0.0.0.0' (all interfaces) without any warning or documentation about the security implications. If more endpoints are added in the future, exposing them to the network could be a significant security issue. There is no docstring or help text explaining the security trade-offs.\n\nRaised by: claude-code\n\nSuggested fix: Add to the serve() docstring:\n    \"\"\"Start the HTTP API server.\n    \n    Warning: Binding to 0.0.0.0 exposes the server to all network interfaces.\n    Use 127.0.0.1 (default) for local development only.\n    \"\"\"\n\nOr add explicit validation:\n    if host == \"0.0.0.0\":\n        typer.echo(\"Warning: Binding to 0.0.0.0 exposes server to all network interfaces!\", err=False)\n        typer.echo(\"Use --host 127.0.0.1 for local development only.\", err=False)",
+        "category": "security",
+        "description": "The `--host` option defaults to '127.0.0.1' (loopback only), which is secure for development. However, users can override this to bind to '0.0.0.0' (all interfaces) without any warning or documentation about the security implications. If more endpoints are added in the future, exposing them to the network could be a significant security issue. There is no docstring or help text explaining the security trade-offs.",
+        "line": 1042,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/cli.py",
+        "severity": "Info",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "No warning about security implications of host binding"
+      },
+      {
+        "body": "**Port validation message is inconsistent with actual behavior**\n\nThe error message states 'Port must be between 0 and 65535' but the check `if port < 0 or port > 65535` technically allows port 0 (OS-assigned dynamic port). While port 0 is valid in Unix systems for dynamic port assignment, the error message should clarify this, or the validation range should exclude 0 if dynamic ports are not intended.\n\nRaised by: claude-code\n\nSuggested fix: If port 0 is intentional (OS-assigned dynamic port):\n    Error message is correct as-is.\n\nIf port 0 should be rejected, change line 1046 to:\n    if port <= 0 or port > 65535:\n        typer.echo(f\"Port must be between 1 and 65535, got {port}\", err=True)\n\nIf supporting port 0, update the help text (line 1043) to clarify:\n    port: int = typer.Option(8000, \"--port\", \"-p\", help=\"Port to listen on (0 for OS-assigned dynamic port)\"),",
+        "category": "correctness",
+        "description": "The error message states 'Port must be between 0 and 65535' but the check `if port < 0 or port > 65535` technically allows port 0 (OS-assigned dynamic port). While port 0 is valid in Unix systems for dynamic port assignment, the error message should clarify this, or the validation range should exclude 0 if dynamic ports are not intended.",
+        "line": 1048,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/cli.py",
+        "severity": "Info",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 1046,
+        "start_side": "Right",
+        "title": "Port validation message is inconsistent with actual behavior"
+      },
+      {
+        "body": "**Minimal endpoint implementation without future-proofing for scalability**\n\nThe /hello endpoint is extremely minimal and serves only as a PoC. However, no middleware, error handlers, or logging infrastructure is in place. If the API is intended to grow beyond a single endpoint, the current structure may need refactoring to add authentication, CORS, request/response logging, or exception handling.\n\nRaised by: claude-code\n\nSuggested fix: Consider adding a minimal middleware/exception handler structure:\n    from fastapi import FastAPI, Request\n    from fastapi.responses import JSONResponse\n    import logging\n    \n    logger = logging.getLogger(__name__)\n    app = FastAPI()\n    \n    @app.exception_handler(Exception)\n    async def global_exception_handler(request: Request, exc: Exception):\n        logger.error(f\"Unhandled exception: {exc}\")\n        return JSONResponse(\n            status_code=500,\n            content={\"error\": \"Internal server error\"},\n        )\n\nBut this is optional for current PoC scope.",
+        "category": "style",
+        "description": "The /hello endpoint is extremely minimal and serves only as a PoC. However, no middleware, error handlers, or logging infrastructure is in place. If the API is intended to grow beyond a single endpoint, the current structure may need refactoring to add authentication, CORS, request/response logging, or exception handling.",
+        "line": 10,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/server.py",
+        "severity": "Info",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 7,
+        "start_side": "Right",
+        "title": "Minimal endpoint implementation without future-proofing for scalability"
+      }
+    ],
+    "overview_comment": {
+      "body": "## Crucible Review Summary\n\n- Issues: 6\n- Critical: 2, Warning: 0\n\n### Top Actions\n- [Critical] Missing test files referenced in project memory (<unknown>)\n- [Critical] No error handling for socket bind failures in uvicorn.run() (factory/cli.py:1050)\n\n### Notable Issues\n- **Missing test files referenced in project memory** `<unknown>`: The project memory (MEMORY.md) explicitly lists test files that should exist: tests/test_server.py and tests/test_cli_serve.py. However, neither file exists in the worktree. These tests were described as covering endpoint functionality, CLI parameter validation, port validation edge cases, and HTTP method validation. The absence of these tests is a critical gap that prevents verification of the implementation.\n- **No error handling for socket bind failures in uvicorn.run()** `factory/cli.py:1050`: The uvicorn.run() call has no try/except wrapper to handle common socket errors such as AddressAlreadyInUse (port already in use), PermissionError (non-root binding to privileged port), or OSError (network issues). When these errors occur, the CLI will crash with an unhandled exception instead of providing user-friendly error messages.\n- **No warning about security implications of host binding** `factory/cli.py:1041`: The `--host` option defaults to '127.0.0.1' (secure) but users can override this to '0.0.0.0' without any warning about exposing the server to all network interfaces. There is no docstring or help text explaining the security trade-offs.\n- **No warning about security implications of host binding** `factory/cli.py:1042`: The `--host` option defaults to '127.0.0.1' (loopback only), which is secure for development. However, users can override this to bind to '0.0.0.0' (all interfaces) without any warning or documentation about the security implications. If more endpoints are added in the future, exposing them to the network could be a significant security issue. There is no docstring or help text explaining the security trade-offs.\n- **Port validation message is inconsistent with actual behavior** `factory/cli.py:1046`: The error message states 'Port must be between 0 and 65535' but the check `if port < 0 or port > 65535` technically allows port 0 (OS-assigned dynamic port). While port 0 is valid in Unix systems for dynamic port assignment, the error message should clarify this, or the validation range should exclude 0 if dynamic ports are not intended.\n- **Minimal endpoint implementation without future-proofing for scalability** `factory/server.py:7`: The /hello endpoint is extremely minimal and serves only as a PoC. However, no middleware, error handlers, or logging infrastructure is in place. If the API is intended to grow beyond a single endpoint, the current structure may need refactoring to add authentication, CORS, request/response logging, or exception handling.\n"
+    },
+    "overview_only_comments": [
+      {
+        "body": "**Missing test files referenced in project memory**\n\nThe project memory (MEMORY.md) explicitly lists test files that should exist: tests/test_server.py and tests/test_cli_serve.py. However, neither file exists in the worktree. These tests were described as covering endpoint functionality, CLI parameter validation, port validation edge cases, and HTTP method validation. The absence of these tests is a critical gap that prevents verification of the implementation.\n\nRaised by: claude-code\n\nSuggested fix: Add tests/test_server.py with endpoint tests and tests/test_cli_serve.py with CLI command tests, covering both success cases and error scenarios (port already in use, invalid port numbers, permission denied on privileged ports).",
+        "category": "testing",
+        "description": "The project memory (MEMORY.md) explicitly lists test files that should exist: tests/test_server.py and tests/test_cli_serve.py. However, neither file exists in the worktree. These tests were described as covering endpoint functionality, CLI parameter validation, port validation edge cases, and HTTP method validation. The absence of these tests is a critical gap that prevents verification of the implementation.",
+        "line": null,
+        "mapping_note": "Issue could not be mapped to a changed diff hunk",
+        "mapping_status": "OverviewOnly",
+        "path": null,
+        "severity": "Critical",
+        "side": null,
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "Missing test files referenced in project memory"
+      }
+    ]
+  },
+  "run_id": "64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d",
+  "session_id": "64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d",
+  "system_context_markdown": "### System Context\n- Changed files: 3\n- Reference snippets: 0\n- History commits: 20\n- Docs snippets: 1\n- Deterministic prechecks: 2\n- Affected files:\n  - factory/cli.py\n  - factory/server.py\n  - pyproject.toml\n- Precheck results:\n  - untangle-analyze-report [Fail] error: unexpected argument '.' found\n\nUsage: untangle analyze [OPTIONS] <PATH>\n\nFor more information, try '--help'.\n  - untangle-quality-report [Fail] error: unrecognized subcommand 'quality'\n\nUsage: untangle <COMMAND>\n\nFor more information, try '--help'.\n",
+  "verdict": "Block"
+}
+[run:64e3cb5d-4f2e-4425-b2bd-001cad2fdb2d]
+[2026-06-02 17:05:29.707 +10:00] [final-analysis]
+## Final Analysis
+
+- Issues: 6 (Critical: 2, Warning: 0, Info: 4)
+- Agent failures: 0
+
+### Top Issues
+- [Critical] Missing test files referenced in project memory `<unknown>`
+- [Critical] No error handling for socket bind failures in uvicorn.run() `factory/cli.py:1050`
+- [Info] No warning about security implications of host binding `factory/cli.py:1041`
+- [Info] No warning about security implications of host binding `factory/cli.py:1042`
+- [Info] Port validation message is inconsistent with actual behavior `factory/cli.py:1046`
+- [Info] Minimal endpoint implementation without future-proofing for scalability `factory/server.py:7`
+
+### Action Plan
+- [Critical] Missing test files referenced in project memory (<unknown>)
+- [Critical] No error handling for socket bind failures in uvicorn.run() (factory/cli.py:1050)
+
+[2026-06-02 17:05:29.707 +10:00] [pr-comment]
+## Crucible Review Summary
+
+- Issues: 6
+- Critical: 2, Warning: 0
+
+### Top Actions
+- [Critical] Missing test files referenced in project memory (<unknown>)
+- [Critical] No error handling for socket bind failures in uvicorn.run() (factory/cli.py:1050)
+
+### Notable Issues
+- **Missing test files referenced in project memory** `<unknown>`: The project memory (MEMORY.md) explicitly lists test files that should exist: tests/test_server.py and tests/test_cli_serve.py. However, neither file exists in the worktree. These tests were described as covering endpoint functionality, CLI parameter validation, port validation edge cases, and HTTP method validation. The absence of these tests is a critical gap that prevents verification of the implementation.
+- **No error handling for socket bind failures in uvicorn.run()** `factory/cli.py:1050`: The uvicorn.run() call has no try/except wrapper to handle common socket errors such as AddressAlreadyInUse (port already in use), PermissionError (non-root binding to privileged port), or OSError (network issues). When these errors occur, the CLI will crash with an unhandled exception instead of providing user-friendly error messages.
+- **No warning about security implications of host binding** `factory/cli.py:1041`: The `--host` option defaults to '127.0.0.1' (secure) but users can override this to '0.0.0.0' without any warning about exposing the server to all network interfaces. There is no docstring or help text explaining the security trade-offs.
+- **No warning about security implications of host binding** `factory/cli.py:1042`: The `--host` option defaults to '127.0.0.1' (loopback only), which is secure for development. However, users can override this to bind to '0.0.0.0' (all interfaces) without any warning or documentation about the security implications. If more endpoints are added in the future, exposing them to the network could be a significant security issue. There is no docstring or help text explaining the security trade-offs.
+- **Port validation message is inconsistent with actual behavior** `factory/cli.py:1046`: The error message states 'Port must be between 0 and 65535' but the check `if port < 0 or port > 65535` technically allows port 0 (OS-assigned dynamic port). While port 0 is valid in Unix systems for dynamic port assignment, the error message should clarify this, or the validation range should exclude 0 if dynamic ports are not intended.
+- **Minimal endpoint implementation without future-proofing for scalability** `factory/server.py:7`: The /hello endpoint is extremely minimal and serves only as a PoC. However, no middleware, error handlers, or logging infrastructure is in place. If the API is intended to grow beyond a single endpoint, the current structure may need refactoring to add authentication, CORS, request/response logging, or exception handling.
+

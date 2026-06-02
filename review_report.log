@@ -471,3 +471,860 @@ Findings:
 - **Iteration-order dependency in crucible feedback** `factory/runner.py:210`: By moving the baseline forward after each iteration, the incremental diff strategy creates an implicit dependency on iteration order. Identical code changes in different iteration sequences will receive different crucible feedback because they compare against different bases. This reduces reproducibility: running the same task twice with different intermediate code states will generate different crucible comments for the same final code. While acknowledged as an intended trade-off in the summary, this should be documented in code or task YAML schema to prevent confusion.
 - **Document iteration-order dependency in crucible feedback** `factory/runner.py:210`: By moving the baseline forward after each iteration, the incremental diff strategy creates an implicit dependency on iteration order. Identical code changes in different iteration sequences will receive different crucible feedback because they compare against different bases. This reduces reproducibility: running the same task twice with different intermediate code states will generate different crucible comments for the same final code. While this is an acknowledged trade-off to prevent timeouts, it should be documented in code to prevent confusion during debugging or refactoring.
 
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:09:27.361 +10:00] [progress] startup:references started Scanning related references
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:09:27.361 +10:00] [progress] startup:history started Collecting recent history
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:09:27.362 +10:00] [progress] startup:docs started Loading docs context
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:11:56.260 +10:00] [progress] startup:references completed count=0 duration=0.6s Reference scan complete
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:11:56.261 +10:00] [progress] startup:history completed count=20 duration=0.6s History collection complete
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:11:56.261 +10:00] [progress] startup:docs completed count=1 duration=0.6s Docs collection complete
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:11:56.262 +10:00] [progress] startup:prechecks started Running prechecks
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:11:56.262 +10:00] [progress] startup:prechecks completed count=2 duration=0.3s Prechecks complete
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:11:56.262 +10:00] [progress] run:header reviewers=claude-code max_rounds=1 changed_files=5 changed_lines=133 convergence_enabled=false context_enabled=true
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:11:56.263 +10:00] [progress] phase:start analyzer
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:11:56.263 +10:00] [progress] analyzer:start
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:11:56.263 +10:00] [agent-chat] -> claude-code index 59d1509..76e08e0 100644 sm_client.close()
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:11:56.264 +10:00] [analysis]
+## Local Diff Analysis
+
+Added HTTP API server capability to the Factory CLI tool using FastAPI. The change introduces a new `serve` command that launches an HTTP server with a `/hello` endpoint. New `factory/server.py` module defines the FastAPI application, `factory/cli.py` adds the `serve` command with port validation (0-65535), and dependencies include `fastapi>=0.100` and `uvicorn>=0.23`. Comprehensive test coverage verifies endpoint responses, HTTP method restrictions, and CLI port validation. This enables Factory to operate as both a CLI tool and HTTP API service, expanding integration possibilities.
+
+### Suggested Review Focus
+- Dependency Management: fastapi and uvicorn added as hard dependencies increase package footprint. Optional test dependencies (pytest, httpx) must not break standard installs. Verify dependency resolution and version compatibility across common environments.
+- Port Validation Logic: Port range check (0-65535) is standard but edge cases matter: port 0 triggers OS auto-selection. Verify validation doesn't interfere with legitimate use cases and error messaging is clear.
+- Test Coverage Gaps: CLI tests use `catch_exceptions=False` and verify validation logic only, not actual uvicorn execution. Tests don't mock uvicorn.run(), so they validate input but not integration. Consider whether this testing strategy sufficiently covers runtime behavior.
+- Server Extensibility: Current `/hello` endpoint is minimal. Verify that the module structure supports clean addition of new endpoints and doesn't create architectural constraints for future HTTP API features.
+- String-based Module Import: uvicorn.run() uses string path `"factory.server:app"` for lazy loading. Verify this pattern doesn't create import-time errors and that factory.server remains independently importable.
+
+### Trade-offs
+- fastapi and uvicorn as hard dependencies increase package size; consider if HTTP API is core functionality or could be optional
+- uvicorn configured with `reload=False` is production-appropriate but may surprise developers expecting auto-reload in dev mode
+- Port validation in CLI doesn't prevent OS permission errors for ports < 1024 on Unix systems; error handling relies on uvicorn to report those
+- Test coverage validates CLI argument parsing but doesn't verify full end-to-end server execution due to uvicorn.run() side effects
+- Minimal `/hello` endpoint with no request/response validation; future endpoints may need schema validation, error handling patterns
+
+### Affected Modules
+- factory.cli: New `serve` command added to Typer app
+- factory.server: New FastAPI application module with /hello endpoint
+- pyproject.toml: Dependencies and optional test extras modified
+- tests/test_server.py: New test suite for FastAPI endpoints
+- tests/test_cli_serve.py: New test suite for CLI command validation
+
+### Call Chain
+- CLI: `factory serve [--host HOST] [--port PORT]`
+- → serve() validates port range (0 ≤ port ≤ 65535)
+- → uvicorn.run('factory.server:app', host=host, port=port, reload=False)
+- → factory.server module imported, FastAPI app instantiated
+- → HTTP requests routed to /hello endpoint (@app.get) or return 404
+
+### Design Patterns
+- Decorator Pattern: FastAPI @app.get() for route registration
+- Dependency Injection: pytest fixtures for TestClient setup
+- Lazy Module Loading: String-based app reference for uvicorn
+- CLI Framework: Typer command decorators for argument parsing
+- Separation of Concerns: CLI launcher (factory/cli.py) vs. API definition (factory/server.py)
+
+### Reviewer Checklist
+- [ ] Verify fastapi>=0.100 and uvicorn>=0.23 are compatible and tested together
+- [ ] Confirm optional test dependencies don't break non-test installs (test extra should be truly optional)
+- [ ] Check that port validation message goes to stderr (typer.echo with err=True) and exit code is 1 for clarity
+- [ ] Verify factory.server module can be imported independently without CLI dependencies
+- [ ] Confirm uvicorn.run() string path 'factory.server:app' resolves correctly in all deployment contexts
+- [ ] Review test strategy: consider if uvicorn.run() should be mocked/stubbed to test full CLI integration without side effects
+- [ ] Check if /hello endpoint needs response model validation (Pydantic BaseModel) for future extensibility
+- [ ] Verify no CORS, logging, or security middleware is needed for initial release (or document why it's safe to omit)
+- [ ] Confirm reload=False is intentional and document why auto-reload is disabled for this serve command
+- [ ] Review if 404 handling is sufficient or if custom error responses are needed for API consistency
+
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:11:56.264 +10:00] [system-context]
+### System Context
+- Changed files: 5
+- Reference snippets: 0
+- History commits: 20
+- Docs snippets: 1
+- Deterministic prechecks: 2
+- Affected files:
+  - factory/cli.py
+  - factory/server.py
+  - pyproject.toml
+  - tests/test_cli_serve.py
+  - tests/test_server.py
+- Precheck results:
+  - untangle-analyze-report [Fail] error: unexpected argument '.' found
+
+Usage: untangle analyze [OPTIONS] <PATH>
+
+For more information, try '--help'.
+  - untangle-quality-report [Fail] error: unrecognized subcommand 'quality'
+
+Usage: untangle <COMMAND>
+
+For more information, try '--help'.
+
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:11:56.264 +10:00] [progress] analyzer:done
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:11:56.264 +10:00] [progress] phase:done analyzer
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:11:56.265 +10:00] [progress] phase:start agent-preflight
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:11:56.265 +10:00] [progress] phase:done agent-preflight
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:11:56.265 +10:00] [progress] phase:start round-1
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:11:56.266 +10:00] [progress] round:1 start (agents: claude-code)
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:11:56.267 +10:00] [progress] round:1 status [... claude-code]
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:11:56.268 +10:00] [progress] round:1 status [RUN claude-code]
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:11:56.268 +10:00] [progress] agent:start round=1 id=claude-code
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:11:56.268 +10:00] [agent-chat] -> claude-code index 59d1509..76e08e0 100644 sm_client.close()
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:11:56.269 +10:00] [agent-review] round=1 id=claude-code 6 findings (2 Critical, 1 Warning, 3 Info) | Code review identified 2 critical test correctness issues and 4 additional concerns. Primary issues: (1) Test assertions check result.stdout but error messages use err=True (stderr), causing validation tests to fail silently; (2) Valid port tests use catch_exceptions=False without mocking uvicorn.run(), attempting real server startup with weak assertions that pass by accident. The serve() CLI command logic is sound (port validation is correct), the FastAPI server is minimal but correct, and dependencies are properly configured. However, the test suite has design flaws that must be fixed before merge.
+[agent-review] details:
+Narrative:
+Code review identified 2 critical test correctness issues and 4 additional concerns. Primary issues: (1) Test assertions check result.stdout but error messages use err=True (stderr), causing validation tests to fail silently; (2) Valid port tests use catch_exceptions=False without mocking uvicorn.run(), attempting real server startup with weak assertions that pass by accident. The serve() CLI command logic is sound (port validation is correct), the FastAPI server is minimal but correct, and dependencies are properly configured. However, the test suite has design flaws that must be fixed before merge.
+
+Findings:
+- [Critical] tests/test_cli_serve.py:14-21 Fix test assertions to check result.output (combined stdout+stderr) instead of result.stdout, or verify CliRunner captures stderr separately. When using typer.echo(..., err=True), the output goes to stderr and won't appear in stdout.
+  description: The serve() function writes validation error messages to stderr using typer.echo(..., err=True), but test assertions check result.stdout which captures only stdout. This means error messages will not be found in result.stdout, and the assertions will fail silently. The typer.echo() call at cli.py:1251 explicitly uses err=True to send output to stderr, but the tests at lines 14 and 21 check 'result.stdout' instead of 'result.output' or implementing proper stderr capture. This is a fundamental test correctness issue.
+- [Critical] tests/test_cli_serve.py:28-51 Mock uvicorn.run() in tests instead of attempting actual startup. Refactor assertions to explicitly verify the validation logic passes (no exception, exit_code != 1) before uvicorn.run() is called.
+  description: Tests for valid port values (lines 28, 35, 42, 49) use catch_exceptions=False but do not mock uvicorn.run(). This causes the tests to attempt actual server startup during test execution. The assertions (e.g., line 30: 'assert result.exit_code != 1 or "Port must be between" not in result.stdout') are logically weak and will pass even if uvicorn.run() raises an unhandled exception (exit_code would be 2, making the first OR condition true). This creates tests that appear to pass but don't actually validate CLI behavior. Additionally, attempting real server startup on test infrastructure can hang, fail unpredictably, or consume ports.
+- [Warning] factory/cli.py:1243-1245 Add host validation in the serve() function to reject clearly invalid hostnames/IPs before calling uvicorn.run(). Provide clear error messages for common mistakes.
+  description: The serve() function accepts the host parameter with no validation, allowing invalid hostnames or malformed IP addresses. Examples of invalid values that would be accepted: 'invalid@host', '999.999.999.999', 'host:::', etc. While uvicorn.run() will eventually reject these, the CLI should fail fast with clear error messages. Current behavior delays error reporting until uvicorn initialization. Best practice for CLI tools is to validate inputs at the CLI layer before passing to downstream services.
+- [Info] factory/cli.py:1248-1254 Add docstring note or comment explaining that uvicorn uses string-based app import, which requires factory.server to be importable and app to be defined at module level.
+  description: The serve() function uses uvicorn.run("factory.server:app", ...) with a string reference to the app module. This lazy-loading pattern is standard for uvicorn but relies on factory.server being importable from the current working directory and the app object being at module level. While this works in normal deployment contexts, it could fail silently in some edge cases (sandboxed environments, unusual import paths). The pattern should be documented to clarify this dependency.
+- [Info] factory/server.py:7-10 Consider defining a Pydantic response model for the /hello endpoint and documenting the pattern for future endpoints. Example: class HelloResponse(BaseModel): message: str; @app.get('/hello', response_model=HelloResponse)
+  description: The /hello endpoint has no Pydantic response model and no error handling patterns. While the minimal endpoint is correct, it doesn't establish patterns for future endpoint development. Future endpoints may need: (1) Pydantic BaseModel response validation, (2) consistent error response format, (3) request validation, (4) logging/instrumentation. The current structure doesn't guide developers on these patterns.
+- [Info] factory/server.py:1-4 Document whether CORS support is needed for this API and add appropriate middleware if serving external clients. If intentionally omitting for now, add a comment explaining why.
+  description: The FastAPI application has no CORS configuration, security headers, or logging middleware. While not critical for initial release (especially if the API is internal-only), omitting CORS can prevent browser-based clients from calling the API. This should be explicitly documented as a deployment decision rather than an oversight.
+
+[agent-review]   [CRITICAL] tests/test_cli_serve.py:14 Fix test assertions to check result.output (combined stdout+stderr) instead of result.stdout, or verify CliRunner captures stderr separately. When using typer.echo(..., err=True), the output goes to stderr and won't appear in stdout.
+[agent-review]   [CRITICAL] tests/test_cli_serve.py:28 Mock uvicorn.run() in tests instead of attempting actual startup. Refactor assertions to explicitly verify the validation logic passes (no exception, exit_code != 1) before uvicorn.run() is called.
+[agent-review]   [WARNING] factory/cli.py:1243 Add host validation in the serve() function to reject clearly invalid hostnames/IPs before calling uvicorn.run(). Provide clear error messages for common mistakes.
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:11:56.270 +10:00] [progress] round:1 status [OK claude-code (69.7s)]
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:11:56.270 +10:00] [progress] agent:done round=1 id=claude-code
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:11:56.271 +10:00] [progress] round:1 done
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:11:56.271 +10:00] [progress] round:1/1 complete
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:11:56.271 +10:00] [progress] phase:done round-1
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:11:56.271 +10:00] [agent-chat] -> claude-code Normalize these findings into canonical issues (merge duplicates): [{"agent":"claude-code","severity":"Critical","confidence":"High","file":"tests/test_cli_serve.py","span":{"start
+…
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:11:56.272 +10:00] [progress] phase:start finalize
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:11:56.272 +10:00] [agent-chat] -> claude-code Findings: [{"agent":"claude-code","severity":"Critical","confidence":"High","file":"tests/test_cli_serve.py","span":{"start":14,"end":21},"message":"Fix test assertions to check re
+…
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:11:56.272 +10:00] [progress] autofix:ready
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:11:56.273 +10:00] [run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b] [2026-06-02 16:11:56.273 +10:00] [progress] phase:done finalize
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b]
+[2026-06-02 16:11:56.277 +10:00] [report]
+{
+  "agent_failures": [],
+  "analysis_markdown": "## Local Diff Analysis\n\nAdded HTTP API server capability to the Factory CLI tool using FastAPI. The change introduces a new `serve` command that launches an HTTP server with a `/hello` endpoint. New `factory/server.py` module defines the FastAPI application, `factory/cli.py` adds the `serve` command with port validation (0-65535), and dependencies include `fastapi>=0.100` and `uvicorn>=0.23`. Comprehensive test coverage verifies endpoint responses, HTTP method restrictions, and CLI port validation. This enables Factory to operate as both a CLI tool and HTTP API service, expanding integration possibilities.\n\n### Suggested Review Focus\n- Dependency Management: fastapi and uvicorn added as hard dependencies increase package footprint. Optional test dependencies (pytest, httpx) must not break standard installs. Verify dependency resolution and version compatibility across common environments.\n- Port Validation Logic: Port range check (0-65535) is standard but edge cases matter: port 0 triggers OS auto-selection. Verify validation doesn't interfere with legitimate use cases and error messaging is clear.\n- Test Coverage Gaps: CLI tests use `catch_exceptions=False` and verify validation logic only, not actual uvicorn execution. Tests don't mock uvicorn.run(), so they validate input but not integration. Consider whether this testing strategy sufficiently covers runtime behavior.\n- Server Extensibility: Current `/hello` endpoint is minimal. Verify that the module structure supports clean addition of new endpoints and doesn't create architectural constraints for future HTTP API features.\n- String-based Module Import: uvicorn.run() uses string path `\"factory.server:app\"` for lazy loading. Verify this pattern doesn't create import-time errors and that factory.server remains independently importable.\n\n### Trade-offs\n- fastapi and uvicorn as hard dependencies increase package size; consider if HTTP API is core functionality or could be optional\n- uvicorn configured with `reload=False` is production-appropriate but may surprise developers expecting auto-reload in dev mode\n- Port validation in CLI doesn't prevent OS permission errors for ports < 1024 on Unix systems; error handling relies on uvicorn to report those\n- Test coverage validates CLI argument parsing but doesn't verify full end-to-end server execution due to uvicorn.run() side effects\n- Minimal `/hello` endpoint with no request/response validation; future endpoints may need schema validation, error handling patterns\n\n### Affected Modules\n- factory.cli: New `serve` command added to Typer app\n- factory.server: New FastAPI application module with /hello endpoint\n- pyproject.toml: Dependencies and optional test extras modified\n- tests/test_server.py: New test suite for FastAPI endpoints\n- tests/test_cli_serve.py: New test suite for CLI command validation\n\n### Call Chain\n- CLI: `factory serve [--host HOST] [--port PORT]`\n- → serve() validates port range (0 ≤ port ≤ 65535)\n- → uvicorn.run('factory.server:app', host=host, port=port, reload=False)\n- → factory.server module imported, FastAPI app instantiated\n- → HTTP requests routed to /hello endpoint (@app.get) or return 404\n\n### Design Patterns\n- Decorator Pattern: FastAPI @app.get() for route registration\n- Dependency Injection: pytest fixtures for TestClient setup\n- Lazy Module Loading: String-based app reference for uvicorn\n- CLI Framework: Typer command decorators for argument parsing\n- Separation of Concerns: CLI launcher (factory/cli.py) vs. API definition (factory/server.py)\n\n### Reviewer Checklist\n- [ ] Verify fastapi>=0.100 and uvicorn>=0.23 are compatible and tested together\n- [ ] Confirm optional test dependencies don't break non-test installs (test extra should be truly optional)\n- [ ] Check that port validation message goes to stderr (typer.echo with err=True) and exit code is 1 for clarity\n- [ ] Verify factory.server module can be imported independently without CLI dependencies\n- [ ] Confirm uvicorn.run() string path 'factory.server:app' resolves correctly in all deployment contexts\n- [ ] Review test strategy: consider if uvicorn.run() should be mocked/stubbed to test full CLI integration without side effects\n- [ ] Check if /hello endpoint needs response model validation (Pydantic BaseModel) for future extensibility\n- [ ] Verify no CORS, logging, or security middleware is needed for initial release (or document why it's safe to omit)\n- [ ] Confirm reload=False is intentional and document why auto-reload is disabled for this serve command\n- [ ] Review if 404 handling is sufficient or if custom error responses are needed for API consistency\n",
+  "auto_fix": {
+    "explanation": "## Auto-Fix Resolution\n\n### Critical Issues Fixed\n\n1. **Test Output Stream Mismatch (severity: Critical)**\n   - **Problem**: Tests at lines 14 & 21 check `result.stdout` for errors written to stderr via `typer.echo(..., err=True)`. The assertion will silently fail because stderr output is never captured in stdout.\n   - **Fix**: Changed `result.stdout` to `result.output` which captures both stdout and stderr combined.\n   - **Files**: `tests/test_cli_serve.py` lines 14, 21 → lines 17, 22\n\n2. **Unmocked uvicorn.run() in Tests (severity: Critical)**\n   - **Problem**: Tests at lines 28-51 attempt real server startup without mocking. Assertions use weak OR logic (`result.exit_code != 1 or ...`) that passes even if uvicorn raises unhandled exceptions. This causes test hangs/failures on CI and doesn't validate CLI behavior.\n   - **Fix**: Added `@patch('factory.cli.uvicorn.run')` decorator to all valid-port tests. Tests now verify:\n     - Exit code is 0 (validation passed)\n     - Mock uvicorn.run was called with correct host/port parameters\n   - **Files**: `tests/test_cli_serve.py` lines 28-51 completely refactored\n\n3. **Missing Host Validation (severity: Warning)**\n   - **Problem**: `serve()` accepts any string for host without validation, allowing malformed IPs/hostnames. Errors only appear at uvicorn initialization.\n   - **Fix**: Added socket validation using `socket.inet_pton()` for IPv4/IPv6 and basic hostname validation. Returns clear error message on invalid input, matching port validation pattern.\n   - **Files**: `factory/cli.py` lines 1248-1259 expanded to include host validation\n\n### Maintainability Issues Fixed\n\n4. **Missing Pydantic Response Model (severity: Info)**\n   - **Problem**: No response model establishes patterns for future API development, reducing type safety and automatic OpenAPI documentation.\n   - **Fix**: Added `HelloResponse(BaseModel)` class and applied `response_model=HelloResponse` to endpoint decorator.\n   - **Files**: `factory/server.py` lines 7-17\n\n5. **Undocumented String-Based Import Pattern (severity: Info)**\n   - **Problem**: `uvicorn.run(\"factory.server:app\", ...)` uses lazy-loading but this pattern isn't documented, creating confusion about import path requirements.\n   - **Fix**: Added inline comment explaining the lazy-loading requirement.\n   - **Files**: `factory/cli.py` line 1268\n\n6. **No CORS/Security Documentation (severity: Info)**\n   - **Problem**: API has no CORS configuration; this should be explicitly documented as intentional rather than an oversight.\n   - **Fix**: Added comment in `factory/server.py` explaining CORS is intentionally omitted; document how to enable if needed.\n   - **Files**: `factory/server.py` line 16\n\n### Test Coverage Additions\n\n- Added `test_serve_invalid_host()` to validate host parameter rejection\n- Added `test_serve_ipv6_host()` to verify IPv6 address support\n- All valid-port tests now properly mock uvicorn.run and verify mock call parameters\n- Existing `test_server.py` remains unchanged (already comprehensive)\n\n### Summary\n\nAll critical issues (output stream, unmocked server startup, missing validation) are resolved. Tests now provide genuine validation of CLI behavior rather than brittle, partially-working assertions. The implementation establishes clear patterns for future API and CLI development with proper Pydantic models, input validation, and documented design decisions.",
+    "unified_diff": "diff --git a/factory/cli.py b/factory/cli.py\nindex 59d1509..76e08e0 100644\n--- a/factory/cli.py\n+++ b/factory/cli.py\n@@ -1237,6 +1237,38 @@ def slack_listen(\n         sm_client.close()\n \n \n+# ── serve ─────────────────────────────────────────────────────────────────\n+\n+@app.command()\n+def serve(\n+    host: str = typer.Option(\"127.0.0.1\", \"--host\", \"-h\", help=\"Host to bind to\"),\n+    port: int = typer.Option(8000, \"--port\", \"-p\", help=\"Port to bind to\"),\n+) -> None:\n+    \"\"\"Start the FastAPI server.\"\"\"\n+    import socket\n+    import uvicorn\n+\n+    # Validate port range\n+    if not (0 <= port <= 65535):\n+        typer.echo(f\"Port must be between 0 and 65535, got {port}\", err=True)\n+        raise typer.Exit(1)\n+\n+    # Validate host (accept IPv4, IPv6, or hostname)\n+    try:\n+        # Try parsing as IPv4\n+        socket.inet_pton(socket.AF_INET, host)\n+    except (OSError, socket.error):\n+        try:\n+            # Try parsing as IPv6\n+            socket.inet_pton(socket.AF_INET6, host)\n+        except (OSError, socket.error):\n+            # Assume it's a hostname; basic validation\n+            if not host or any(c in host for c in ['@', ':', '\\\\']):\n+                typer.echo(f\"Invalid host: {host}\", err=True)\n+                raise typer.Exit(1)\n+\n+    # uvicorn uses string-based app import; requires factory.server to be importable\n+    uvicorn.run(\"factory.server:app\", host=host, port=port, reload=False)\n+\n \n # ── entry point ───────────────────────────────────────────────────────────────\n \ndiff --git a/factory/server.py b/factory/server.py\nindex 0000000..5917406 100644\n--- a/factory/server.py\n+++ b/factory/server.py\n@@ -0,0 +1,15 @@\n+\"\"\"FastAPI server for Silverpond Factory.\"\"\"\n+from fastapi import FastAPI\n+from pydantic import BaseModel\n+\n+app = FastAPI()\n+\n+\n+class HelloResponse(BaseModel):\n+    \"\"\"Response model for /hello endpoint.\"\"\"\n+\n+    message: str\n+\n+\n+@app.get(\"/hello\", response_model=HelloResponse)\n+def hello():\n+    \"\"\"Return a simple hello message.\"\"\"\n+    # CORS is intentionally not configured; enable if external client access is needed\n+    return {\"message\": \"hello\"}\n\nmax 5917406diff --git a/pyproject.toml b/pyproject.toml\nindex 23b4060..5ab57d5 100644\n--- a/pyproject.toml\n+++ b/pyproject.toml\n@@ -13,6 +13,14 @@ dependencies = [\n     \"pyyaml>=6\",\n     \"questionary>=2\",\n     \"slack-sdk>=3.19\",\n+    \"fastapi>=0.100\",\n+    \"uvicorn>=0.23\",\n+]\n+\n+[project.optional-dependencies]\n+test = [\n+    \"pytest>=7\",\n+    \"httpx>=0.24\",\n ]\n \n [tool.setuptools.packages.find]\n\ndiff --git a/tests/test_cli_serve.py b/tests/test_cli_serve.py\nindex 0000000..6d9f8ef 100644\n--- a/tests/test_cli_serve.py\n+++ b/tests/test_cli_serve.py\n@@ -0,0 +1,68 @@\n+\"\"\"Tests for the serve CLI command.\"\"\"\n+from unittest.mock import patch, MagicMock\n+\n+import pytest\n+from typer.testing import CliRunner\n+from factory.cli import app\n+\n+\n+runner = CliRunner()\n+\n+\n+def test_serve_invalid_port_negative():\n+    \"\"\"Test that negative port numbers are rejected.\"\"\"\n+    result = runner.invoke(app, [\"serve\", \"--port\", \"-1\"])\n+    assert result.exit_code == 1\n+    # Check result.output (combined stdout+stderr) instead of result.stdout\n+    assert \"Port must be between 0 and 65535\" in result.output\n+\n+\n+def test_serve_invalid_port_too_high():\n+    \"\"\"Test that ports above 65535 are rejected.\"\"\"\n+    result = runner.invoke(app, [\"serve\", \"--port\", \"65536\"])\n+    assert result.exit_code == 1\n+    # Check result.output (combined stdout+stderr) instead of result.stdout\n+    assert \"Port must be between 0 and 65535\" in result.output\n+\n+\n+def test_serve_invalid_host():\n+    \"\"\"Test that invalid hostnames are rejected.\"\"\"\n+    result = runner.invoke(app, [\"serve\", \"--host\", \"invalid@host\"])\n+    assert result.exit_code == 1\n+    assert \"Invalid host\" in result.output\n+\n+\n+@patch(\"factory.cli.uvicorn.run\")\n+def test_serve_valid_port_zero(mock_uvicorn):\n+    \"\"\"Test that port 0 is accepted (auto-selection).\"\"\"\n+    result = runner.invoke(app, [\"serve\", \"--port\", \"0\"])\n+    assert result.exit_code == 0\n+    mock_uvicorn.assert_called_once_with(\n+        \"factory.server:app\", host=\"127.0.0.1\", port=0, reload=False\n+    )\n+\n+\n+@patch(\"factory.cli.uvicorn.run\")\n+def test_serve_valid_port_max(mock_uvicorn):\n+    \"\"\"Test that port 65535 is accepted.\"\"\"\n+    result = runner.invoke(app, [\"serve\", \"--port\", \"65535\"])\n+    assert result.exit_code == 0\n+    mock_uvicorn.assert_called_once_with(\n+        \"factory.server:app\", host=\"127.0.0.1\", port=65535, reload=False\n+    )\n+\n+\n+@patch(\"factory.cli.uvicorn.run\")\n+def test_serve_custom_host(mock_uvicorn):\n+    \"\"\"Test that custom IPv4 host is accepted.\"\"\"\n+    result = runner.invoke(app, [\"serve\", \"--host\", \"0.0.0.0\", \"--port\", \"5000\"])\n+    assert result.exit_code == 0\n+    mock_uvicorn.assert_called_once_with(\n+        \"factory.server:app\", host=\"0.0.0.0\", port=5000, reload=False\n+    )\n+\n+\n+@patch(\"factory.cli.uvicorn.run\")\n+def test_serve_default_host_port(mock_uvicorn):\n+    \"\"\"Test that serve command uses default host and port.\"\"\"\n+    result = runner.invoke(app, [\"serve\"])\n+    assert result.exit_code == 0\n+    mock_uvicorn.assert_called_once_with(\n+        \"factory.server:app\", host=\"127.0.0.1\", port=8000, reload=False\n+    )\n\n@patch(\"factory.cli.uvicorn.run\")\n+def test_serve_ipv6_host(mock_uvicorn):\n+    \"\"\"Test that IPv6 addresses are accepted.\"\"\"\n+    result = runner.invoke(app, [\"serve\", \"--host\", \"::\"])\n+    assert result.exit_code == 0\n+    mock_uvicorn.assert_called_once_with(\n+        \"factory.server:app\", host=\"::\", port=8000, reload=False\n+    )\n\ndiff --git a/tests/test_server.py b/tests/test_server.py\nindex 0000000..054eb83 100644\n--- a/tests/test_server.py\n+++ b/tests/test_server.py\n@@ -0,0 +1,47 @@\n+\"\"\"Tests for the FastAPI server.\"\"\"\n+import pytest\n+from fastapi.testclient import TestClient\n+from factory.server import app\n+\n+\n+@pytest.fixture\n+def client():\n+    \"\"\"FastAPI test client.\"\"\"\n+    return TestClient(app)\n+\n+\n+def test_hello_endpoint(client):\n+    \"\"\"Test that /hello endpoint returns correct JSON.\"\"\"\n+    response = client.get(\"/hello\")\n+    assert response.status_code == 200\n+    assert response.json() == {\"message\": \"hello\"}\n+\n+\n+def test_hello_content_type(client):\n+    \"\"\"Test that /hello endpoint returns JSON content type.\"\"\"\n+    response = client.get(\"/hello\")\n+    assert response.headers[\"content-type\"] == \"application/json\"\n+\n+\n+def test_hello_post_not_allowed(client):\n+    \"\"\"Test that POST requests to /hello are not allowed.\"\"\"\n+    response = client.post(\"/hello\")\n+    assert response.status_code == 405\n+\n+\n+def test_hello_put_not_allowed(client):\n+    \"\"\"Test that PUT requests to /hello are not allowed.\"\"\"\n+    response = client.put(\"/hello\")\n+    assert response.status_code == 405\n+\n+\n+def test_hello_delete_not_allowed(client):\n+    \"\"\"Test that DELETE requests to /hello are not allowed.\"\"\"\n+    response = client.delete(\"/hello\")\n+    assert response.status_code == 405\n+\n+\n+def test_nonexistent_endpoint(client):\n+    \"\"\"Test that nonexistent endpoints return 404.\"\"\"\n+    response = client.get(\"/nonexistent\")\n+    assert response.status_code == 404"
+  },
+  "consensus": [
+    {
+      "agreed_count": 1,
+      "file": "factory/cli.py",
+      "reached_quorum": true,
+      "severity": "Info",
+      "span": {
+        "end": 1254,
+        "start": 1248
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/cli.py",
+      "reached_quorum": true,
+      "severity": "Warning",
+      "span": {
+        "end": 1245,
+        "start": 1243
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/server.py",
+      "reached_quorum": true,
+      "severity": "Info",
+      "span": {
+        "end": 4,
+        "start": 1
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/server.py",
+      "reached_quorum": true,
+      "severity": "Info",
+      "span": {
+        "end": 10,
+        "start": 7
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "tests/test_cli_serve.py",
+      "reached_quorum": true,
+      "severity": "Critical",
+      "span": {
+        "end": 51,
+        "start": 28
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "tests/test_cli_serve.py",
+      "reached_quorum": true,
+      "severity": "Critical",
+      "span": {
+        "end": 21,
+        "start": 14
+      },
+      "total_agents": 1
+    }
+  ],
+  "final_action_plan": {
+    "prioritized_steps": [
+      "[Critical] Test assertions check wrong output stream (stdout vs stderr) (tests/test_cli_serve.py:14)",
+      "[Critical] Tests use catch_exceptions=False without mocking uvicorn.run(), creating fragile assertions (tests/test_cli_serve.py:28)",
+      "[Critical] Test assertions are fragile and tests attempt actual server startup (tests/test_cli_serve.py:28)",
+      "[Warning] No validation of host parameter; accepts any string value (factory/cli.py:1243)",
+      "[Warning] Host parameter accepts invalid values without validation (factory/cli.py:1243)"
+    ],
+    "quick_wins": [
+      "[Info] String-based module import for uvicorn.run() should be documented (factory/cli.py:1248)",
+      "[Info] String-based module import for uvicorn should be documented (factory/cli.py:1248)",
+      "[Info] No CORS or security middleware configured for API server (factory/server.py:1)",
+      "[Info] No CORS or security middleware configured (factory/server.py:1)",
+      "[Info] Minimal endpoint lacks response model and no extensibility patterns established (factory/server.py:7)"
+    ]
+  },
+  "final_analysis_markdown": "## Final Analysis\n\n- Issues: 11 (Critical: 3, Warning: 2, Info: 6)\n- Agent failures: 0\n\n### Top Issues\n- [Critical] Test assertions check wrong output stream (stdout vs stderr) `tests/test_cli_serve.py:14`\n- [Critical] Tests use catch_exceptions=False without mocking uvicorn.run(), creating fragile assertions `tests/test_cli_serve.py:28`\n- [Critical] Test assertions are fragile and tests attempt actual server startup `tests/test_cli_serve.py:28`\n- [Warning] No validation of host parameter; accepts any string value `factory/cli.py:1243`\n- [Warning] Host parameter accepts invalid values without validation `factory/cli.py:1243`\n- [Info] String-based module import for uvicorn.run() should be documented `factory/cli.py:1248`\n- [Info] String-based module import for uvicorn should be documented `factory/cli.py:1248`\n- [Info] No CORS or security middleware configured for API server `factory/server.py:1`\n- [Info] No CORS or security middleware configured `factory/server.py:1`\n- [Info] Minimal endpoint lacks response model and no extensibility patterns established `factory/server.py:7`\n\n### Action Plan\n- [Critical] Test assertions check wrong output stream (stdout vs stderr) (tests/test_cli_serve.py:14)\n- [Critical] Tests use catch_exceptions=False without mocking uvicorn.run(), creating fragile assertions (tests/test_cli_serve.py:28)\n- [Critical] Test assertions are fragile and tests attempt actual server startup (tests/test_cli_serve.py:28)\n- [Warning] No validation of host parameter; accepts any string value (factory/cli.py:1243)\n- [Warning] Host parameter accepts invalid values without validation (factory/cli.py:1243)\n",
+  "findings": [
+    {
+      "agent": "claude-code",
+      "category": "testing",
+      "confidence": "High",
+      "description": "The serve() function writes validation error messages to stderr using typer.echo(..., err=True), but test assertions check result.stdout which captures only stdout. This means error messages will not be found in result.stdout, and the assertions will fail silently. The typer.echo() call at cli.py:1251 explicitly uses err=True to send output to stderr, but the tests at lines 14 and 21 check 'result.stdout' instead of 'result.output' or implementing proper stderr capture. This is a fundamental test correctness issue.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:1251",
+          "quote": "typer.echo(f\"Port must be between 0 and 65535, got {port}\", err=True)"
+        },
+        {
+          "location": "tests/test_cli_serve.py:14",
+          "quote": "assert \"Port must be between 0 and 65535\" in result.stdout"
+        },
+        {
+          "location": "tests/test_cli_serve.py:21",
+          "quote": "assert \"Port must be between 0 and 65535\" in result.stdout"
+        }
+      ],
+      "file": "tests/test_cli_serve.py",
+      "message": "Fix test assertions to check result.output (combined stdout+stderr) instead of result.stdout, or verify CliRunner captures stderr separately. When using typer.echo(..., err=True), the output goes to stderr and won't appear in stdout.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Critical",
+      "span": {
+        "end": 21,
+        "start": 14
+      },
+      "suggested_fix": "Replace 'in result.stdout' with 'in result.output' in test assertions at lines 14 and 21. Alternatively, use CliRunner's mix_stderr=True parameter (if available in version) or check result.stderr directly.",
+      "title": "Test assertions check wrong output stream (stdout vs stderr)"
+    },
+    {
+      "agent": "claude-code",
+      "category": "maintainability",
+      "confidence": "Low",
+      "description": "The /hello endpoint has no Pydantic response model and no error handling patterns. While the minimal endpoint is correct, it doesn't establish patterns for future endpoint development. Future endpoints may need: (1) Pydantic BaseModel response validation, (2) consistent error response format, (3) request validation, (4) logging/instrumentation. The current structure doesn't guide developers on these patterns.",
+      "evidence": [
+        {
+          "location": "factory/server.py:7-10",
+          "quote": "@app.get(\"/hello\")\ndef hello():\n    \"\"\"Return a simple hello message.\"\"\"\n    return {\"message\": \"hello\"}"
+        }
+      ],
+      "file": "factory/server.py",
+      "message": "Consider defining a Pydantic response model for the /hello endpoint and documenting the pattern for future endpoints. Example: class HelloResponse(BaseModel): message: str; @app.get('/hello', response_model=HelloResponse)",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Info",
+      "span": {
+        "end": 10,
+        "start": 7
+      },
+      "suggested_fix": "Define response models for all endpoints to establish consistency and enable automatic OpenAPI schema generation. This improves API documentation and provides type safety.",
+      "title": "Minimal endpoint lacks response model and no extensibility patterns established"
+    },
+    {
+      "agent": "claude-code",
+      "category": "maintainability",
+      "confidence": "Low",
+      "description": "The serve() function uses uvicorn.run(\"factory.server:app\", ...) with a string reference to the app module. This lazy-loading pattern is standard for uvicorn but relies on factory.server being importable from the current working directory and the app object being at module level. While this works in normal deployment contexts, it could fail silently in some edge cases (sandboxed environments, unusual import paths). The pattern should be documented to clarify this dependency.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:1254",
+          "quote": "uvicorn.run(\"factory.server:app\", host=host, port=port, reload=False)"
+        }
+      ],
+      "file": "factory/cli.py",
+      "message": "Add docstring note or comment explaining that uvicorn uses string-based app import, which requires factory.server to be importable and app to be defined at module level.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Info",
+      "span": {
+        "end": 1254,
+        "start": 1248
+      },
+      "suggested_fix": "Add a comment above the uvicorn.run() call: '# uvicorn uses string-based app import; requires factory.server to be importable'",
+      "title": "String-based module import for uvicorn.run() should be documented"
+    },
+    {
+      "agent": "claude-code",
+      "category": "performance",
+      "confidence": "Low",
+      "description": "The FastAPI application has no CORS configuration, security headers, or logging middleware. While not critical for initial release (especially if the API is internal-only), omitting CORS can prevent browser-based clients from calling the API. This should be explicitly documented as a deployment decision rather than an oversight.",
+      "evidence": [
+        {
+          "location": "factory/server.py:1-4",
+          "quote": "\"\"\"FastAPI server for Silverpond Factory.\"\"\"\nfrom fastapi import FastAPI\n\napp = FastAPI()"
+        }
+      ],
+      "file": "factory/server.py",
+      "message": "Document whether CORS support is needed for this API and add appropriate middleware if serving external clients. If intentionally omitting for now, add a comment explaining why.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Info",
+      "span": {
+        "end": 4,
+        "start": 1
+      },
+      "suggested_fix": "If CORS is needed: from fastapi.middleware.cors import CORSMiddleware; app.add_middleware(CORSMiddleware, allow_origins=[...], ...)",
+      "title": "No CORS or security middleware configured for API server"
+    },
+    {
+      "agent": "claude-code",
+      "category": "testing",
+      "confidence": "High",
+      "description": "Tests for valid port values (lines 28, 35, 42, 49) use catch_exceptions=False but do not mock uvicorn.run(). This causes the tests to attempt actual server startup during test execution. The assertions (e.g., line 30: 'assert result.exit_code != 1 or \"Port must be between\" not in result.stdout') are logically weak and will pass even if uvicorn.run() raises an unhandled exception (exit_code would be 2, making the first OR condition true). This creates tests that appear to pass but don't actually validate CLI behavior. Additionally, attempting real server startup on test infrastructure can hang, fail unpredictably, or consume ports.",
+      "evidence": [
+        {
+          "location": "tests/test_cli_serve.py:28",
+          "quote": "result = runner.invoke(app, [\"serve\", \"--port\", \"0\"], catch_exceptions=False)"
+        },
+        {
+          "location": "tests/test_cli_serve.py:30",
+          "quote": "assert result.exit_code != 1 or \"Port must be between\" not in result.stdout"
+        },
+        {
+          "location": "factory/cli.py:1254",
+          "quote": "uvicorn.run(\"factory.server:app\", host=host, port=port, reload=False)"
+        }
+      ],
+      "file": "tests/test_cli_serve.py",
+      "message": "Mock uvicorn.run() in tests instead of attempting actual startup. Refactor assertions to explicitly verify the validation logic passes (no exception, exit_code != 1) before uvicorn.run() is called.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Critical",
+      "span": {
+        "end": 51,
+        "start": 28
+      },
+      "suggested_fix": "Use unittest.mock.patch() to mock 'factory.cli.uvicorn.run' in test_serve_valid_port_zero(), test_serve_valid_port_max(), test_serve_custom_host(), and test_serve_default_host_port(). Verify the mock was called with expected parameters. Example: @patch('factory.cli.uvicorn.run') decorator with assertion that mock was called with correct host/port.",
+      "title": "Tests use catch_exceptions=False without mocking uvicorn.run(), creating fragile assertions"
+    },
+    {
+      "agent": "claude-code",
+      "category": "correctness",
+      "confidence": "Medium",
+      "description": "The serve() function accepts the host parameter with no validation, allowing invalid hostnames or malformed IP addresses. Examples of invalid values that would be accepted: 'invalid@host', '999.999.999.999', 'host:::', etc. While uvicorn.run() will eventually reject these, the CLI should fail fast with clear error messages. Current behavior delays error reporting until uvicorn initialization. Best practice for CLI tools is to validate inputs at the CLI layer before passing to downstream services.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:1243-1245",
+          "quote": "host: str = typer.Option(\"127.0.0.1\", \"--host\", \"-h\", help=\"Host to bind to\"),"
+        },
+        {
+          "location": "factory/cli.py:1250-1252",
+          "quote": "if not (0 <= port <= 65535):\n        typer.echo(f\"Port must be between 0 and 65535, got {port}\", err=True)\n        raise typer.Exit(1)"
+        }
+      ],
+      "file": "factory/cli.py",
+      "message": "Add host validation in the serve() function to reject clearly invalid hostnames/IPs before calling uvicorn.run(). Provide clear error messages for common mistakes.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Warning",
+      "span": {
+        "end": 1245,
+        "start": 1243
+      },
+      "suggested_fix": "Import socket module and use socket.inet_pton() or a regex validator for IPv4/IPv6, plus hostname validation. Reject invalid values with clear error message to stderr (err=True) and exit code 1, matching the port validation pattern.",
+      "title": "No validation of host parameter; accepts any string value"
+    }
+  ],
+  "issues": [
+    {
+      "category": "testing",
+      "description": "The serve() function writes validation error messages to stderr using typer.echo(..., err=True), but test assertions check result.stdout which captures only stdout. This means error messages will not be found in result.stdout, and the assertions will fail silently. The typer.echo() call at cli.py:1251 explicitly uses err=True to send output to stderr, but the tests at lines 14 and 21 check 'result.stdout' instead of 'result.output' or implementing proper stderr capture. This is a fundamental test correctness issue.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:1251",
+          "quote": "typer.echo(f\"Port must be between 0 and 65535, got {port}\", err=True)"
+        },
+        {
+          "location": "tests/test_cli_serve.py:14",
+          "quote": "assert \"Port must be between 0 and 65535\" in result.stdout"
+        },
+        {
+          "location": "tests/test_cli_serve.py:21",
+          "quote": "assert \"Port must be between 0 and 65535\" in result.stdout"
+        }
+      ],
+      "file": "tests/test_cli_serve.py",
+      "line_end": 21,
+      "line_start": 14,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Critical",
+      "suggested_fix": "Replace 'in result.stdout' with 'in result.output' in test assertions at lines 14 and 21. Alternatively, use CliRunner's mix_stderr=True parameter (if available in version) or check result.stderr directly.",
+      "title": "Test assertions check wrong output stream (stdout vs stderr)"
+    },
+    {
+      "category": "testing",
+      "description": "Tests for valid port values (lines 28, 35, 42, 49) use catch_exceptions=False but do not mock uvicorn.run(). This causes the tests to attempt actual server startup during test execution. The assertions (e.g., line 30: 'assert result.exit_code != 1 or \"Port must be between\" not in result.stdout') are logically weak and will pass even if uvicorn.run() raises an unhandled exception (exit_code would be 2, making the first OR condition true). This creates tests that appear to pass but don't actually validate CLI behavior. Additionally, attempting real server startup on test infrastructure can hang, fail unpredictably, or consume ports.",
+      "evidence": [
+        {
+          "location": "tests/test_cli_serve.py:28",
+          "quote": "result = runner.invoke(app, [\"serve\", \"--port\", \"0\"], catch_exceptions=False)"
+        },
+        {
+          "location": "tests/test_cli_serve.py:30",
+          "quote": "assert result.exit_code != 1 or \"Port must be between\" not in result.stdout"
+        },
+        {
+          "location": "factory/cli.py:1254",
+          "quote": "uvicorn.run(\"factory.server:app\", host=host, port=port, reload=False)"
+        }
+      ],
+      "file": "tests/test_cli_serve.py",
+      "line_end": 51,
+      "line_start": 28,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Critical",
+      "suggested_fix": "Use unittest.mock.patch() to mock 'factory.cli.uvicorn.run' in test_serve_valid_port_zero(), test_serve_valid_port_max(), test_serve_custom_host(), and test_serve_default_host_port(). Verify the mock was called with expected parameters. Example: @patch('factory.cli.uvicorn.run') decorator with assertion that mock was called with correct host/port.",
+      "title": "Tests use catch_exceptions=False without mocking uvicorn.run(), creating fragile assertions"
+    },
+    {
+      "category": "testing",
+      "description": "Valid port tests (lines 28-51) use catch_exceptions=False but do not mock uvicorn.run(), causing actual server startup attempts during test execution. Assertions like 'assert result.exit_code != 1 or ...' are logically weak and pass even if uvicorn.run() raises unhandled exceptions. Tests that attempt real server startup can hang, fail unpredictably on CI/CD systems, or consume ports unexpectedly.",
+      "evidence": [],
+      "file": "tests/test_cli_serve.py",
+      "line_end": 51,
+      "line_start": 28,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Critical",
+      "suggested_fix": "Mock uvicorn.run() using @patch('factory.cli.uvicorn.run') decorator in all four valid port test functions. Assert the mock was called with correct host/port parameters instead of attempting actual startup.",
+      "title": "Test assertions are fragile and tests attempt actual server startup"
+    },
+    {
+      "category": "correctness",
+      "description": "The serve() function accepts the host parameter with no validation, allowing invalid hostnames or malformed IP addresses. Examples of invalid values that would be accepted: 'invalid@host', '999.999.999.999', 'host:::', etc. While uvicorn.run() will eventually reject these, the CLI should fail fast with clear error messages. Current behavior delays error reporting until uvicorn initialization. Best practice for CLI tools is to validate inputs at the CLI layer before passing to downstream services.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:1243-1245",
+          "quote": "host: str = typer.Option(\"127.0.0.1\", \"--host\", \"-h\", help=\"Host to bind to\"),"
+        },
+        {
+          "location": "factory/cli.py:1250-1252",
+          "quote": "if not (0 <= port <= 65535):\n        typer.echo(f\"Port must be between 0 and 65535, got {port}\", err=True)\n        raise typer.Exit(1)"
+        }
+      ],
+      "file": "factory/cli.py",
+      "line_end": 1245,
+      "line_start": 1243,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "Import socket module and use socket.inet_pton() or a regex validator for IPv4/IPv6, plus hostname validation. Reject invalid values with clear error message to stderr (err=True) and exit code 1, matching the port validation pattern.",
+      "title": "No validation of host parameter; accepts any string value"
+    },
+    {
+      "category": "correctness",
+      "description": "The serve() function accepts the host parameter with no validation, allowing invalid hostnames, malformed IP addresses (e.g., '999.999.999.999', 'invalid@host'), or other invalid formats. While uvicorn.run() will eventually reject these, the CLI should fail fast with clear error messages at the CLI layer, matching the port validation pattern already implemented.",
+      "evidence": [],
+      "file": "factory/cli.py",
+      "line_end": 1245,
+      "line_start": 1243,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "Add host validation before uvicorn.run() call: use socket module or regex to validate IPv4/IPv6 addresses and hostnames; reject invalid values with clear error message to stderr using typer.echo(..., err=True) and raise typer.Exit(1), matching the existing port validation pattern.",
+      "title": "Host parameter accepts invalid values without validation"
+    },
+    {
+      "category": "maintainability",
+      "description": "The serve() function uses uvicorn.run(\"factory.server:app\", ...) with a string reference to the app module. This lazy-loading pattern is standard for uvicorn but relies on factory.server being importable from the current working directory and the app object being at module level. While this works in normal deployment contexts, it could fail silently in some edge cases (sandboxed environments, unusual import paths). The pattern should be documented to clarify this dependency.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:1254",
+          "quote": "uvicorn.run(\"factory.server:app\", host=host, port=port, reload=False)"
+        }
+      ],
+      "file": "factory/cli.py",
+      "line_end": 1254,
+      "line_start": 1248,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Info",
+      "suggested_fix": "Add a comment above the uvicorn.run() call: '# uvicorn uses string-based app import; requires factory.server to be importable'",
+      "title": "String-based module import for uvicorn.run() should be documented"
+    },
+    {
+      "category": "maintainability",
+      "description": "The serve() function uses uvicorn.run('factory.server:app', ...) with lazy-loaded string import. While standard for uvicorn, this pattern depends on factory.server being importable from current working directory and app defined at module level. In sandboxed or unusual import path environments, this could fail silently.",
+      "evidence": [],
+      "file": "factory/cli.py",
+      "line_end": 1254,
+      "line_start": 1248,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Info",
+      "suggested_fix": "Add a code comment above uvicorn.run() call: '# uvicorn uses string-based app import; requires factory.server importable from CWD'",
+      "title": "String-based module import for uvicorn should be documented"
+    },
+    {
+      "category": "performance",
+      "description": "The FastAPI application has no CORS configuration, security headers, or logging middleware. While not critical for initial release (especially if the API is internal-only), omitting CORS can prevent browser-based clients from calling the API. This should be explicitly documented as a deployment decision rather than an oversight.",
+      "evidence": [
+        {
+          "location": "factory/server.py:1-4",
+          "quote": "\"\"\"FastAPI server for Silverpond Factory.\"\"\"\nfrom fastapi import FastAPI\n\napp = FastAPI()"
+        }
+      ],
+      "file": "factory/server.py",
+      "line_end": 4,
+      "line_start": 1,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Info",
+      "suggested_fix": "If CORS is needed: from fastapi.middleware.cors import CORSMiddleware; app.add_middleware(CORSMiddleware, allow_origins=[...], ...)",
+      "title": "No CORS or security middleware configured for API server"
+    },
+    {
+      "category": "maintainability",
+      "description": "The FastAPI application has no CORS configuration, security headers, or logging middleware. Omitting CORS prevents browser-based clients from calling the API. This should be explicitly documented as a deployment decision rather than an oversight.",
+      "evidence": [],
+      "file": "factory/server.py",
+      "line_end": 4,
+      "line_start": 1,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Info",
+      "suggested_fix": "If CORS is needed for external clients: add 'from fastapi.middleware.cors import CORSMiddleware' and configure allowed_origins, allowed_methods, allowed_headers. If intentionally omitting, add comment explaining why (internal-only API, etc.).",
+      "title": "No CORS or security middleware configured"
+    },
+    {
+      "category": "maintainability",
+      "description": "The /hello endpoint has no Pydantic response model and no error handling patterns. While the minimal endpoint is correct, it doesn't establish patterns for future endpoint development. Future endpoints may need: (1) Pydantic BaseModel response validation, (2) consistent error response format, (3) request validation, (4) logging/instrumentation. The current structure doesn't guide developers on these patterns.",
+      "evidence": [
+        {
+          "location": "factory/server.py:7-10",
+          "quote": "@app.get(\"/hello\")\ndef hello():\n    \"\"\"Return a simple hello message.\"\"\"\n    return {\"message\": \"hello\"}"
+        }
+      ],
+      "file": "factory/server.py",
+      "line_end": 10,
+      "line_start": 7,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Info",
+      "suggested_fix": "Define response models for all endpoints to establish consistency and enable automatic OpenAPI schema generation. This improves API documentation and provides type safety.",
+      "title": "Minimal endpoint lacks response model and no extensibility patterns established"
+    },
+    {
+      "category": "maintainability",
+      "description": "The /hello endpoint has no Pydantic BaseModel response validation and establishes no patterns for future endpoint development. Future endpoints will need response models, error handling, request validation, and logging patterns. Current minimal structure doesn't guide developers on these best practices.",
+      "evidence": [],
+      "file": "factory/server.py",
+      "line_end": 10,
+      "line_start": 7,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Info",
+      "suggested_fix": "Define a Pydantic response model (e.g., class HelloResponse(BaseModel): message: str) and use response_model=HelloResponse parameter in @app.get(). Add a module-level docstring documenting expected patterns for all future endpoints.",
+      "title": "Endpoint lacks Pydantic response model and pattern documentation"
+    }
+  ],
+  "pr_comment_markdown": "## Crucible Review Summary\n\n- Issues: 11\n- Critical: 3, Warning: 2\n\n### Top Actions\n- [Critical] Test assertions check wrong output stream (stdout vs stderr) (tests/test_cli_serve.py:14)\n- [Critical] Tests use catch_exceptions=False without mocking uvicorn.run(), creating fragile assertions (tests/test_cli_serve.py:28)\n- [Critical] Test assertions are fragile and tests attempt actual server startup (tests/test_cli_serve.py:28)\n- [Warning] No validation of host parameter; accepts any string value (factory/cli.py:1243)\n- [Warning] Host parameter accepts invalid values without validation (factory/cli.py:1243)\n\n### Notable Issues\n- **Test assertions check wrong output stream (stdout vs stderr)** `tests/test_cli_serve.py:14`: The serve() function writes validation error messages to stderr using typer.echo(..., err=True), but test assertions check result.stdout which captures only stdout. This means error messages will not be found in result.stdout, and the assertions will fail silently. The typer.echo() call at cli.py:1251 explicitly uses err=True to send output to stderr, but the tests at lines 14 and 21 check 'result.stdout' instead of 'result.output' or implementing proper stderr capture. This is a fundamental test correctness issue.\n- **Tests use catch_exceptions=False without mocking uvicorn.run(), creating fragile assertions** `tests/test_cli_serve.py:28`: Tests for valid port values (lines 28, 35, 42, 49) use catch_exceptions=False but do not mock uvicorn.run(). This causes the tests to attempt actual server startup during test execution. The assertions (e.g., line 30: 'assert result.exit_code != 1 or \"Port must be between\" not in result.stdout') are logically weak and will pass even if uvicorn.run() raises an unhandled exception (exit_code would be 2, making the first OR condition true). This creates tests that appear to pass but don't actually validate CLI behavior. Additionally, attempting real server startup on test infrastructure can hang, fail unpredictably, or consume ports.\n- **Test assertions are fragile and tests attempt actual server startup** `tests/test_cli_serve.py:28`: Valid port tests (lines 28-51) use catch_exceptions=False but do not mock uvicorn.run(), causing actual server startup attempts during test execution. Assertions like 'assert result.exit_code != 1 or ...' are logically weak and pass even if uvicorn.run() raises unhandled exceptions. Tests that attempt real server startup can hang, fail unpredictably on CI/CD systems, or consume ports unexpectedly.\n- **No validation of host parameter; accepts any string value** `factory/cli.py:1243`: The serve() function accepts the host parameter with no validation, allowing invalid hostnames or malformed IP addresses. Examples of invalid values that would be accepted: 'invalid@host', '999.999.999.999', 'host:::', etc. While uvicorn.run() will eventually reject these, the CLI should fail fast with clear error messages. Current behavior delays error reporting until uvicorn initialization. Best practice for CLI tools is to validate inputs at the CLI layer before passing to downstream services.\n- **Host parameter accepts invalid values without validation** `factory/cli.py:1243`: The serve() function accepts the host parameter with no validation, allowing invalid hostnames, malformed IP addresses (e.g., '999.999.999.999', 'invalid@host'), or other invalid formats. While uvicorn.run() will eventually reject these, the CLI should fail fast with clear error messages at the CLI layer, matching the port validation pattern already implemented.\n- **String-based module import for uvicorn.run() should be documented** `factory/cli.py:1248`: The serve() function uses uvicorn.run(\"factory.server:app\", ...) with a string reference to the app module. This lazy-loading pattern is standard for uvicorn but relies on factory.server being importable from the current working directory and the app object being at module level. While this works in normal deployment contexts, it could fail silently in some edge cases (sandboxed environments, unusual import paths). The pattern should be documented to clarify this dependency.\n- **String-based module import for uvicorn should be documented** `factory/cli.py:1248`: The serve() function uses uvicorn.run('factory.server:app', ...) with lazy-loaded string import. While standard for uvicorn, this pattern depends on factory.server being importable from current working directory and app defined at module level. In sandboxed or unusual import path environments, this could fail silently.\n- **No CORS or security middleware configured for API server** `factory/server.py:1`: The FastAPI application has no CORS configuration, security headers, or logging middleware. While not critical for initial release (especially if the API is internal-only), omitting CORS can prevent browser-based clients from calling the API. This should be explicitly documented as a deployment decision rather than an oversight.\n- **No CORS or security middleware configured** `factory/server.py:1`: The FastAPI application has no CORS configuration, security headers, or logging middleware. Omitting CORS prevents browser-based clients from calling the API. This should be explicitly documented as a deployment decision rather than an oversight.\n- **Minimal endpoint lacks response model and no extensibility patterns established** `factory/server.py:7`: The /hello endpoint has no Pydantic response model and no error handling patterns. While the minimal endpoint is correct, it doesn't establish patterns for future endpoint development. Future endpoints may need: (1) Pydantic BaseModel response validation, (2) consistent error response format, (3) request validation, (4) logging/instrumentation. The current structure doesn't guide developers on these patterns.\n",
+  "pr_review_draft": {
+    "inline_comments": [
+      {
+        "body": "**Test assertions check wrong output stream (stdout vs stderr)**\n\nThe serve() function writes validation error messages to stderr using typer.echo(..., err=True), but test assertions check result.stdout which captures only stdout. This means error messages will not be found in result.stdout, and the assertions will fail silently. The typer.echo() call at cli.py:1251 explicitly uses err=True to send output to stderr, but the tests at lines 14 and 21 check 'result.stdout' instead of 'result.output' or implementing proper stderr capture. This is a fundamental test correctness issue.\n\nRaised by: claude-code\n\nSuggested fix: Replace 'in result.stdout' with 'in result.output' in test assertions at lines 14 and 21. Alternatively, use CliRunner's mix_stderr=True parameter (if available in version) or check result.stderr directly.",
+        "category": "testing",
+        "description": "The serve() function writes validation error messages to stderr using typer.echo(..., err=True), but test assertions check result.stdout which captures only stdout. This means error messages will not be found in result.stdout, and the assertions will fail silently. The typer.echo() call at cli.py:1251 explicitly uses err=True to send output to stderr, but the tests at lines 14 and 21 check 'result.stdout' instead of 'result.output' or implementing proper stderr capture. This is a fundamental test correctness issue.",
+        "line": 21,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "tests/test_cli_serve.py",
+        "severity": "Critical",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 14,
+        "start_side": "Right",
+        "title": "Test assertions check wrong output stream (stdout vs stderr)"
+      },
+      {
+        "body": "**Tests use catch_exceptions=False without mocking uvicorn.run(), creating fragile assertions**\n\nTests for valid port values (lines 28, 35, 42, 49) use catch_exceptions=False but do not mock uvicorn.run(). This causes the tests to attempt actual server startup during test execution. The assertions (e.g., line 30: 'assert result.exit_code != 1 or \"Port must be between\" not in result.stdout') are logically weak and will pass even if uvicorn.run() raises an unhandled exception (exit_code would be 2, making the first OR condition true). This creates tests that appear to pass but don't actually validate CLI behavior. Additionally, attempting real server startup on test infrastructure can hang, fail unpredictably, or consume ports.\n\nRaised by: claude-code\n\nSuggested fix: Use unittest.mock.patch() to mock 'factory.cli.uvicorn.run' in test_serve_valid_port_zero(), test_serve_valid_port_max(), test_serve_custom_host(), and test_serve_default_host_port(). Verify the mock was called with expected parameters. Example: @patch('factory.cli.uvicorn.run') decorator with assertion that mock was called with correct host/port.",
+        "category": "testing",
+        "description": "Tests for valid port values (lines 28, 35, 42, 49) use catch_exceptions=False but do not mock uvicorn.run(). This causes the tests to attempt actual server startup during test execution. The assertions (e.g., line 30: 'assert result.exit_code != 1 or \"Port must be between\" not in result.stdout') are logically weak and will pass even if uvicorn.run() raises an unhandled exception (exit_code would be 2, making the first OR condition true). This creates tests that appear to pass but don't actually validate CLI behavior. Additionally, attempting real server startup on test infrastructure can hang, fail unpredictably, or consume ports.",
+        "line": 51,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "tests/test_cli_serve.py",
+        "severity": "Critical",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 28,
+        "start_side": "Right",
+        "title": "Tests use catch_exceptions=False without mocking uvicorn.run(), creating fragile assertions"
+      },
+      {
+        "body": "**Test assertions are fragile and tests attempt actual server startup**\n\nValid port tests (lines 28-51) use catch_exceptions=False but do not mock uvicorn.run(), causing actual server startup attempts during test execution. Assertions like 'assert result.exit_code != 1 or ...' are logically weak and pass even if uvicorn.run() raises unhandled exceptions. Tests that attempt real server startup can hang, fail unpredictably on CI/CD systems, or consume ports unexpectedly.\n\nRaised by: claude-code\n\nSuggested fix: Mock uvicorn.run() using @patch('factory.cli.uvicorn.run') decorator in all four valid port test functions. Assert the mock was called with correct host/port parameters instead of attempting actual startup.",
+        "category": "testing",
+        "description": "Valid port tests (lines 28-51) use catch_exceptions=False but do not mock uvicorn.run(), causing actual server startup attempts during test execution. Assertions like 'assert result.exit_code != 1 or ...' are logically weak and pass even if uvicorn.run() raises unhandled exceptions. Tests that attempt real server startup can hang, fail unpredictably on CI/CD systems, or consume ports unexpectedly.",
+        "line": 51,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "tests/test_cli_serve.py",
+        "severity": "Critical",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 28,
+        "start_side": "Right",
+        "title": "Test assertions are fragile and tests attempt actual server startup"
+      },
+      {
+        "body": "**No validation of host parameter; accepts any string value**\n\nThe serve() function accepts the host parameter with no validation, allowing invalid hostnames or malformed IP addresses. Examples of invalid values that would be accepted: 'invalid@host', '999.999.999.999', 'host:::', etc. While uvicorn.run() will eventually reject these, the CLI should fail fast with clear error messages. Current behavior delays error reporting until uvicorn initialization. Best practice for CLI tools is to validate inputs at the CLI layer before passing to downstream services.\n\nRaised by: claude-code\n\nSuggested fix: Import socket module and use socket.inet_pton() or a regex validator for IPv4/IPv6, plus hostname validation. Reject invalid values with clear error message to stderr (err=True) and exit code 1, matching the port validation pattern.",
+        "category": "correctness",
+        "description": "The serve() function accepts the host parameter with no validation, allowing invalid hostnames or malformed IP addresses. Examples of invalid values that would be accepted: 'invalid@host', '999.999.999.999', 'host:::', etc. While uvicorn.run() will eventually reject these, the CLI should fail fast with clear error messages. Current behavior delays error reporting until uvicorn initialization. Best practice for CLI tools is to validate inputs at the CLI layer before passing to downstream services.",
+        "line": 1245,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/cli.py",
+        "severity": "Warning",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 1243,
+        "start_side": "Right",
+        "title": "No validation of host parameter; accepts any string value"
+      },
+      {
+        "body": "**Host parameter accepts invalid values without validation**\n\nThe serve() function accepts the host parameter with no validation, allowing invalid hostnames, malformed IP addresses (e.g., '999.999.999.999', 'invalid@host'), or other invalid formats. While uvicorn.run() will eventually reject these, the CLI should fail fast with clear error messages at the CLI layer, matching the port validation pattern already implemented.\n\nRaised by: claude-code\n\nSuggested fix: Add host validation before uvicorn.run() call: use socket module or regex to validate IPv4/IPv6 addresses and hostnames; reject invalid values with clear error message to stderr using typer.echo(..., err=True) and raise typer.Exit(1), matching the existing port validation pattern.",
+        "category": "correctness",
+        "description": "The serve() function accepts the host parameter with no validation, allowing invalid hostnames, malformed IP addresses (e.g., '999.999.999.999', 'invalid@host'), or other invalid formats. While uvicorn.run() will eventually reject these, the CLI should fail fast with clear error messages at the CLI layer, matching the port validation pattern already implemented.",
+        "line": 1245,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/cli.py",
+        "severity": "Warning",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 1243,
+        "start_side": "Right",
+        "title": "Host parameter accepts invalid values without validation"
+      },
+      {
+        "body": "**String-based module import for uvicorn.run() should be documented**\n\nThe serve() function uses uvicorn.run(\"factory.server:app\", ...) with a string reference to the app module. This lazy-loading pattern is standard for uvicorn but relies on factory.server being importable from the current working directory and the app object being at module level. While this works in normal deployment contexts, it could fail silently in some edge cases (sandboxed environments, unusual import paths). The pattern should be documented to clarify this dependency.\n\nRaised by: claude-code\n\nSuggested fix: Add a comment above the uvicorn.run() call: '# uvicorn uses string-based app import; requires factory.server to be importable'",
+        "category": "maintainability",
+        "description": "The serve() function uses uvicorn.run(\"factory.server:app\", ...) with a string reference to the app module. This lazy-loading pattern is standard for uvicorn but relies on factory.server being importable from the current working directory and the app object being at module level. While this works in normal deployment contexts, it could fail silently in some edge cases (sandboxed environments, unusual import paths). The pattern should be documented to clarify this dependency.",
+        "line": 1254,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/cli.py",
+        "severity": "Info",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 1248,
+        "start_side": "Right",
+        "title": "String-based module import for uvicorn.run() should be documented"
+      },
+      {
+        "body": "**String-based module import for uvicorn should be documented**\n\nThe serve() function uses uvicorn.run('factory.server:app', ...) with lazy-loaded string import. While standard for uvicorn, this pattern depends on factory.server being importable from current working directory and app defined at module level. In sandboxed or unusual import path environments, this could fail silently.\n\nRaised by: claude-code\n\nSuggested fix: Add a code comment above uvicorn.run() call: '# uvicorn uses string-based app import; requires factory.server importable from CWD'",
+        "category": "maintainability",
+        "description": "The serve() function uses uvicorn.run('factory.server:app', ...) with lazy-loaded string import. While standard for uvicorn, this pattern depends on factory.server being importable from current working directory and app defined at module level. In sandboxed or unusual import path environments, this could fail silently.",
+        "line": 1254,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/cli.py",
+        "severity": "Info",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 1248,
+        "start_side": "Right",
+        "title": "String-based module import for uvicorn should be documented"
+      },
+      {
+        "body": "**No CORS or security middleware configured for API server**\n\nThe FastAPI application has no CORS configuration, security headers, or logging middleware. While not critical for initial release (especially if the API is internal-only), omitting CORS can prevent browser-based clients from calling the API. This should be explicitly documented as a deployment decision rather than an oversight.\n\nRaised by: claude-code\n\nSuggested fix: If CORS is needed: from fastapi.middleware.cors import CORSMiddleware; app.add_middleware(CORSMiddleware, allow_origins=[...], ...)",
+        "category": "performance",
+        "description": "The FastAPI application has no CORS configuration, security headers, or logging middleware. While not critical for initial release (especially if the API is internal-only), omitting CORS can prevent browser-based clients from calling the API. This should be explicitly documented as a deployment decision rather than an oversight.",
+        "line": 4,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/server.py",
+        "severity": "Info",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 1,
+        "start_side": "Right",
+        "title": "No CORS or security middleware configured for API server"
+      },
+      {
+        "body": "**No CORS or security middleware configured**\n\nThe FastAPI application has no CORS configuration, security headers, or logging middleware. Omitting CORS prevents browser-based clients from calling the API. This should be explicitly documented as a deployment decision rather than an oversight.\n\nRaised by: claude-code\n\nSuggested fix: If CORS is needed for external clients: add 'from fastapi.middleware.cors import CORSMiddleware' and configure allowed_origins, allowed_methods, allowed_headers. If intentionally omitting, add comment explaining why (internal-only API, etc.).",
+        "category": "maintainability",
+        "description": "The FastAPI application has no CORS configuration, security headers, or logging middleware. Omitting CORS prevents browser-based clients from calling the API. This should be explicitly documented as a deployment decision rather than an oversight.",
+        "line": 4,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/server.py",
+        "severity": "Info",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 1,
+        "start_side": "Right",
+        "title": "No CORS or security middleware configured"
+      },
+      {
+        "body": "**Minimal endpoint lacks response model and no extensibility patterns established**\n\nThe /hello endpoint has no Pydantic response model and no error handling patterns. While the minimal endpoint is correct, it doesn't establish patterns for future endpoint development. Future endpoints may need: (1) Pydantic BaseModel response validation, (2) consistent error response format, (3) request validation, (4) logging/instrumentation. The current structure doesn't guide developers on these patterns.\n\nRaised by: claude-code\n\nSuggested fix: Define response models for all endpoints to establish consistency and enable automatic OpenAPI schema generation. This improves API documentation and provides type safety.",
+        "category": "maintainability",
+        "description": "The /hello endpoint has no Pydantic response model and no error handling patterns. While the minimal endpoint is correct, it doesn't establish patterns for future endpoint development. Future endpoints may need: (1) Pydantic BaseModel response validation, (2) consistent error response format, (3) request validation, (4) logging/instrumentation. The current structure doesn't guide developers on these patterns.",
+        "line": 10,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/server.py",
+        "severity": "Info",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 7,
+        "start_side": "Right",
+        "title": "Minimal endpoint lacks response model and no extensibility patterns established"
+      },
+      {
+        "body": "**Endpoint lacks Pydantic response model and pattern documentation**\n\nThe /hello endpoint has no Pydantic BaseModel response validation and establishes no patterns for future endpoint development. Future endpoints will need response models, error handling, request validation, and logging patterns. Current minimal structure doesn't guide developers on these best practices.\n\nRaised by: claude-code\n\nSuggested fix: Define a Pydantic response model (e.g., class HelloResponse(BaseModel): message: str) and use response_model=HelloResponse parameter in @app.get(). Add a module-level docstring documenting expected patterns for all future endpoints.",
+        "category": "maintainability",
+        "description": "The /hello endpoint has no Pydantic BaseModel response validation and establishes no patterns for future endpoint development. Future endpoints will need response models, error handling, request validation, and logging patterns. Current minimal structure doesn't guide developers on these best practices.",
+        "line": 10,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/server.py",
+        "severity": "Info",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 7,
+        "start_side": "Right",
+        "title": "Endpoint lacks Pydantic response model and pattern documentation"
+      }
+    ],
+    "overview_comment": {
+      "body": "## Crucible Review Summary\n\n- Issues: 11\n- Critical: 3, Warning: 2\n\n### Top Actions\n- [Critical] Test assertions check wrong output stream (stdout vs stderr) (tests/test_cli_serve.py:14)\n- [Critical] Tests use catch_exceptions=False without mocking uvicorn.run(), creating fragile assertions (tests/test_cli_serve.py:28)\n- [Critical] Test assertions are fragile and tests attempt actual server startup (tests/test_cli_serve.py:28)\n- [Warning] No validation of host parameter; accepts any string value (factory/cli.py:1243)\n- [Warning] Host parameter accepts invalid values without validation (factory/cli.py:1243)\n\n### Notable Issues\n- **Test assertions check wrong output stream (stdout vs stderr)** `tests/test_cli_serve.py:14`: The serve() function writes validation error messages to stderr using typer.echo(..., err=True), but test assertions check result.stdout which captures only stdout. This means error messages will not be found in result.stdout, and the assertions will fail silently. The typer.echo() call at cli.py:1251 explicitly uses err=True to send output to stderr, but the tests at lines 14 and 21 check 'result.stdout' instead of 'result.output' or implementing proper stderr capture. This is a fundamental test correctness issue.\n- **Tests use catch_exceptions=False without mocking uvicorn.run(), creating fragile assertions** `tests/test_cli_serve.py:28`: Tests for valid port values (lines 28, 35, 42, 49) use catch_exceptions=False but do not mock uvicorn.run(). This causes the tests to attempt actual server startup during test execution. The assertions (e.g., line 30: 'assert result.exit_code != 1 or \"Port must be between\" not in result.stdout') are logically weak and will pass even if uvicorn.run() raises an unhandled exception (exit_code would be 2, making the first OR condition true). This creates tests that appear to pass but don't actually validate CLI behavior. Additionally, attempting real server startup on test infrastructure can hang, fail unpredictably, or consume ports.\n- **Test assertions are fragile and tests attempt actual server startup** `tests/test_cli_serve.py:28`: Valid port tests (lines 28-51) use catch_exceptions=False but do not mock uvicorn.run(), causing actual server startup attempts during test execution. Assertions like 'assert result.exit_code != 1 or ...' are logically weak and pass even if uvicorn.run() raises unhandled exceptions. Tests that attempt real server startup can hang, fail unpredictably on CI/CD systems, or consume ports unexpectedly.\n- **No validation of host parameter; accepts any string value** `factory/cli.py:1243`: The serve() function accepts the host parameter with no validation, allowing invalid hostnames or malformed IP addresses. Examples of invalid values that would be accepted: 'invalid@host', '999.999.999.999', 'host:::', etc. While uvicorn.run() will eventually reject these, the CLI should fail fast with clear error messages. Current behavior delays error reporting until uvicorn initialization. Best practice for CLI tools is to validate inputs at the CLI layer before passing to downstream services.\n- **Host parameter accepts invalid values without validation** `factory/cli.py:1243`: The serve() function accepts the host parameter with no validation, allowing invalid hostnames, malformed IP addresses (e.g., '999.999.999.999', 'invalid@host'), or other invalid formats. While uvicorn.run() will eventually reject these, the CLI should fail fast with clear error messages at the CLI layer, matching the port validation pattern already implemented.\n- **String-based module import for uvicorn.run() should be documented** `factory/cli.py:1248`: The serve() function uses uvicorn.run(\"factory.server:app\", ...) with a string reference to the app module. This lazy-loading pattern is standard for uvicorn but relies on factory.server being importable from the current working directory and the app object being at module level. While this works in normal deployment contexts, it could fail silently in some edge cases (sandboxed environments, unusual import paths). The pattern should be documented to clarify this dependency.\n- **String-based module import for uvicorn should be documented** `factory/cli.py:1248`: The serve() function uses uvicorn.run('factory.server:app', ...) with lazy-loaded string import. While standard for uvicorn, this pattern depends on factory.server being importable from current working directory and app defined at module level. In sandboxed or unusual import path environments, this could fail silently.\n- **No CORS or security middleware configured for API server** `factory/server.py:1`: The FastAPI application has no CORS configuration, security headers, or logging middleware. While not critical for initial release (especially if the API is internal-only), omitting CORS can prevent browser-based clients from calling the API. This should be explicitly documented as a deployment decision rather than an oversight.\n- **No CORS or security middleware configured** `factory/server.py:1`: The FastAPI application has no CORS configuration, security headers, or logging middleware. Omitting CORS prevents browser-based clients from calling the API. This should be explicitly documented as a deployment decision rather than an oversight.\n- **Minimal endpoint lacks response model and no extensibility patterns established** `factory/server.py:7`: The /hello endpoint has no Pydantic response model and no error handling patterns. While the minimal endpoint is correct, it doesn't establish patterns for future endpoint development. Future endpoints may need: (1) Pydantic BaseModel response validation, (2) consistent error response format, (3) request validation, (4) logging/instrumentation. The current structure doesn't guide developers on these patterns.\n"
+    },
+    "overview_only_comments": []
+  },
+  "run_id": "fe5ef412-d79a-4728-8d4d-2bfbe1772d6b",
+  "session_id": "fe5ef412-d79a-4728-8d4d-2bfbe1772d6b",
+  "system_context_markdown": "### System Context\n- Changed files: 5\n- Reference snippets: 0\n- History commits: 20\n- Docs snippets: 1\n- Deterministic prechecks: 2\n- Affected files:\n  - factory/cli.py\n  - factory/server.py\n  - pyproject.toml\n  - tests/test_cli_serve.py\n  - tests/test_server.py\n- Precheck results:\n  - untangle-analyze-report [Fail] error: unexpected argument '.' found\n\nUsage: untangle analyze [OPTIONS] <PATH>\n\nFor more information, try '--help'.\n  - untangle-quality-report [Fail] error: unrecognized subcommand 'quality'\n\nUsage: untangle <COMMAND>\n\nFor more information, try '--help'.\n",
+  "verdict": "Block"
+}
+[run:fe5ef412-d79a-4728-8d4d-2bfbe1772d6b]
+[2026-06-02 16:11:56.277 +10:00] [final-analysis]
+## Final Analysis
+
+- Issues: 11 (Critical: 3, Warning: 2, Info: 6)
+- Agent failures: 0
+
+### Top Issues
+- [Critical] Test assertions check wrong output stream (stdout vs stderr) `tests/test_cli_serve.py:14`
+- [Critical] Tests use catch_exceptions=False without mocking uvicorn.run(), creating fragile assertions `tests/test_cli_serve.py:28`
+- [Critical] Test assertions are fragile and tests attempt actual server startup `tests/test_cli_serve.py:28`
+- [Warning] No validation of host parameter; accepts any string value `factory/cli.py:1243`
+- [Warning] Host parameter accepts invalid values without validation `factory/cli.py:1243`
+- [Info] String-based module import for uvicorn.run() should be documented `factory/cli.py:1248`
+- [Info] String-based module import for uvicorn should be documented `factory/cli.py:1248`
+- [Info] No CORS or security middleware configured for API server `factory/server.py:1`
+- [Info] No CORS or security middleware configured `factory/server.py:1`
+- [Info] Minimal endpoint lacks response model and no extensibility patterns established `factory/server.py:7`
+
+### Action Plan
+- [Critical] Test assertions check wrong output stream (stdout vs stderr) (tests/test_cli_serve.py:14)
+- [Critical] Tests use catch_exceptions=False without mocking uvicorn.run(), creating fragile assertions (tests/test_cli_serve.py:28)
+- [Critical] Test assertions are fragile and tests attempt actual server startup (tests/test_cli_serve.py:28)
+- [Warning] No validation of host parameter; accepts any string value (factory/cli.py:1243)
+- [Warning] Host parameter accepts invalid values without validation (factory/cli.py:1243)
+
+[2026-06-02 16:11:56.277 +10:00] [pr-comment]
+## Crucible Review Summary
+
+- Issues: 11
+- Critical: 3, Warning: 2
+
+### Top Actions
+- [Critical] Test assertions check wrong output stream (stdout vs stderr) (tests/test_cli_serve.py:14)
+- [Critical] Tests use catch_exceptions=False without mocking uvicorn.run(), creating fragile assertions (tests/test_cli_serve.py:28)
+- [Critical] Test assertions are fragile and tests attempt actual server startup (tests/test_cli_serve.py:28)
+- [Warning] No validation of host parameter; accepts any string value (factory/cli.py:1243)
+- [Warning] Host parameter accepts invalid values without validation (factory/cli.py:1243)
+
+### Notable Issues
+- **Test assertions check wrong output stream (stdout vs stderr)** `tests/test_cli_serve.py:14`: The serve() function writes validation error messages to stderr using typer.echo(..., err=True), but test assertions check result.stdout which captures only stdout. This means error messages will not be found in result.stdout, and the assertions will fail silently. The typer.echo() call at cli.py:1251 explicitly uses err=True to send output to stderr, but the tests at lines 14 and 21 check 'result.stdout' instead of 'result.output' or implementing proper stderr capture. This is a fundamental test correctness issue.
+- **Tests use catch_exceptions=False without mocking uvicorn.run(), creating fragile assertions** `tests/test_cli_serve.py:28`: Tests for valid port values (lines 28, 35, 42, 49) use catch_exceptions=False but do not mock uvicorn.run(). This causes the tests to attempt actual server startup during test execution. The assertions (e.g., line 30: 'assert result.exit_code != 1 or "Port must be between" not in result.stdout') are logically weak and will pass even if uvicorn.run() raises an unhandled exception (exit_code would be 2, making the first OR condition true). This creates tests that appear to pass but don't actually validate CLI behavior. Additionally, attempting real server startup on test infrastructure can hang, fail unpredictably, or consume ports.
+- **Test assertions are fragile and tests attempt actual server startup** `tests/test_cli_serve.py:28`: Valid port tests (lines 28-51) use catch_exceptions=False but do not mock uvicorn.run(), causing actual server startup attempts during test execution. Assertions like 'assert result.exit_code != 1 or ...' are logically weak and pass even if uvicorn.run() raises unhandled exceptions. Tests that attempt real server startup can hang, fail unpredictably on CI/CD systems, or consume ports unexpectedly.
+- **No validation of host parameter; accepts any string value** `factory/cli.py:1243`: The serve() function accepts the host parameter with no validation, allowing invalid hostnames or malformed IP addresses. Examples of invalid values that would be accepted: 'invalid@host', '999.999.999.999', 'host:::', etc. While uvicorn.run() will eventually reject these, the CLI should fail fast with clear error messages. Current behavior delays error reporting until uvicorn initialization. Best practice for CLI tools is to validate inputs at the CLI layer before passing to downstream services.
+- **Host parameter accepts invalid values without validation** `factory/cli.py:1243`: The serve() function accepts the host parameter with no validation, allowing invalid hostnames, malformed IP addresses (e.g., '999.999.999.999', 'invalid@host'), or other invalid formats. While uvicorn.run() will eventually reject these, the CLI should fail fast with clear error messages at the CLI layer, matching the port validation pattern already implemented.
+- **String-based module import for uvicorn.run() should be documented** `factory/cli.py:1248`: The serve() function uses uvicorn.run("factory.server:app", ...) with a string reference to the app module. This lazy-loading pattern is standard for uvicorn but relies on factory.server being importable from the current working directory and the app object being at module level. While this works in normal deployment contexts, it could fail silently in some edge cases (sandboxed environments, unusual import paths). The pattern should be documented to clarify this dependency.
+- **String-based module import for uvicorn should be documented** `factory/cli.py:1248`: The serve() function uses uvicorn.run('factory.server:app', ...) with lazy-loaded string import. While standard for uvicorn, this pattern depends on factory.server being importable from current working directory and app defined at module level. In sandboxed or unusual import path environments, this could fail silently.
+- **No CORS or security middleware configured for API server** `factory/server.py:1`: The FastAPI application has no CORS configuration, security headers, or logging middleware. While not critical for initial release (especially if the API is internal-only), omitting CORS can prevent browser-based clients from calling the API. This should be explicitly documented as a deployment decision rather than an oversight.
+- **No CORS or security middleware configured** `factory/server.py:1`: The FastAPI application has no CORS configuration, security headers, or logging middleware. Omitting CORS prevents browser-based clients from calling the API. This should be explicitly documented as a deployment decision rather than an oversight.
+- **Minimal endpoint lacks response model and no extensibility patterns established** `factory/server.py:7`: The /hello endpoint has no Pydantic response model and no error handling patterns. While the minimal endpoint is correct, it doesn't establish patterns for future endpoint development. Future endpoints may need: (1) Pydantic BaseModel response validation, (2) consistent error response format, (3) request validation, (4) logging/instrumentation. The current structure doesn't guide developers on these patterns.
+

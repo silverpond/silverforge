@@ -11,14 +11,14 @@ def test_serve_invalid_port_negative():
     """Test that negative port numbers are rejected."""
     result = runner.invoke(app, ["serve", "--port", "-1"])
     assert result.exit_code == 1
-    assert "Port must be between 0 and 65535" in result.stdout
+    assert "Port must be between 0 and 65535" in result.output
 
 
 def test_serve_invalid_port_too_high():
     """Test that ports above 65535 are rejected."""
     result = runner.invoke(app, ["serve", "--port", "65536"])
     assert result.exit_code == 1
-    assert "Port must be between 0 and 65535" in result.stdout
+    assert "Port must be between 0 and 65535" in result.output
 
 
 def test_serve_valid_port_zero():

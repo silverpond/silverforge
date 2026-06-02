@@ -1237,6 +1237,23 @@ def slack_listen(
         sm_client.close()
 
 
+# ── serve ─────────────────────────────────────────────────────────────────
+
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host", "-h", help="Host to bind to"),
+    port: int = typer.Option(8000, "--port", "-p", help="Port to bind to"),
+) -> None:
+    """Start the FastAPI server."""
+    import uvicorn
+
+    if not (0 <= port <= 65535):
+        typer.echo(f"Port must be between 0 and 65535, got {port}", err=True)
+        raise typer.Exit(1)
+
+    uvicorn.run("factory.server:app", host=host, port=port, reload=False)
+
+
 # ── entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

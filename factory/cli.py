@@ -3,6 +3,7 @@ Silverpond Factory CLI.
 
 Commands:
   ping   [worker]           — verify SSH connectivity
+  serve  [--host] [--port]  — start HTTP API server
   run    <task.yaml>        — execute a task end-to-end
   status [run_id]           — show run(s) status
   eval   <run_id>           — re-run eval commands for an existing run
@@ -87,6 +88,26 @@ def ping(
     else:
         console.print(f"  [red]UNREACHABLE[/red] — {worker} did not respond")
         raise typer.Exit(1)
+
+
+# ── serve ────────────────────────────────────────────────────────────────────
+
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host", "-h", help="Host to bind to"),
+    port: int = typer.Option(8000, "--port", "-p", help="Port to bind to"),
+) -> None:
+    """Start the HTTP API server."""
+    import uvicorn
+
+    # Validate port
+    if port < 0 or port > 65535:
+        typer.echo(f"Invalid port: {port}. Port must be between 0 and 65535.", err=True)
+        raise typer.Exit(1)
+
+    from factory.server import app as server_app
+    typer.echo(f"Starting server on http://{host}:{port}")
+    uvicorn.run(server_app, host=host, port=port)
 
 
 # ── inline task helpers ───────────────────────────────────────────────────────

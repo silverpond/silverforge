@@ -89,6 +89,24 @@ def ping(
         raise typer.Exit(1)
 
 
+# ── serve ─────────────────────────────────────────────────────────────────────
+
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host", "-h", help="Host to bind to"),
+    port: int = typer.Option(8000, "--port", "-p", help="Port to bind to"),
+) -> None:
+    """Start the FastAPI server."""
+    import uvicorn
+    from factory.server import app as server_app
+
+    if port < 0 or port > 65535:
+        typer.echo(f"Port must be between 0 and 65535, got {port}", err=True)
+        raise typer.Exit(1)
+
+    uvicorn.run(server_app, host=host, port=port)
+
+
 # ── inline task helpers ───────────────────────────────────────────────────────
 
 def _infer_gh_repo_from_cwd() -> Optional[str]:

@@ -8,7 +8,6 @@ Pipeline:
 """
 from __future__ import annotations
 
-import base64
 import os
 import shlex
 import subprocess
@@ -291,7 +290,7 @@ def watch_task(
 
                 captured = client.run(
                     f"tmux capture-pane -t {session_name} -p -S -200 2>/dev/null || "
-                    f"cat {shlex.quote(working_dir)}/.factory/output.log 2>/dev/null || true",
+                    f"cat {_sh(working_dir)}/.factory/output.log 2>/dev/null || true",
                     timeout=10,
                 ).stdout
                 store.save_log(run_id, f"agent_output_iter{iteration}.txt", captured)
@@ -349,7 +348,8 @@ def watch_task(
                     if task.crucible is not None and task.crucible.rounds > 0 and run.worktree_path:
                         # Commit any uncommitted agent changes so crucible can see the diff
                         commit_msg = shlex.quote(f"factory: agent changes (iter {iteration})")
-                        _wd = shlex.quote(working_dir)
+                        _safe_wd = working_dir.replace("~", "$HOME", 1) if working_dir.startswith("~") else working_dir
+                        _wd = f'"{_safe_wd}"'
                         client.run(
                             f"git -C {_wd} add -A && "
                             f"git -C {_wd} reset HEAD -- .factory/ .claude/ .crucible/ 2>/dev/null || true && "
@@ -411,21 +411,36 @@ def watch_task(
                                 store.save_run(run)
                                 _log(run_id, f"state=passed  (crucible evaluator approved PR opening)")
                                 _post_results(slack_client, run, results, passed=True)
-                                sess.kill_session(client, session_name)
-                                if run.slack_thread_ts:
-                                    sess.unregister_run(client, run.slack_thread_ts)
+                                import threading as _threading
+                                lesson_thread = _threading.Thread(
+                                    target=_request_and_collect_lesson,
+                                    args=(run_id, task, client, session_name, working_dir),
+                                    kwargs={"crucible_summary": crucible_feedback or ""},
+                                    daemon=True,
+                                )
+                                lesson_thread.start()
                                 if task.slack and task.slack.pause_for_review > 0:
                                     if not _pause_for_review(slack_client, run, task.slack.pause_for_review, run_id):
+                                        lesson_thread.join(timeout=95)
+                                        sess.kill_session(client, session_name)
+                                        if run.slack_thread_ts:
+                                            sess.unregister_run(client, run.slack_thread_ts)
                                         run.state = RunState.human_review
                                         store.save_run(run)
                                         _log(run_id, "  state=human_review (pause-and-review: not approved)")
                                         return run
+                                lesson_thread.join(timeout=95)
+                                sess.kill_session(client, session_name)
+                                if run.slack_thread_ts:
+                                    sess.unregister_run(client, run.slack_thread_ts)
                                 _maybe_open_pr(run, task, worker, repo, issue_number, workers_path, slack_client)
                                 return run
 
                             run.state = RunState.failed
                             run.notes = f"Crucible review blocked after {task.crucible.rounds} rounds: {crucible_reason}"
                             store.save_run(run)
+                            _request_and_collect_lesson(run_id, task, client, session_name, working_dir,
+                                                        crucible_summary=crucible_feedback or "")
                             sess.kill_session(client, session_name)
                             if run.slack_thread_ts:
                                 sess.unregister_run(client, run.slack_thread_ts)
@@ -490,25 +505,34 @@ def watch_task(
                     _post_results(slack_client, run, results, passed=True)
                     if slack_client and run.slack_channel_id:
                         summary = client.run(
-                            f"cat {shlex.quote(working_dir)}/.factory/completion.md 2>/dev/null || true",
+                            f"cat {_sh(working_dir)}/.factory/completion.md 2>/dev/null || true",
                             timeout=10,
                         ).stdout.strip()
                         if summary:
                             _slack_post(slack_client, run, f":robot_face: {summary[:2000]}")
-                    sess.kill_session(client, session_name)
-                    if run.slack_thread_ts:
-                        sess.unregister_run(client, run.slack_thread_ts)
+                    import threading as _threading
+                    lesson_thread = _threading.Thread(
+                        target=_request_and_collect_lesson,
+                        args=(run_id, task, client, session_name, working_dir),
+                        kwargs={"crucible_summary": crucible_feedback or ""},
+                        daemon=True,
+                    )
+                    lesson_thread.start()
                     if task.slack and task.slack.pause_for_review > 0:
                         if not _pause_for_review(slack_client, run, task.slack.pause_for_review, run_id):
+                            lesson_thread.join(timeout=95)
+                            sess.kill_session(client, session_name)
+                            if run.slack_thread_ts:
+                                sess.unregister_run(client, run.slack_thread_ts)
                             run.state = RunState.human_review
                             store.save_run(run)
                             _log(run_id, "  state=human_review (pause-and-review: not approved)")
                             return run
+                    lesson_thread.join(timeout=95)
+                    sess.kill_session(client, session_name)
+                    if run.slack_thread_ts:
+                        sess.unregister_run(client, run.slack_thread_ts)
                     _maybe_open_pr(run, task, worker, repo, issue_number, workers_path, slack_client)
-                    eval_fail_str = "\n".join(r.stdout + r.stderr for r in results if r.exit_code != 0)
-                    _generate_lesson(run_id, task, client, working_dir, passed=True,
-                                     iteration=iteration, crucible_feedback=crucible_feedback or "",
-                                     eval_failures=eval_fail_str, shell_init=worker.shell_init)
                     return run
 
                 if iteration < max_iterations:
@@ -521,10 +545,8 @@ def watch_task(
             _log(run_id, f"state=failed  (exhausted {max_iterations} iterations)")
             _post_results(slack_client, run, run.eval_results or [], passed=False)
             _maybe_comment_failure(run, repo, issue_number)
-            eval_fail_str = "\n".join(r.stdout + r.stderr for r in (run.eval_results or []) if r.exit_code != 0)
-            _generate_lesson(run_id, task, client, working_dir, passed=False,
-                             iteration=max_iterations, crucible_feedback=crucible_feedback or "",
-                             eval_failures=eval_fail_str, shell_init=worker.shell_init)
+            _request_and_collect_lesson(run_id, task, client, session_name, working_dir,
+                                        crucible_summary=crucible_feedback or "")
             sess.kill_session(client, session_name)
             if run.slack_thread_ts:
                 sess.unregister_run(client, run.slack_thread_ts)
@@ -615,9 +637,9 @@ def _github_https_url(url: str) -> str:
 def _create_run_worktree(client: SSHClient, task: TaskDefinition, run_id: str, worker: "WorkerConfig") -> str:
     base_path = task.repo.path
     worktree_base = worker.default_worktree_base
-    # Resolve ~ to an absolute path so shlex.quote doesn't prevent expansion later
+    # Resolve ~ to an absolute path so shlex.quote doesn't prevent tilde expansion later
     if worktree_base.startswith("~"):
-        home = client.run("echo $HOME", timeout=5).stdout.strip()
+        home = client.run("python3 -c 'import os; print(os.path.expanduser(\"~\"))'", timeout=5).stdout.strip()
         if home:
             worktree_base = home + worktree_base[1:]
     worktree_path = f"{worktree_base}/{task.id}-{run_id}"
@@ -674,7 +696,7 @@ def _print_eval_results(run_id: str, results: list) -> None:
 
 
 def _run_untangle(client: SSHClient, working_dir: str, base_branch: str, head_branch: str, config: "UntangleConfig") -> str:
-    cmd = (f"cd {shlex.quote(working_dir)} && untangle diff"
+    cmd = (f"cd {_sh(working_dir)} && untangle diff"
            f" --base {base_branch} --head {head_branch}"
            f" --lang {config.lang} --fail-on {config.fail_on} --format json")
     result = client.run(cmd, timeout=config.timeout)
@@ -741,7 +763,9 @@ def _truncate_large_diff(client: SSHClient, working_dir: str, base_branch: str, 
 
 def _run_crucible(client: SSHClient, working_dir: str, base_branch: str, config: "CrucibleConfig") -> tuple:
     import json as _json
-    _wd = shlex.quote(working_dir)
+    # Use double-quotes so $HOME expands; shlex.quote would produce single-quotes which block ~ expansion
+    _safe = working_dir.replace("~", "$HOME", 1) if working_dir.startswith("~") else working_dir
+    _wd = f'"{_safe}"'
     if config.model:
         patch_script = (
             "c = open('.crucible.toml').read(); "
@@ -974,11 +998,71 @@ def _maybe_comment_failure(run: "Run", repo: str | None, issue_number: int | Non
         _log(run.run_id, f"  WARNING: issue comment failed: {exc}")
 
 
+def _sh(path: str) -> str:
+    """Shell-safe path quoting that preserves ~ expansion via $HOME substitution."""
+    if path.startswith("~"):
+        return '"' + path.replace("~", "$HOME", 1) + '"'
+    return shlex.quote(path)
+
+
 def _prepend_constitution(prompt: str) -> str:
     constitution_path = Path(__file__).parent / "constitution.md"
     if not constitution_path.exists():
         return prompt
     return f"{constitution_path.read_text()}\n\n---\n\n{prompt}"
+
+
+def _request_and_collect_lesson(
+    run_id: str,
+    task: TaskDefinition,
+    client: SSHClient,
+    session_name: str,
+    working_dir: str,
+    crucible_summary: str = "",
+) -> None:
+    """Ask the agent to write a lesson then collect and store it."""
+    import time
+    import base64 as _b64
+    if task.repo is None:
+        return
+
+    crucible_section = (
+        f"\nCrucible review found:\n{crucible_summary[:500]}"
+        if crucible_summary
+        else "\nCrucible review: passed with no issues."
+    )
+    message = (
+        f"Task complete.{crucible_section}\n\n"
+        f"Now write a single lesson to `.factory/lesson.md`. "
+        f"One sentence only, starting with Always, Never, When, or Avoid. "
+        f"Ground it in what you actually encountered during this task — not general best practices. "
+        f"Do not repeat lessons already shown to you at the start of this run."
+    )
+
+    # Send directly via tmux without touching .factory/status
+    tmp = f"/tmp/factory-lesson-{session_name}"
+    encoded = _b64.b64encode(message.encode()).decode()
+    client.run(f"echo '{encoded}' | base64 -d > {tmp}", timeout=5)
+    client.run(f"tmux load-buffer {tmp} 2>/dev/null || true", timeout=5)
+    client.run(f"tmux paste-buffer -t {session_name} -p 2>/dev/null || true", timeout=5)
+    time.sleep(1)
+    client.run(f"tmux send-keys -t {session_name} Enter", timeout=5)
+    client.run(f"rm -f {tmp}", timeout=5)
+
+    lesson_path = _sh(f"{working_dir}/.factory/lesson.md")
+    lesson = ""
+    for _ in range(18):  # up to 90s
+        time.sleep(5)
+        lesson = client.run(f"cat {lesson_path} 2>/dev/null || true", timeout=10).stdout.strip()
+        if lesson:
+            break
+
+    if not lesson:
+        _log(run_id, "  reflexion: agent wrote no lesson")
+        return
+    _log(run_id, f"  reflexion lesson: {lesson[:120]}")
+    from factory.repo_inspector import append_repo_lesson
+    append_repo_lesson(client, task.repo.path, lesson)
 
 
 def _repo_slug_for_task(task: TaskDefinition) -> Optional[str]:
@@ -992,67 +1076,6 @@ def _repo_slug_for_task(task: TaskDefinition) -> Optional[str]:
     )
 
 
-_LESSON_PROMPT = """\
-A coding agent just completed a run on this repository. Generate one specific lesson \
-for future agents working in this codebase.
-
-Task: {task}
-Outcome: {outcome}
-Crucible code review issues: {crucible}
-Eval/test failures: {eval_failures}
-Agent completion notes: {completion}
-
-Write exactly ONE sentence — a specific, actionable rule that will help future agents \
-avoid mistakes or follow the right patterns in THIS repo. \
-Start with Always, Never, When, or Avoid.\
-"""
-
-
-def _generate_lesson(
-    run_id: str,
-    task: TaskDefinition,
-    client: "SSHClient",
-    working_dir: str,
-    passed: bool,
-    iteration: int,
-    crucible_feedback: str,
-    eval_failures: str,
-    shell_init: str,
-) -> None:
-    """Generate a Reflexion-style lesson via haiku and store it on the worker."""
-    if task.repo is None:
-        return
-
-    completion = client.run(
-        f"cat {shlex.quote(working_dir)}/.factory/completion.md 2>/dev/null || true",
-        timeout=10,
-    ).stdout.strip()
-
-    outcome = f"{'passed' if passed else 'failed'} after {iteration} iteration(s)"
-    prompt = _LESSON_PROMPT.format(
-        task=task.name,
-        outcome=outcome,
-        crucible=crucible_feedback[:500] if crucible_feedback else "none",
-        eval_failures=eval_failures[:500] if eval_failures else "none",
-        completion=completion[:500] if completion else "none",
-    )
-
-    init_prefix = f"{shell_init} && " if shell_init else ""
-    encoded = base64.b64encode(prompt.encode()).decode()
-    result = client.run(
-        f"{init_prefix}claude -p --dangerously-skip-permissions "
-        f"--model claude-haiku-4-5-20251001 "
-        f'"$(echo \'{encoded}\' | base64 -d)" 2>/dev/null',
-        timeout=60,
-    )
-    lesson = result.stdout.strip()
-    if not lesson:
-        _log(run_id, "  reflexion: lesson generation returned empty response")
-        return
-
-    _log(run_id, f"  reflexion lesson: {lesson[:120]}")
-    from factory.repo_inspector import append_repo_lesson
-    append_repo_lesson(client, task.repo.path, lesson)
 
 
 def _allocate_port(worker: WorkerConfig) -> int:

@@ -221,7 +221,8 @@ def _run_one_issue(
         gh.remove_label(repo, number, "factory:running")
         return issue, run
 
-    spawn_watcher(run, workers_path, repo=repo, issue_number=number)
+    from factory.config import resolve_workers_path
+    spawn_watcher(run, resolve_workers_path(workers_path), repo=repo, issue_number=number)
     _plog(number, f"launched  run={run.run_id}", style="green")
     return issue, run
 

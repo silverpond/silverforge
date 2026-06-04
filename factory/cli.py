@@ -948,6 +948,24 @@ def gc(
     console.print(f"\n{label}gc complete: {stuck} stuck run(s) marked failed, {cleaned} old run(s) cleaned up")
 
 
+# ── serve ────────────────────────────────────────────────────────────────────
+
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host", "-h", help="Host to bind to"),
+    port: int = typer.Option(8000, "--port", "-p", help="Port to bind to"),
+) -> None:
+    """Start the HTTP API server."""
+    if not (0 <= port <= 65535):
+        typer.echo(f"Invalid port {port}: must be between 0 and 65535", err=True)
+        raise typer.Exit(1)
+
+    import uvicorn
+    from factory.server import app as server_app
+
+    uvicorn.run(server_app, host=host, port=port)
+
+
 # ── poll ─────────────────────────────────────────────────────────────────────
 
 @app.command()

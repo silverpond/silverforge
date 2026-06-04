@@ -1237,6 +1237,24 @@ def slack_listen(
         sm_client.close()
 
 
+# ── serve ─────────────────────────────────────────────────────────────────────
+
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host", help="Host to bind"),
+    port: int = typer.Option(8000, "--port", "-p", help="Port to listen on (0-65535)"),
+) -> None:
+    """Start the HTTP API server."""
+    if not (0 <= port <= 65535):
+        typer.echo(f"Invalid port: {port}. Must be between 0 and 65535.", err=True)
+        raise typer.Exit(1)
+
+    import uvicorn
+    from factory.server import app as api_app
+
+    uvicorn.run(api_app, host=host, port=port)
+
+
 # ── entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

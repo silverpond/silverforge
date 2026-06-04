@@ -471,3 +471,506 @@ Findings:
 - **Iteration-order dependency in crucible feedback** `factory/runner.py:210`: By moving the baseline forward after each iteration, the incremental diff strategy creates an implicit dependency on iteration order. Identical code changes in different iteration sequences will receive different crucible feedback because they compare against different bases. This reduces reproducibility: running the same task twice with different intermediate code states will generate different crucible comments for the same final code. While acknowledged as an intended trade-off in the summary, this should be documented in code or task YAML schema to prevent confusion.
 - **Document iteration-order dependency in crucible feedback** `factory/runner.py:210`: By moving the baseline forward after each iteration, the incremental diff strategy creates an implicit dependency on iteration order. Identical code changes in different iteration sequences will receive different crucible feedback because they compare against different bases. This reduces reproducibility: running the same task twice with different intermediate code states will generate different crucible comments for the same final code. While this is an acknowledged trade-off to prevent timeouts, it should be documented in code to prevent confusion during debugging or refactoring.
 
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:04:26.575 +10:00] [progress] startup:references started Scanning related references
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:04:26.575 +10:00] [progress] startup:history started Collecting recent history
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:04:26.575 +10:00] [progress] startup:docs started Loading docs context
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:06:29.808 +10:00] [progress] startup:references completed count=0 duration=0.3s Reference scan complete
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:06:29.808 +10:00] [progress] startup:history completed count=20 duration=0.3s History collection complete
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:06:29.808 +10:00] [progress] startup:docs completed count=1 duration=0.3s Docs collection complete
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:06:29.809 +10:00] [progress] startup:prechecks started Running prechecks
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:06:29.809 +10:00] [progress] startup:prechecks completed count=2 duration=0.1s Prechecks complete
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:06:29.809 +10:00] [progress] run:header reviewers=claude-code max_rounds=1 changed_files=3 changed_lines=28 convergence_enabled=false context_enabled=true
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:06:29.809 +10:00] [progress] phase:start analyzer
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:06:29.809 +10:00] [progress] analyzer:start
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:06:29.809 +10:00] [agent-chat] -> claude-code index 59d1509..c46ea89 100644 sm_client.close()
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:06:29.810 +10:00] [analysis]
+## Local Diff Analysis
+
+Added HTTP API layer to Silverforge Factory via FastAPI with a `/hello` endpoint. Introduces two new modules: `factory/server.py` (FastAPI app with GET /hello returning JSON) and `serve` CLI command in `factory/cli.py` (launches uvicorn server with host/port validation). Dependencies fastapi≥0.100 and uvicorn≥0.23 added to pyproject.toml. This extends factory's interface from CLI-only to also support HTTP-based interactions, enabling programmatic API access and integration with other services. Port range validation (0-65535) prevents invalid startup configurations.
+
+### Suggested Review Focus
+- Endpoint Security & Scope: The `/hello` endpoint is currently unauthenticated and static. Reviewers should clarify if this is intentional (demo/health-check only) or if auth/authorization will be added. No request validation or error handling exists on the endpoint itself.
+- Dependencies & Compatibility: FastAPI and uvicorn are new production dependencies. Versions fastapi≥0.100 and uvicorn≥0.23 should be verified for stability, security patches, and compatibility with existing Python 3.10+ requirement. Consider pinning minor versions if strict compatibility is needed.
+- Server Lifecycle & Cleanup: No graceful shutdown handling, signal management, or Ctrl+C cleanup visible. Uvicorn's default behavior should be verified. Consider if background tasks or cleanup hooks are needed when server stops.
+- Integration with Factory Operations: Unclear how HTTP server coexists with existing SSH-based worker orchestration (ares worker, tmux sessions). Should the server run on worker or local machine? Does it conflict with existing factory operations?
+- Testing & Documentation: While memory indicates tests exist (test_server.py, test_cli_serve.py), this diff shows none. Verify test coverage for endpoint response format, content-type headers, and edge cases (invalid ports, startup failures).
+
+### Trade-offs
+- Adding FastAPI/uvicorn dependencies increases project dependencies and container/deployment footprint for a minimal (single-endpoint) feature. Assess ROI if this will grow into a full API.
+- Lazy import of uvicorn inside serve() avoids hard dependency at import time but may hide import errors until serve command is explicitly called.
+- Port validation is strict (0-65535) which is correct but doesn't prevent privileged ports (<1024) on Unix systems—may fail silently if run without sudo.
+- No CORS, authentication, or rate limiting—/hello endpoint is wide open. Acceptable for internal demo but risky if exposed externally.
+- Static `/hello` response offers no configurability or status info. Consider if future endpoints will need dynamic responses from factory state.
+
+### Affected Modules
+- factory/cli.py - new `serve` command added to main Typer app
+- factory/server.py - NEW module, FastAPI instance and routing
+- pyproject.toml - dependencies section extended with fastapi, uvicorn
+- Implicit: any code importing factory.cli or factory.server will now pull in FastAPI/uvicorn deps
+
+### Call Chain
+- CLI entry: `factory serve [--host HOST] [--port PORT]`
+- → Validate port: if not (0 ≤ port ≤ 65535), error and exit(1)
+- → Import uvicorn (lazy)
+- → Import FastAPI app from factory.server
+- → uvicorn.run(api_app, host=HOST, port=PORT)
+- → FastAPI Starlette server starts listening on host:port
+- → GET /hello endpoint → hello() function → return {'message': 'Hello, world!'}
+
+### Design Patterns
+- Separation of Concerns: API logic isolated in server.py, CLI integration in cli.py
+- Dependency Injection: server app imported and injected into uvicorn.run() call
+- Lazy Loading: uvicorn imported only when serve command is called (optional dependency pattern)
+- Type Hints: CLI parameters annotated (str, int) with Typer Option metadata
+- Validation Layer: Port range validation before server startup (fail-fast pattern)
+
+### Reviewer Checklist
+- ✓ Verify port validation edge cases: port=0 (valid, OS assigns), port=65535 (valid), port=-1 (rejected), port=65536 (rejected)
+- Confirm FastAPI/uvicorn version constraints don't conflict with other deps; check security advisories for these versions
+- Check factory.server.py imports and ensure FastAPI import won't fail (test: `python -c 'from factory.server import app'`)
+- Verify uvicorn startup error handling: what happens if port is already in use? Does typer catch uvicorn exceptions?
+- Confirm endpoint returns correct Content-Type header (application/json); test with curl/httpx
+- Clarify scope: is /hello demo-only or will it grow into a production API? Plan future endpoint design if so
+- Check if documentation (README, CLAUDE.md) needs update to mention HTTP API availability
+- Verify this doesn't break existing factory operations; confirm server can run in parallel with CLI tasks
+- Test on NixOS (ares worker): does PATH/shell_init affect uvicorn startup?
+- Consider: should serve command be available on worker or local machine only? Add guidance to CLAUDE.md
+- No auth/CORS visible—confirm acceptable for intended use case; add security roadmap if API will expand
+
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:06:29.810 +10:00] [system-context]
+### System Context
+- Changed files: 3
+- Reference snippets: 0
+- History commits: 20
+- Docs snippets: 1
+- Deterministic prechecks: 2
+- Affected files:
+  - factory/cli.py
+  - factory/server.py
+  - pyproject.toml
+- Precheck results:
+  - untangle-analyze-report [Fail] error: unexpected argument '.' found
+
+Usage: untangle analyze [OPTIONS] <PATH>
+
+For more information, try '--help'.
+  - untangle-quality-report [Fail] error: unrecognized subcommand 'quality'
+
+Usage: untangle <COMMAND>
+
+For more information, try '--help'.
+
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:06:29.810 +10:00] [progress] analyzer:done
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:06:29.810 +10:00] [progress] phase:done analyzer
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:06:29.810 +10:00] [progress] phase:start agent-preflight
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:06:29.810 +10:00] [progress] phase:done agent-preflight
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:06:29.810 +10:00] [progress] phase:start round-1
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:06:29.810 +10:00] [progress] round:1 start (agents: claude-code)
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:06:29.811 +10:00] [progress] round:1 status [... claude-code]
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:06:29.811 +10:00] [progress] round:1 status [RUN claude-code]
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:06:29.811 +10:00] [progress] agent:start round=1 id=claude-code
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:06:29.811 +10:00] [agent-chat] -> claude-code index 59d1509..c46ea89 100644 sm_client.close()
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:06:29.811 +10:00] [agent-review] round=1 id=claude-code 9 findings (1 Critical, 4 Warning, 4 Info) | Added HTTP API layer via FastAPI with a single `/hello` endpoint and `serve` CLI command. Review reveals 5 Critical/Warning findings across security, correctness, and operational concerns: (1) Missing host parameter validation allowing invalid hostnames, (2) Unhandled uvicorn.run() exceptions that crash the CLI on port conflicts, (3) Missing response type hints reducing type safety, (4) Loose dependency version constraints without upper bounds, (5) No graceful error messaging on startup failures. The endpoint itself is intentionally unauthenticated (as noted in memory), but this design should be explicitly documented. Lazy import pattern for uvicorn is acceptable but could hide missing dependencies. Overall the feature is functional but lacks production-readiness in error handling and operational visibility.
+[agent-review] details:
+Narrative:
+Added HTTP API layer via FastAPI with a single `/hello` endpoint and `serve` CLI command. Review reveals 5 Critical/Warning findings across security, correctness, and operational concerns: (1) Missing host parameter validation allowing invalid hostnames, (2) Unhandled uvicorn.run() exceptions that crash the CLI on port conflicts, (3) Missing response type hints reducing type safety, (4) Loose dependency version constraints without upper bounds, (5) No graceful error messaging on startup failures. The endpoint itself is intentionally unauthenticated (as noted in memory), but this design should be explicitly documented. Lazy import pattern for uvicorn is acceptable but could hide missing dependencies. Overall the feature is functional but lacks production-readiness in error handling and operational visibility.
+
+Findings:
+- [Critical] factory/cli.py:1248-1256 Add try-except around uvicorn.run() to catch startup errors (port already bound, permission denied) and emit clear error messages via typer.echo(err=True) before exiting with code 1.
+  description: The serve command calls uvicorn.run() without try-except wrapping. If the specified port is already in use, uvicorn raises an exception (OSError or uvicorn-specific exception) that propagates uncaught, crashing the CLI with a raw traceback instead of a user-friendly error message. This violates the fail-fast, user-friendly pattern used elsewhere in the CLI (e.g., port validation above).
+- [Warning] factory/cli.py:1241-1243 Add host validation to match port validation rigor. Validate that host is either 'localhost', '127.0.0.1', '0.0.0.0', or a valid IPv4/IPv6 address before passing to uvicorn.
+  description: The host parameter is accepted as any string (typer.Option default) with no validation. Invalid hostnames, malformed IPv4/IPv6 addresses, or non-existent interface names will be passed to uvicorn.run(), which may fail silently or with unclear errors. The port parameter has explicit range validation (0 ≤ port ≤ 65535) but host does not, creating inconsistent validation coverage.
+- [Warning] factory/server.py:6-8 Add return type hint and Pydantic response model to endpoint. Use @app.get('/hello', status_code=200, response_model=HelloResponse) and define a Pydantic BaseModel for the response.
+  description: The hello() endpoint function has no return type hint and does not specify status_code in the @app.get() decorator. FastAPI defaults to status code 200 and infers response type from the return value, but explicit type hints and status codes improve maintainability, enable static analysis, and document the contract. Without a Pydantic response model, response validation is skipped and the response schema is not documented in OpenAPI specs.
+- [Warning] pyproject.toml:16-17 Add upper bounds to dependency constraints. Use fastapi>=0.100,<1.0 and uvicorn>=0.23,<1.0 to prevent auto-upgrade to incompatible major versions. Alternatively, pin to specific minor versions tested: fastapi==0.104.1,uvicorn==0.24.0
+  description: fastapi>=0.100 and uvicorn>=0.23 use only lower bounds with no upper version caps. This allows ANY future major version (e.g., fastapi 2.0, uvicorn 1.0) to be installed, which may introduce breaking changes, new security vulnerabilities, or deprecated APIs. Best practice for production dependencies is to pin to known-good minor versions or use < X.0 upper bounds. Current constraints risk unexpected breakage on `pip install` without code changes.
+- [Warning] factory/cli.py:1252-1253 Consider moving uvicorn and factory.server imports to module level (after the slack_listen function definition) for earlier error detection. Alternatively, validate imports at CLI initialization time. The current approach is acceptable but non-standard for hard dependencies.
+  description: uvicorn and factory.server are imported inside the serve() function body, not at module level. While this avoids importing uvicorn when the serve command is not used, it delays import error discovery until runtime. If uvicorn is not installed (despite being in pyproject.toml), the error only surfaces when a user runs `factory serve`, not at import time. This is a trade-off pattern; the benefit of optional dependency loading is small here since fastapi/uvicorn are now hard requirements in pyproject.toml.
+- [Info] factory/server.py:1-8 Add module docstring and endpoint docstring. Example: module docstring should note 'FastAPI HTTP API server for factory. Used by factory serve CLI command.' Endpoint should document: 'Simple health-check endpoint returning static greeting.'
+  description: factory/server.py has no module-level docstring explaining purpose or configuration. The hello() endpoint has no docstring. For a new module in a production codebase, documentation clarifies intent (is this for demos only? for monitoring? internal-use only?) and helps future maintainers understand scope and constraints.
+- [Info] factory/cli.py:1248-1250 Add typer.echo() before uvicorn.run() to inform user of startup: 'Starting API server on http://{host}:{port}'. Optionally add 'Press Ctrl+C to stop.'
+  description: When the server starts successfully, nothing is printed to the user. No message indicates the server is running, at which host/port, or how to stop it (Ctrl+C). This reduces operational visibility and makes debugging harder if the user expects explicit confirmation.
+- [Info] factory/server.py:6-8 Document in server.py that /hello is unauthenticated and intended for internal health checks only. If external or production API use is planned, add: (1) authentication (API keys, JWT), (2) rate limiting, (3) CORS configuration, and (4) API versioning (e.g., /api/v1/hello). Create roadmap in CLAUDE.md or inline comment.
+  description: The /hello endpoint has no authentication, authorization, or rate limiting. Any client can call it unlimited times. FastAPI's default CORS configuration allows only same-origin requests, but if the API grows or is exposed externally, this will become a vulnerability. The memory indicates this is intentional (demo/health-check only), but this design decision should be explicitly documented and scoped. Current implementation is acceptable for internal use only.
+- [Info] factory/cli.py:1241-1242 Update help text for --host to clarify scope: "Host to bind (default 127.0.0.1, localhost only; use 0.0.0.0 for all interfaces)". Add note to CLAUDE.md under 'serve' command documentation.
+  description: The default host is 127.0.0.1 (localhost only), which is secure by default but means the API is not accessible from other machines without explicit --host 0.0.0.0 flag. This is a reasonable security posture but should be documented in the help text and CLAUDE.md to manage user expectations. Users unfamiliar with networking may expect the server to be accessible remotely by default.
+
+[agent-review]   [CRITICAL] factory/cli.py:1248 Add try-except around uvicorn.run() to catch startup errors (port already bound, permission denied) and emit clear error messages via typer.echo(err=True) before exiting with code 1.
+[agent-review]   [WARNING] factory/cli.py:1241 Add host validation to match port validation rigor. Validate that host is either 'localhost', '127.0.0.1', '0.0.0.0', or a valid IPv4/IPv6 address before passing to uvicorn.
+[agent-review]   [WARNING] factory/server.py:6 Add return type hint and Pydantic response model to endpoint. Use @app.get('/hello', status_code=200, response_model=HelloResponse) and define a Pydantic BaseModel for the response.
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:06:29.812 +10:00] [progress] round:1 status [OK claude-code (65.6s)]
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:06:29.812 +10:00] [progress] agent:done round=1 id=claude-code
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:06:29.812 +10:00] [progress] round:1 done
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:06:29.812 +10:00] [progress] round:1/1 complete
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:06:29.812 +10:00] [progress] phase:done round-1
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:06:29.813 +10:00] [agent-chat] -> claude-code Normalize these findings into canonical issues (merge duplicates): [{"agent":"claude-code","severity":"Critical","confidence":"High","file":"factory/cli.py","span":{"start":1248,"e
+…
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:06:29.813 +10:00] [progress] phase:start finalize
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:06:29.813 +10:00] [agent-chat] -> claude-code Findings: [{"agent":"claude-code","severity":"Critical","confidence":"High","file":"factory/cli.py","span":{"start":1248,"end":1256},"message":"Add try-except around uvicorn.run() 
+…
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:06:29.813 +10:00] [progress] autofix:ready
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:06:29.813 +10:00] [run:6dd6d1cf-27d5-4159-966d-1e80067bc024] [2026-06-04 15:06:29.813 +10:00] [progress] phase:done finalize
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024]
+[2026-06-04 15:06:29.833 +10:00] [report]
+{
+  "agent_failures": [],
+  "analysis_markdown": "## Local Diff Analysis\n\nAdded HTTP API layer to Silverforge Factory via FastAPI with a `/hello` endpoint. Introduces two new modules: `factory/server.py` (FastAPI app with GET /hello returning JSON) and `serve` CLI command in `factory/cli.py` (launches uvicorn server with host/port validation). Dependencies fastapi≥0.100 and uvicorn≥0.23 added to pyproject.toml. This extends factory's interface from CLI-only to also support HTTP-based interactions, enabling programmatic API access and integration with other services. Port range validation (0-65535) prevents invalid startup configurations.\n\n### Suggested Review Focus\n- Endpoint Security & Scope: The `/hello` endpoint is currently unauthenticated and static. Reviewers should clarify if this is intentional (demo/health-check only) or if auth/authorization will be added. No request validation or error handling exists on the endpoint itself.\n- Dependencies & Compatibility: FastAPI and uvicorn are new production dependencies. Versions fastapi≥0.100 and uvicorn≥0.23 should be verified for stability, security patches, and compatibility with existing Python 3.10+ requirement. Consider pinning minor versions if strict compatibility is needed.\n- Server Lifecycle & Cleanup: No graceful shutdown handling, signal management, or Ctrl+C cleanup visible. Uvicorn's default behavior should be verified. Consider if background tasks or cleanup hooks are needed when server stops.\n- Integration with Factory Operations: Unclear how HTTP server coexists with existing SSH-based worker orchestration (ares worker, tmux sessions). Should the server run on worker or local machine? Does it conflict with existing factory operations?\n- Testing & Documentation: While memory indicates tests exist (test_server.py, test_cli_serve.py), this diff shows none. Verify test coverage for endpoint response format, content-type headers, and edge cases (invalid ports, startup failures).\n\n### Trade-offs\n- Adding FastAPI/uvicorn dependencies increases project dependencies and container/deployment footprint for a minimal (single-endpoint) feature. Assess ROI if this will grow into a full API.\n- Lazy import of uvicorn inside serve() avoids hard dependency at import time but may hide import errors until serve command is explicitly called.\n- Port validation is strict (0-65535) which is correct but doesn't prevent privileged ports (<1024) on Unix systems—may fail silently if run without sudo.\n- No CORS, authentication, or rate limiting—/hello endpoint is wide open. Acceptable for internal demo but risky if exposed externally.\n- Static `/hello` response offers no configurability or status info. Consider if future endpoints will need dynamic responses from factory state.\n\n### Affected Modules\n- factory/cli.py - new `serve` command added to main Typer app\n- factory/server.py - NEW module, FastAPI instance and routing\n- pyproject.toml - dependencies section extended with fastapi, uvicorn\n- Implicit: any code importing factory.cli or factory.server will now pull in FastAPI/uvicorn deps\n\n### Call Chain\n- CLI entry: `factory serve [--host HOST] [--port PORT]`\n- → Validate port: if not (0 ≤ port ≤ 65535), error and exit(1)\n- → Import uvicorn (lazy)\n- → Import FastAPI app from factory.server\n- → uvicorn.run(api_app, host=HOST, port=PORT)\n- → FastAPI Starlette server starts listening on host:port\n- → GET /hello endpoint → hello() function → return {'message': 'Hello, world!'}\n\n### Design Patterns\n- Separation of Concerns: API logic isolated in server.py, CLI integration in cli.py\n- Dependency Injection: server app imported and injected into uvicorn.run() call\n- Lazy Loading: uvicorn imported only when serve command is called (optional dependency pattern)\n- Type Hints: CLI parameters annotated (str, int) with Typer Option metadata\n- Validation Layer: Port range validation before server startup (fail-fast pattern)\n\n### Reviewer Checklist\n- ✓ Verify port validation edge cases: port=0 (valid, OS assigns), port=65535 (valid), port=-1 (rejected), port=65536 (rejected)\n- Confirm FastAPI/uvicorn version constraints don't conflict with other deps; check security advisories for these versions\n- Check factory.server.py imports and ensure FastAPI import won't fail (test: `python -c 'from factory.server import app'`)\n- Verify uvicorn startup error handling: what happens if port is already in use? Does typer catch uvicorn exceptions?\n- Confirm endpoint returns correct Content-Type header (application/json); test with curl/httpx\n- Clarify scope: is /hello demo-only or will it grow into a production API? Plan future endpoint design if so\n- Check if documentation (README, CLAUDE.md) needs update to mention HTTP API availability\n- Verify this doesn't break existing factory operations; confirm server can run in parallel with CLI tasks\n- Test on NixOS (ares worker): does PATH/shell_init affect uvicorn startup?\n- Consider: should serve command be available on worker or local machine only? Add guidance to CLAUDE.md\n- No auth/CORS visible—confirm acceptable for intended use case; add security roadmap if API will expand\n",
+  "auto_fix": {
+    "explanation": "**Convergence Summary: 4 findings resolved with comprehensive fixes**\n\n**Critical Issue - Unhandled uvicorn.run() exceptions:**\nWrapped `uvicorn.run()` in try-except block catching `OSError` (port already bound, permission denied, etc.). Emits user-friendly error message via `typer.echo(err=True)` and exits gracefully with code 1, matching the CLI's fail-fast pattern established elsewhere.\n\n**Warning 1 - Host parameter validation:**\nAdded host validation using `ipaddress.ip_address()` to accept valid IPv4/IPv6 addresses and 'localhost' as a fallback. Invalid hostnames are rejected immediately with clear error messages before passing to uvicorn, preventing silent failures downstream.\n\n**Warning 2 - Response type hints and Pydantic model:**\nIntroduced `HelloResponse` Pydantic BaseModel with `message: str` field. Decorated endpoint with `@app.get(\"/hello\", status_code=200, response_model=HelloResponse)` and added return type hint `-> HelloResponse`. This enables:\n- Automatic response validation and serialization\n- OpenAPI schema documentation\n- Static type checking\n- IDE autocompletion\n\n**Warning 3 - Dependency version bounds:**\nUpdated `pyproject.toml` to use upper bound constraints: `fastapi>=0.100,<1.0` and `uvicorn>=0.23,<1.0`. Prevents accidental installation of incompatible major versions while allowing security patches within tested ranges.\n\n**Canonical Issues Addressed:**\n1. ✅ Exception handling for startup failures (port/permission errors)\n2. ✅ Input validation consistency (host + port)\n3. ✅ Type safety and API documentation (Pydantic model)\n4. ✅ Dependency stability (pinned major version ranges)\n\nAll fixes follow FastAPI/Pydantic best practices and maintain consistency with the codebase's error handling patterns.",
+    "unified_diff": "diff --git a/factory/cli.py b/factory/cli.py\nindex 59d1509..7f8e5c3 100644\n--- a/factory/cli.py\n+++ b/factory/cli.py\n@@ -1237,6 +1237,32 @@ def slack_listen(\n         sm_client.close()\n \n \n+# ── serve ─────────────────────────────────────────────────────────────────────\n+\n+@app.command()\n+def serve(\n+    host: str = typer.Option(\"127.0.0.1\", \"--host\", help=\"Host to bind\"),\n+    port: int = typer.Option(8000, \"--port\", \"-p\", help=\"Port to listen on (0-65535)\"),\n+) -> None:\n+    \"\"\"Start the HTTP API server.\"\"\"\n+    # Validate port\n+    if not (0 <= port <= 65535):\n+        typer.echo(f\"Invalid port: {port}. Must be between 0 and 65535.\", err=True)\n+        raise typer.Exit(1)\n+\n+    # Validate host\n+    import ipaddress\n+    try:\n+        ipaddress.ip_address(host)\n+    except ValueError:\n+        if host not in (\"localhost\",):\n+            typer.echo(f\"Invalid host: {host}. Must be a valid IP address or 'localhost'.\", err=True)\n+            raise typer.Exit(1)\n+\n+    import uvicorn\n+    from factory.server import app as api_app\n+\n+    try:\n+        uvicorn.run(api_app, host=host, port=port)\n+    except OSError as e:\n+        typer.echo(f\"Failed to start server on {host}:{port}: {e}\", err=True)\n+        raise typer.Exit(1)\n+\n \n # ── entry point ───────────────────────────────────────────────────────────────\n \ndiff --git a/factory/server.py b/factory/server.py\nnew file mode 100644\nindex 0000000..a1c8f2d\n--- /dev/null\n+++ b/factory/server.py\n@@ -0,0 +1,12 @@\n+from fastapi import FastAPI\n+from pydantic import BaseModel\n+\n+app = FastAPI()\n+\n+\n+class HelloResponse(BaseModel):\n+    message: str\n+\n+\n+@app.get(\"/hello\", status_code=200, response_model=HelloResponse)\n+def hello() -> HelloResponse:\n+    return HelloResponse(message=\"Hello, world!\")\ndiff --git a/pyproject.toml b/pyproject.toml\nindex 23b4060..f5a8d6f 100644\n--- a/pyproject.toml\n+++ b/pyproject.toml\n@@ -13,6 +13,8 @@ dependencies = [\n     \"pyyaml>=6\",\n     \"questionary>=2\",\n     \"slack-sdk>=3.19\",\n+    \"fastapi>=0.100,<1.0\",\n+    \"uvicorn>=0.23,<1.0\",\n ]\n \n [tool.setuptools.packages.find]"
+  },
+  "consensus": [
+    {
+      "agreed_count": 1,
+      "file": "factory/cli.py",
+      "reached_quorum": true,
+      "severity": "Critical",
+      "span": {
+        "end": 1256,
+        "start": 1248
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/cli.py",
+      "reached_quorum": true,
+      "severity": "Warning",
+      "span": {
+        "end": 1243,
+        "start": 1241
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/server.py",
+      "reached_quorum": true,
+      "severity": "Warning",
+      "span": {
+        "end": 8,
+        "start": 6
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "pyproject.toml",
+      "reached_quorum": true,
+      "severity": "Warning",
+      "span": {
+        "end": 17,
+        "start": 16
+      },
+      "total_agents": 1
+    }
+  ],
+  "final_action_plan": {
+    "prioritized_steps": [
+      "[Critical] Unhandled uvicorn.run() exceptions cause ungraceful CLI failure (factory/cli.py:1248)",
+      "[Warning] Host parameter accepts invalid values without validation (factory/cli.py:1241)",
+      "[Warning] Endpoint missing response type hints and explicit status code (factory/server.py:6)",
+      "[Warning] Dependency version constraints are too loose, no upper bounds (pyproject.toml:16)"
+    ],
+    "quick_wins": []
+  },
+  "final_analysis_markdown": "## Final Analysis\n\n- Issues: 4 (Critical: 1, Warning: 3, Info: 0)\n- Agent failures: 0\n\n### Top Issues\n- [Critical] Unhandled uvicorn.run() exceptions cause ungraceful CLI failure `factory/cli.py:1248`\n- [Warning] Host parameter accepts invalid values without validation `factory/cli.py:1241`\n- [Warning] Endpoint missing response type hints and explicit status code `factory/server.py:6`\n- [Warning] Dependency version constraints are too loose, no upper bounds `pyproject.toml:16`\n\n### Action Plan\n- [Critical] Unhandled uvicorn.run() exceptions cause ungraceful CLI failure (factory/cli.py:1248)\n- [Warning] Host parameter accepts invalid values without validation (factory/cli.py:1241)\n- [Warning] Endpoint missing response type hints and explicit status code (factory/server.py:6)\n- [Warning] Dependency version constraints are too loose, no upper bounds (pyproject.toml:16)\n",
+  "findings": [
+    {
+      "agent": "claude-code",
+      "category": "correctness",
+      "confidence": "High",
+      "description": "The serve command calls uvicorn.run() without try-except wrapping. If the specified port is already in use, uvicorn raises an exception (OSError or uvicorn-specific exception) that propagates uncaught, crashing the CLI with a raw traceback instead of a user-friendly error message. This violates the fail-fast, user-friendly pattern used elsewhere in the CLI (e.g., port validation above).",
+      "evidence": [
+        {
+          "location": "factory/cli.py:1253-1256",
+          "quote": "import uvicorn\n    from factory.server import app as api_app\n\n    uvicorn.run(api_app, host=host, port=port)"
+        }
+      ],
+      "file": "factory/cli.py",
+      "message": "Add try-except around uvicorn.run() to catch startup errors (port already bound, permission denied) and emit clear error messages via typer.echo(err=True) before exiting with code 1.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Critical",
+      "span": {
+        "end": 1256,
+        "start": 1248
+      },
+      "suggested_fix": "Wrap uvicorn.run() in try-except: catch OSError/Exception, log friendly message 'Failed to start server on {host}:{port}: {error}', raise typer.Exit(1). Example: try:\\n    uvicorn.run(...)\\nexcept OSError as e:\\n    typer.echo(f'Failed to start server: {e}', err=True)\\n    raise typer.Exit(1)",
+      "title": "Unhandled uvicorn.run() exceptions cause ungraceful CLI failure"
+    },
+    {
+      "agent": "claude-code",
+      "category": "correctness",
+      "confidence": "High",
+      "description": "The host parameter is accepted as any string (typer.Option default) with no validation. Invalid hostnames, malformed IPv4/IPv6 addresses, or non-existent interface names will be passed to uvicorn.run(), which may fail silently or with unclear errors. The port parameter has explicit range validation (0 ≤ port ≤ 65535) but host does not, creating inconsistent validation coverage.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:1241-1242",
+          "quote": "host: str = typer.Option(\"127.0.0.1\", \"--host\", help=\"Host to bind\"),"
+        }
+      ],
+      "file": "factory/cli.py",
+      "message": "Add host validation to match port validation rigor. Validate that host is either 'localhost', '127.0.0.1', '0.0.0.0', or a valid IPv4/IPv6 address before passing to uvicorn.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Warning",
+      "span": {
+        "end": 1243,
+        "start": 1241
+      },
+      "suggested_fix": "Validate host after parameter binding using ipaddress.ip_address() or socket.inet_aton() to ensure it's a valid IP, or check against whitelist of known valid values (localhost, 127.0.0.1, 0.0.0.0, ::1). Example:\\nif host not in ('127.0.0.1', '0.0.0.0', 'localhost') and not is_valid_ip(host):\\n    typer.echo(f'Invalid host: {host}', err=True)\\n    raise typer.Exit(1)",
+      "title": "Host parameter accepts invalid values without validation"
+    },
+    {
+      "agent": "claude-code",
+      "category": "correctness",
+      "confidence": "High",
+      "description": "The hello() endpoint function has no return type hint and does not specify status_code in the @app.get() decorator. FastAPI defaults to status code 200 and infers response type from the return value, but explicit type hints and status codes improve maintainability, enable static analysis, and document the contract. Without a Pydantic response model, response validation is skipped and the response schema is not documented in OpenAPI specs.",
+      "evidence": [
+        {
+          "location": "factory/server.py:6-8",
+          "quote": "@app.get(\"/hello\")\ndef hello():\n    return {\"message\": \"Hello, world!\"}"
+        }
+      ],
+      "file": "factory/server.py",
+      "message": "Add return type hint and Pydantic response model to endpoint. Use @app.get('/hello', status_code=200, response_model=HelloResponse) and define a Pydantic BaseModel for the response.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Warning",
+      "span": {
+        "end": 8,
+        "start": 6
+      },
+      "suggested_fix": "Add to factory/server.py:\\nfrom pydantic import BaseModel\\n\\nclass HelloResponse(BaseModel):\\n    message: str\\n\\n@app.get('/hello', status_code=200, response_model=HelloResponse)\\ndef hello() -> HelloResponse:\\n    return HelloResponse(message='Hello, world!')",
+      "title": "Endpoint missing response type hints and explicit status code"
+    },
+    {
+      "agent": "claude-code",
+      "category": "security",
+      "confidence": "High",
+      "description": "fastapi>=0.100 and uvicorn>=0.23 use only lower bounds with no upper version caps. This allows ANY future major version (e.g., fastapi 2.0, uvicorn 1.0) to be installed, which may introduce breaking changes, new security vulnerabilities, or deprecated APIs. Best practice for production dependencies is to pin to known-good minor versions or use < X.0 upper bounds. Current constraints risk unexpected breakage on `pip install` without code changes.",
+      "evidence": [
+        {
+          "location": "pyproject.toml:16-17",
+          "quote": "    \"fastapi>=0.100\",\n    \"uvicorn>=0.23\","
+        }
+      ],
+      "file": "pyproject.toml",
+      "message": "Add upper bounds to dependency constraints. Use fastapi>=0.100,<1.0 and uvicorn>=0.23,<1.0 to prevent auto-upgrade to incompatible major versions. Alternatively, pin to specific minor versions tested: fastapi==0.104.1,uvicorn==0.24.0",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Warning",
+      "span": {
+        "end": 17,
+        "start": 16
+      },
+      "suggested_fix": "Update pyproject.toml dependencies to:\\n    \"fastapi>=0.100,<1.0\",\\n    \"uvicorn>=0.23,<1.0\",\\nOr pin specific tested versions: \"fastapi==0.104.1\", \"uvicorn==0.24.0\"",
+      "title": "Dependency version constraints are too loose, no upper bounds"
+    }
+  ],
+  "issues": [
+    {
+      "category": "correctness",
+      "description": "The serve command calls uvicorn.run() without try-except wrapping. If the specified port is already in use, uvicorn raises an exception (OSError or uvicorn-specific exception) that propagates uncaught, crashing the CLI with a raw traceback instead of a user-friendly error message. This violates the fail-fast, user-friendly pattern used elsewhere in the CLI (e.g., port validation above).",
+      "evidence": [
+        {
+          "location": "factory/cli.py:1253-1256",
+          "quote": "import uvicorn\n    from factory.server import app as api_app\n\n    uvicorn.run(api_app, host=host, port=port)"
+        }
+      ],
+      "file": "factory/cli.py",
+      "line_end": 1256,
+      "line_start": 1248,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Critical",
+      "suggested_fix": "Wrap uvicorn.run() in try-except: catch OSError/Exception, log friendly message 'Failed to start server on {host}:{port}: {error}', raise typer.Exit(1). Example: try:\\n    uvicorn.run(...)\\nexcept OSError as e:\\n    typer.echo(f'Failed to start server: {e}', err=True)\\n    raise typer.Exit(1)",
+      "title": "Unhandled uvicorn.run() exceptions cause ungraceful CLI failure"
+    },
+    {
+      "category": "correctness",
+      "description": "The host parameter is accepted as any string (typer.Option default) with no validation. Invalid hostnames, malformed IPv4/IPv6 addresses, or non-existent interface names will be passed to uvicorn.run(), which may fail silently or with unclear errors. The port parameter has explicit range validation (0 ≤ port ≤ 65535) but host does not, creating inconsistent validation coverage.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:1241-1242",
+          "quote": "host: str = typer.Option(\"127.0.0.1\", \"--host\", help=\"Host to bind\"),"
+        }
+      ],
+      "file": "factory/cli.py",
+      "line_end": 1243,
+      "line_start": 1241,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "Validate host after parameter binding using ipaddress.ip_address() or socket.inet_aton() to ensure it's a valid IP, or check against whitelist of known valid values (localhost, 127.0.0.1, 0.0.0.0, ::1). Example:\\nif host not in ('127.0.0.1', '0.0.0.0', 'localhost') and not is_valid_ip(host):\\n    typer.echo(f'Invalid host: {host}', err=True)\\n    raise typer.Exit(1)",
+      "title": "Host parameter accepts invalid values without validation"
+    },
+    {
+      "category": "correctness",
+      "description": "The hello() endpoint function has no return type hint and does not specify status_code in the @app.get() decorator. FastAPI defaults to status code 200 and infers response type from the return value, but explicit type hints and status codes improve maintainability, enable static analysis, and document the contract. Without a Pydantic response model, response validation is skipped and the response schema is not documented in OpenAPI specs.",
+      "evidence": [
+        {
+          "location": "factory/server.py:6-8",
+          "quote": "@app.get(\"/hello\")\ndef hello():\n    return {\"message\": \"Hello, world!\"}"
+        }
+      ],
+      "file": "factory/server.py",
+      "line_end": 8,
+      "line_start": 6,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "Add to factory/server.py:\\nfrom pydantic import BaseModel\\n\\nclass HelloResponse(BaseModel):\\n    message: str\\n\\n@app.get('/hello', status_code=200, response_model=HelloResponse)\\ndef hello() -> HelloResponse:\\n    return HelloResponse(message='Hello, world!')",
+      "title": "Endpoint missing response type hints and explicit status code"
+    },
+    {
+      "category": "security",
+      "description": "fastapi>=0.100 and uvicorn>=0.23 use only lower bounds with no upper version caps. This allows ANY future major version (e.g., fastapi 2.0, uvicorn 1.0) to be installed, which may introduce breaking changes, new security vulnerabilities, or deprecated APIs. Best practice for production dependencies is to pin to known-good minor versions or use < X.0 upper bounds. Current constraints risk unexpected breakage on `pip install` without code changes.",
+      "evidence": [
+        {
+          "location": "pyproject.toml:16-17",
+          "quote": "    \"fastapi>=0.100\",\n    \"uvicorn>=0.23\","
+        }
+      ],
+      "file": "pyproject.toml",
+      "line_end": 17,
+      "line_start": 16,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "Update pyproject.toml dependencies to:\\n    \"fastapi>=0.100,<1.0\",\\n    \"uvicorn>=0.23,<1.0\",\\nOr pin specific tested versions: \"fastapi==0.104.1\", \"uvicorn==0.24.0\"",
+      "title": "Dependency version constraints are too loose, no upper bounds"
+    }
+  ],
+  "pr_comment_markdown": "## Crucible Review Summary\n\n- Issues: 4\n- Critical: 1, Warning: 3\n\n### Top Actions\n- [Critical] Unhandled uvicorn.run() exceptions cause ungraceful CLI failure (factory/cli.py:1248)\n- [Warning] Host parameter accepts invalid values without validation (factory/cli.py:1241)\n- [Warning] Endpoint missing response type hints and explicit status code (factory/server.py:6)\n- [Warning] Dependency version constraints are too loose, no upper bounds (pyproject.toml:16)\n\n### Notable Issues\n- **Unhandled uvicorn.run() exceptions cause ungraceful CLI failure** `factory/cli.py:1248`: The serve command calls uvicorn.run() without try-except wrapping. If the specified port is already in use, uvicorn raises an exception (OSError or uvicorn-specific exception) that propagates uncaught, crashing the CLI with a raw traceback instead of a user-friendly error message. This violates the fail-fast, user-friendly pattern used elsewhere in the CLI (e.g., port validation above).\n- **Host parameter accepts invalid values without validation** `factory/cli.py:1241`: The host parameter is accepted as any string (typer.Option default) with no validation. Invalid hostnames, malformed IPv4/IPv6 addresses, or non-existent interface names will be passed to uvicorn.run(), which may fail silently or with unclear errors. The port parameter has explicit range validation (0 ≤ port ≤ 65535) but host does not, creating inconsistent validation coverage.\n- **Endpoint missing response type hints and explicit status code** `factory/server.py:6`: The hello() endpoint function has no return type hint and does not specify status_code in the @app.get() decorator. FastAPI defaults to status code 200 and infers response type from the return value, but explicit type hints and status codes improve maintainability, enable static analysis, and document the contract. Without a Pydantic response model, response validation is skipped and the response schema is not documented in OpenAPI specs.\n- **Dependency version constraints are too loose, no upper bounds** `pyproject.toml:16`: fastapi>=0.100 and uvicorn>=0.23 use only lower bounds with no upper version caps. This allows ANY future major version (e.g., fastapi 2.0, uvicorn 1.0) to be installed, which may introduce breaking changes, new security vulnerabilities, or deprecated APIs. Best practice for production dependencies is to pin to known-good minor versions or use < X.0 upper bounds. Current constraints risk unexpected breakage on `pip install` without code changes.\n",
+  "pr_review_draft": {
+    "inline_comments": [
+      {
+        "body": "**Unhandled uvicorn.run() exceptions cause ungraceful CLI failure**\n\nThe serve command calls uvicorn.run() without try-except wrapping. If the specified port is already in use, uvicorn raises an exception (OSError or uvicorn-specific exception) that propagates uncaught, crashing the CLI with a raw traceback instead of a user-friendly error message. This violates the fail-fast, user-friendly pattern used elsewhere in the CLI (e.g., port validation above).\n\nRaised by: claude-code\n\nSuggested fix: Wrap uvicorn.run() in try-except: catch OSError/Exception, log friendly message 'Failed to start server on {host}:{port}: {error}', raise typer.Exit(1). Example: try:\\n    uvicorn.run(...)\\nexcept OSError as e:\\n    typer.echo(f'Failed to start server: {e}', err=True)\\n    raise typer.Exit(1)",
+        "category": "correctness",
+        "description": "The serve command calls uvicorn.run() without try-except wrapping. If the specified port is already in use, uvicorn raises an exception (OSError or uvicorn-specific exception) that propagates uncaught, crashing the CLI with a raw traceback instead of a user-friendly error message. This violates the fail-fast, user-friendly pattern used elsewhere in the CLI (e.g., port validation above).",
+        "line": 1256,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/cli.py",
+        "severity": "Critical",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 1248,
+        "start_side": "Right",
+        "title": "Unhandled uvicorn.run() exceptions cause ungraceful CLI failure"
+      },
+      {
+        "body": "**Host parameter accepts invalid values without validation**\n\nThe host parameter is accepted as any string (typer.Option default) with no validation. Invalid hostnames, malformed IPv4/IPv6 addresses, or non-existent interface names will be passed to uvicorn.run(), which may fail silently or with unclear errors. The port parameter has explicit range validation (0 ≤ port ≤ 65535) but host does not, creating inconsistent validation coverage.\n\nRaised by: claude-code\n\nSuggested fix: Validate host after parameter binding using ipaddress.ip_address() or socket.inet_aton() to ensure it's a valid IP, or check against whitelist of known valid values (localhost, 127.0.0.1, 0.0.0.0, ::1). Example:\\nif host not in ('127.0.0.1', '0.0.0.0', 'localhost') and not is_valid_ip(host):\\n    typer.echo(f'Invalid host: {host}', err=True)\\n    raise typer.Exit(1)",
+        "category": "correctness",
+        "description": "The host parameter is accepted as any string (typer.Option default) with no validation. Invalid hostnames, malformed IPv4/IPv6 addresses, or non-existent interface names will be passed to uvicorn.run(), which may fail silently or with unclear errors. The port parameter has explicit range validation (0 ≤ port ≤ 65535) but host does not, creating inconsistent validation coverage.",
+        "line": 1243,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/cli.py",
+        "severity": "Warning",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 1241,
+        "start_side": "Right",
+        "title": "Host parameter accepts invalid values without validation"
+      },
+      {
+        "body": "**Endpoint missing response type hints and explicit status code**\n\nThe hello() endpoint function has no return type hint and does not specify status_code in the @app.get() decorator. FastAPI defaults to status code 200 and infers response type from the return value, but explicit type hints and status codes improve maintainability, enable static analysis, and document the contract. Without a Pydantic response model, response validation is skipped and the response schema is not documented in OpenAPI specs.\n\nRaised by: claude-code\n\nSuggested fix: Add to factory/server.py:\\nfrom pydantic import BaseModel\\n\\nclass HelloResponse(BaseModel):\\n    message: str\\n\\n@app.get('/hello', status_code=200, response_model=HelloResponse)\\ndef hello() -> HelloResponse:\\n    return HelloResponse(message='Hello, world!')",
+        "category": "correctness",
+        "description": "The hello() endpoint function has no return type hint and does not specify status_code in the @app.get() decorator. FastAPI defaults to status code 200 and infers response type from the return value, but explicit type hints and status codes improve maintainability, enable static analysis, and document the contract. Without a Pydantic response model, response validation is skipped and the response schema is not documented in OpenAPI specs.",
+        "line": 8,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/server.py",
+        "severity": "Warning",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 6,
+        "start_side": "Right",
+        "title": "Endpoint missing response type hints and explicit status code"
+      },
+      {
+        "body": "**Dependency version constraints are too loose, no upper bounds**\n\nfastapi>=0.100 and uvicorn>=0.23 use only lower bounds with no upper version caps. This allows ANY future major version (e.g., fastapi 2.0, uvicorn 1.0) to be installed, which may introduce breaking changes, new security vulnerabilities, or deprecated APIs. Best practice for production dependencies is to pin to known-good minor versions or use < X.0 upper bounds. Current constraints risk unexpected breakage on `pip install` without code changes.\n\nRaised by: claude-code\n\nSuggested fix: Update pyproject.toml dependencies to:\\n    \"fastapi>=0.100,<1.0\",\\n    \"uvicorn>=0.23,<1.0\",\\nOr pin specific tested versions: \"fastapi==0.104.1\", \"uvicorn==0.24.0\"",
+        "category": "security",
+        "description": "fastapi>=0.100 and uvicorn>=0.23 use only lower bounds with no upper version caps. This allows ANY future major version (e.g., fastapi 2.0, uvicorn 1.0) to be installed, which may introduce breaking changes, new security vulnerabilities, or deprecated APIs. Best practice for production dependencies is to pin to known-good minor versions or use < X.0 upper bounds. Current constraints risk unexpected breakage on `pip install` without code changes.",
+        "line": 17,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "pyproject.toml",
+        "severity": "Warning",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 16,
+        "start_side": "Right",
+        "title": "Dependency version constraints are too loose, no upper bounds"
+      }
+    ],
+    "overview_comment": {
+      "body": "## Crucible Review Summary\n\n- Issues: 4\n- Critical: 1, Warning: 3\n\n### Top Actions\n- [Critical] Unhandled uvicorn.run() exceptions cause ungraceful CLI failure (factory/cli.py:1248)\n- [Warning] Host parameter accepts invalid values without validation (factory/cli.py:1241)\n- [Warning] Endpoint missing response type hints and explicit status code (factory/server.py:6)\n- [Warning] Dependency version constraints are too loose, no upper bounds (pyproject.toml:16)\n\n### Notable Issues\n- **Unhandled uvicorn.run() exceptions cause ungraceful CLI failure** `factory/cli.py:1248`: The serve command calls uvicorn.run() without try-except wrapping. If the specified port is already in use, uvicorn raises an exception (OSError or uvicorn-specific exception) that propagates uncaught, crashing the CLI with a raw traceback instead of a user-friendly error message. This violates the fail-fast, user-friendly pattern used elsewhere in the CLI (e.g., port validation above).\n- **Host parameter accepts invalid values without validation** `factory/cli.py:1241`: The host parameter is accepted as any string (typer.Option default) with no validation. Invalid hostnames, malformed IPv4/IPv6 addresses, or non-existent interface names will be passed to uvicorn.run(), which may fail silently or with unclear errors. The port parameter has explicit range validation (0 ≤ port ≤ 65535) but host does not, creating inconsistent validation coverage.\n- **Endpoint missing response type hints and explicit status code** `factory/server.py:6`: The hello() endpoint function has no return type hint and does not specify status_code in the @app.get() decorator. FastAPI defaults to status code 200 and infers response type from the return value, but explicit type hints and status codes improve maintainability, enable static analysis, and document the contract. Without a Pydantic response model, response validation is skipped and the response schema is not documented in OpenAPI specs.\n- **Dependency version constraints are too loose, no upper bounds** `pyproject.toml:16`: fastapi>=0.100 and uvicorn>=0.23 use only lower bounds with no upper version caps. This allows ANY future major version (e.g., fastapi 2.0, uvicorn 1.0) to be installed, which may introduce breaking changes, new security vulnerabilities, or deprecated APIs. Best practice for production dependencies is to pin to known-good minor versions or use < X.0 upper bounds. Current constraints risk unexpected breakage on `pip install` without code changes.\n"
+    },
+    "overview_only_comments": []
+  },
+  "run_id": "6dd6d1cf-27d5-4159-966d-1e80067bc024",
+  "session_id": "6dd6d1cf-27d5-4159-966d-1e80067bc024",
+  "system_context_markdown": "### System Context\n- Changed files: 3\n- Reference snippets: 0\n- History commits: 20\n- Docs snippets: 1\n- Deterministic prechecks: 2\n- Affected files:\n  - factory/cli.py\n  - factory/server.py\n  - pyproject.toml\n- Precheck results:\n  - untangle-analyze-report [Fail] error: unexpected argument '.' found\n\nUsage: untangle analyze [OPTIONS] <PATH>\n\nFor more information, try '--help'.\n  - untangle-quality-report [Fail] error: unrecognized subcommand 'quality'\n\nUsage: untangle <COMMAND>\n\nFor more information, try '--help'.\n",
+  "verdict": "Block"
+}
+[run:6dd6d1cf-27d5-4159-966d-1e80067bc024]
+[2026-06-04 15:06:29.834 +10:00] [final-analysis]
+## Final Analysis
+
+- Issues: 4 (Critical: 1, Warning: 3, Info: 0)
+- Agent failures: 0
+
+### Top Issues
+- [Critical] Unhandled uvicorn.run() exceptions cause ungraceful CLI failure `factory/cli.py:1248`
+- [Warning] Host parameter accepts invalid values without validation `factory/cli.py:1241`
+- [Warning] Endpoint missing response type hints and explicit status code `factory/server.py:6`
+- [Warning] Dependency version constraints are too loose, no upper bounds `pyproject.toml:16`
+
+### Action Plan
+- [Critical] Unhandled uvicorn.run() exceptions cause ungraceful CLI failure (factory/cli.py:1248)
+- [Warning] Host parameter accepts invalid values without validation (factory/cli.py:1241)
+- [Warning] Endpoint missing response type hints and explicit status code (factory/server.py:6)
+- [Warning] Dependency version constraints are too loose, no upper bounds (pyproject.toml:16)
+
+[2026-06-04 15:06:29.834 +10:00] [pr-comment]
+## Crucible Review Summary
+
+- Issues: 4
+- Critical: 1, Warning: 3
+
+### Top Actions
+- [Critical] Unhandled uvicorn.run() exceptions cause ungraceful CLI failure (factory/cli.py:1248)
+- [Warning] Host parameter accepts invalid values without validation (factory/cli.py:1241)
+- [Warning] Endpoint missing response type hints and explicit status code (factory/server.py:6)
+- [Warning] Dependency version constraints are too loose, no upper bounds (pyproject.toml:16)
+
+### Notable Issues
+- **Unhandled uvicorn.run() exceptions cause ungraceful CLI failure** `factory/cli.py:1248`: The serve command calls uvicorn.run() without try-except wrapping. If the specified port is already in use, uvicorn raises an exception (OSError or uvicorn-specific exception) that propagates uncaught, crashing the CLI with a raw traceback instead of a user-friendly error message. This violates the fail-fast, user-friendly pattern used elsewhere in the CLI (e.g., port validation above).
+- **Host parameter accepts invalid values without validation** `factory/cli.py:1241`: The host parameter is accepted as any string (typer.Option default) with no validation. Invalid hostnames, malformed IPv4/IPv6 addresses, or non-existent interface names will be passed to uvicorn.run(), which may fail silently or with unclear errors. The port parameter has explicit range validation (0 ≤ port ≤ 65535) but host does not, creating inconsistent validation coverage.
+- **Endpoint missing response type hints and explicit status code** `factory/server.py:6`: The hello() endpoint function has no return type hint and does not specify status_code in the @app.get() decorator. FastAPI defaults to status code 200 and infers response type from the return value, but explicit type hints and status codes improve maintainability, enable static analysis, and document the contract. Without a Pydantic response model, response validation is skipped and the response schema is not documented in OpenAPI specs.
+- **Dependency version constraints are too loose, no upper bounds** `pyproject.toml:16`: fastapi>=0.100 and uvicorn>=0.23 use only lower bounds with no upper version caps. This allows ANY future major version (e.g., fastapi 2.0, uvicorn 1.0) to be installed, which may introduce breaking changes, new security vulnerabilities, or deprecated APIs. Best practice for production dependencies is to pin to known-good minor versions or use < X.0 upper bounds. Current constraints risk unexpected breakage on `pip install` without code changes.
+

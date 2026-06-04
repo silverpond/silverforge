@@ -730,6 +730,29 @@ def _parse_gh_repo(repo_url: str) -> Optional[str]:
     return m.group(1) if m else None
 
 
+# ── serve ────────────────────────────────────────────────────────────────────
+
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host", "-h", help="Host to bind to"),
+    port: int = typer.Option(8000, "--port", "-p", help="Port to bind to"),
+) -> None:
+    """Start the Silverforge Factory API server."""
+    if port < 0 or port > 65535:
+        typer.echo(f"Invalid port: {port}. Must be between 0 and 65535.", err=True)
+        raise typer.Exit(1)
+
+    try:
+        import uvicorn
+        from factory.server import app as server_app
+    except ImportError:
+        typer.echo("fastapi and uvicorn are required for the serve command", err=True)
+        raise typer.Exit(1)
+
+    console.print(f"Starting server on http://{host}:{port}")
+    uvicorn.run(server_app, host=host, port=port)
+
+
 _FACTORY_LABELS = [
     ("factory",              "0075ca", "Trigger a factory run"),
     ("factory:running",      "e11d48", "Factory run in progress"),

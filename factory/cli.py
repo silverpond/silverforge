@@ -960,10 +960,28 @@ def serve(
         typer.echo(f"Invalid port {port}: must be between 0 and 65535", err=True)
         raise typer.Exit(1)
 
-    import uvicorn
+    try:
+        import uvicorn
+    except ImportError:
+        typer.echo("uvicorn not installed. Run: pip install 'uvicorn>=0.23'", err=True)
+        raise typer.Exit(1)
+
     from factory.server import app as server_app
 
-    uvicorn.run(server_app, host=host, port=port)
+    try:
+        uvicorn.run(server_app, host=host, port=port)
+    except OSError as e:
+        if "Address already in use" in str(e) or "Permission denied" in str(e):
+            typer.echo(f"Cannot bind to {host}:{port} — {e}", err=True)
+        else:
+            typer.echo(f"Network error: {e}", err=True)
+        raise typer.Exit(1)
+    except ValueError as e:
+        typer.echo(f"Invalid configuration: {e}", err=True)
+        raise typer.Exit(1)
+    except Exception as e:
+        typer.echo(f"Server startup failed: {e}", err=True)
+        raise typer.Exit(1)
 
 
 # ── poll ─────────────────────────────────────────────────────────────────────

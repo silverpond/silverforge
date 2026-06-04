@@ -742,12 +742,8 @@ def serve(
         typer.echo(f"Invalid port: {port}. Must be between 0 and 65535.", err=True)
         raise typer.Exit(1)
 
-    try:
-        import uvicorn
-        from factory.server import app as server_app
-    except ImportError:
-        typer.echo("fastapi and uvicorn are required for the serve command", err=True)
-        raise typer.Exit(1)
+    import uvicorn
+    from factory.server import app as server_app
 
     console.print(f"Starting server on http://{host}:{port}")
     uvicorn.run(server_app, host=host, port=port)

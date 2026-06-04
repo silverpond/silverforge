@@ -471,3 +471,890 @@ Findings:
 - **Iteration-order dependency in crucible feedback** `factory/runner.py:210`: By moving the baseline forward after each iteration, the incremental diff strategy creates an implicit dependency on iteration order. Identical code changes in different iteration sequences will receive different crucible feedback because they compare against different bases. This reduces reproducibility: running the same task twice with different intermediate code states will generate different crucible comments for the same final code. While acknowledged as an intended trade-off in the summary, this should be documented in code or task YAML schema to prevent confusion.
 - **Document iteration-order dependency in crucible feedback** `factory/runner.py:210`: By moving the baseline forward after each iteration, the incremental diff strategy creates an implicit dependency on iteration order. Identical code changes in different iteration sequences will receive different crucible feedback because they compare against different bases. This reduces reproducibility: running the same task twice with different intermediate code states will generate different crucible comments for the same final code. While this is an acknowledged trade-off to prevent timeouts, it should be documented in code to prevent confusion during debugging or refactoring.
 
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:20:28.141 +10:00] [progress] startup:references started Scanning related references
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:20:28.141 +10:00] [progress] startup:history started Collecting recent history
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:20:28.141 +10:00] [progress] startup:docs started Loading docs context
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:23:42.292 +10:00] [progress] startup:references completed count=0 duration=0.6s Reference scan complete
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:23:42.292 +10:00] [progress] startup:history completed count=20 duration=0.6s History collection complete
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:23:42.292 +10:00] [progress] startup:docs completed count=1 duration=0.6s Docs collection complete
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:23:42.292 +10:00] [progress] startup:prechecks started Running prechecks
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:23:42.292 +10:00] [progress] startup:prechecks completed count=2 duration=0.3s Prechecks complete
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:23:42.292 +10:00] [progress] run:header reviewers=claude-code max_rounds=1 changed_files=5 changed_lines=111 convergence_enabled=false context_enabled=true
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:23:42.292 +10:00] [progress] phase:start analyzer
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:23:42.293 +10:00] [progress] analyzer:start
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:23:42.293 +10:00] [agent-chat] -> claude-code index 59d1509..755f2fa 100644 return m.group(1) if m else None
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:23:42.293 +10:00] [analysis]
+## Local Diff Analysis
+
+This change adds HTTP API capabilities to the Factory CLI tool, introducing a new FastAPI-based server module (`factory/server.py`) with a minimal `/hello` endpoint and a new `serve` CLI command. The change includes hard-dependency additions (fastapi>=0.100, uvicorn>=0.23), test utilities (pytest, httpx), and comprehensive test coverage. **Architectural impact**: Transforms Factory from a pure CLI tool into a dual-mode system supporting both CLI and HTTP API patterns. This shifts the runtime model from short-lived request-response to long-running server process, enabling future integration with remote task orchestration, webhooks, and CI/CD systems. **Key concern**: The ImportError handling in `serve()` appears redundant since fastapi/uvicorn are now hard dependencies, not optional — this may indicate incomplete refactoring per the previous code review feedback.
+
+### Suggested Review Focus
+- Dependency Management Inconsistency: fastapi and uvicorn are listed as hard dependencies in pyproject.toml but serve() includes ImportError handling as if they're optional. This creates maintenance confusion and masks actual failures. Clarify intent: are these truly required, or should they be optional deps with graceful degradation?
+- Incomplete Test Coverage: test_cli_serve.py contains placeholder tests with empty `pass` statements (test_serve_valid_port_zero, test_serve_valid_port_max). These tests don't verify actual server startup behavior. Clarify: are these intentionally skipped to avoid hanging tests, or do they need real validation logic?
+- API Design & Integration Gap: Single /hello endpoint suggests this is a proof-of-concept. Unclear how this server integrates with the existing Factory pipeline (runner, session, evaluator modules). Will future endpoints expose task APIs? Document the intended API scope and evolution path.
+- Security & Configuration: No CORS, authentication, rate limiting, or input validation. Default binding to 127.0.0.1 is safe but restrictive. Clarify: is localhost-only intentional? Do future endpoints need auth? Should CORS be configurable?
+- Test Isolation & Practicality: test_cli_serve.py tests import and invoke the app but cannot test actual uvicorn startup (would hang). Current pattern only validates validation logic, not server launch. Verify test strategy: use mocks for uvicorn.run(), or document as integration tests?
+
+### Trade-offs
+- Hard-dependency on fastapi/uvicorn increases bundle size, startup time, and security surface area; prior code review noted dead ImportError handling suggested optional dependency intent — now unresolvable
+- Long-running server model conflicts with Factory's existing lambda-style CLI execution; no graceful shutdown or signal handling visible
+- Minimal API surface (/hello only) wastes dependency footprint; unclear if this justifies FastAPI over simpler stdlib alternatives
+- Port validation duplicates logic that could be shared with future HTTP clients; no extraction to util layer visible
+- Test coverage for CLI command only validates failure cases; no positive-case tests verify actual server startup, binding, or HTTP listening
+
+### Affected Modules
+- factory/cli.py — new serve() command added to typer app; modifies CLI routing
+- factory/server.py — new module; FastAPI app root and /hello route
+- pyproject.toml — dependencies (fastapi, uvicorn) and test extras added
+- tests/ — new test files (test_server.py, test_cli_serve.py, __init__.py)
+- Implicit: future impact on factory/runner.py if server lifecycle becomes part of task pipeline
+
+### Call Chain
+- CLI entry: `factory serve` → typer dispatch → cli.serve(host='127.0.0.1', port=8000)
+- serve() → port validation (0–65535 range check) → uvicorn.run(server_app, host, port)
+- uvicorn runtime → FastAPI app → route handler (@app.get('/hello')) → hello() → JSON response
+- Test path: CliRunner.invoke(app, ['serve', '--port', X]) → typer validation → exit code + stdout
+
+### Design Patterns
+- CLI Adapter Pattern: Typer wraps uvicorn.run(), decoupling CLI interface from server launch
+- Module Separation: Server logic isolated in server.py, avoiding CLI/server mixing
+- Fixture-Based Testing: pytest TestClient fixture provides reusable client for endpoint tests
+- Validation-First: Port validation gates server startup, failing fast with clear errors
+- Single Responsibility: serve() handles only CLI parsing + validation; server.py handles routing
+
+### Reviewer Checklist
+- ❓ **Dependency Intent**: Confirm whether fastapi/uvicorn should be hard deps or optional. If hard, remove try/except ImportError in serve(). If optional, move to [project.optional-dependencies].
+- ❓ **Test Completeness**: Verify intent of empty test bodies in test_cli_serve.py (test_serve_valid_port_zero, test_serve_valid_port_max). Are these deliberate skips, or incomplete? If intentional, add comments explaining why.
+- ✅ **Port Validation**: Logic is correct (0–65535 range). Consider extracting to `factory/validators.py` or util if reused by future HTTP clients.
+- ⚠️ **Security Baseline**: Confirm default binding to 127.0.0.1 is intentional and documented. No CORS/auth visible — acceptable for internal API?
+- ⚠️ **Error Handling**: Verify serve() handles uvicorn.run() failures (e.g., port already in use). Current code has no try/except around uvicorn.run().
+- ✅ **HTTP Semantics**: test_hello_invalid_method() correctly expects 405 for POST. Content-type validation in test_hello_content_type() is good.
+- ❓ **API Scope**: Clarify intended evolution: is /hello a proof-of-concept, or first of many? Should document roadmap for server endpoints (task APIs, webhooks, etc.).
+- ✅ **Test Isolation**: TestClient correctly isolates server tests. CLI tests validate typer routing; both avoid actual network binding.
+- ⚠️ **Integration Unclear**: No visible integration with factory/runner.py pipeline. Will server handle incoming task requests? Clarify architectural relationship.
+- 📝 **Documentation**: Add docstring to serve() explaining that it starts a long-running server (not compatible with --no-input or piping). Update CLAUDE.md or README if serve command is user-facing.
+
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:23:42.293 +10:00] [system-context]
+### System Context
+- Changed files: 5
+- Reference snippets: 0
+- History commits: 20
+- Docs snippets: 1
+- Deterministic prechecks: 2
+- Affected files:
+  - factory/cli.py
+  - factory/server.py
+  - pyproject.toml
+  - tests/test_cli_serve.py
+  - tests/test_server.py
+- Precheck results:
+  - untangle-analyze-report [Fail] error: unexpected argument '.' found
+
+Usage: untangle analyze [OPTIONS] <PATH>
+
+For more information, try '--help'.
+  - untangle-quality-report [Fail] error: unrecognized subcommand 'quality'
+
+Usage: untangle <COMMAND>
+
+For more information, try '--help'.
+
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:23:42.293 +10:00] [progress] analyzer:done
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:23:42.293 +10:00] [progress] phase:done analyzer
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:23:42.293 +10:00] [progress] phase:start agent-preflight
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:23:42.293 +10:00] [progress] phase:done agent-preflight
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:23:42.293 +10:00] [progress] phase:start round-1
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:23:42.293 +10:00] [progress] round:1 start (agents: claude-code)
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:23:42.293 +10:00] [progress] round:1 status [... claude-code]
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:23:42.293 +10:00] [progress] round:1 status [RUN claude-code]
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:23:42.294 +10:00] [progress] agent:start round=1 id=claude-code
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:23:42.294 +10:00] [agent-chat] -> claude-code index 59d1509..755f2fa 100644 return m.group(1) if m else None
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:23:42.294 +10:00] [agent-review] round=1 id=claude-code 8 findings (1 Critical, 4 Warning, 3 Info) | This change adds HTTP API capabilities via FastAPI/uvicorn to the Factory CLI tool with a minimal `/hello` endpoint. The implementation has **multiple correctness and testing gaps**: (1) Dead code—try/except ImportError in serve() (lines 744-748) is unreachable since fastapi/uvicorn are hard dependencies in pyproject.toml, contradicting prior code review feedback about optional dependencies. (2) No error handling for uvicorn.run() failures (port already in use, permission denied, etc.)—exceptions propagate uncaught. (3) Empty test functions with only `pass` statements (test_serve_valid_port_zero, test_serve_valid_port_max) provide no actual verification. (4) Content-type assertion in test_hello_content_type may fail if FastAPI returns charset suffix. (5) Missing type annotations in server.hello(). The changes shift Factory from CLI-only to long-running server mode without documented integration with the existing pipeline (runner, evaluator, session modules).
+[agent-review] details:
+Narrative:
+This change adds HTTP API capabilities via FastAPI/uvicorn to the Factory CLI tool with a minimal `/hello` endpoint. The implementation has **multiple correctness and testing gaps**: (1) Dead code—try/except ImportError in serve() (lines 744-748) is unreachable since fastapi/uvicorn are hard dependencies in pyproject.toml, contradicting prior code review feedback about optional dependencies. (2) No error handling for uvicorn.run() failures (port already in use, permission denied, etc.)—exceptions propagate uncaught. (3) Empty test functions with only `pass` statements (test_serve_valid_port_zero, test_serve_valid_port_max) provide no actual verification. (4) Content-type assertion in test_hello_content_type may fail if FastAPI returns charset suffix. (5) Missing type annotations in server.hello(). The changes shift Factory from CLI-only to long-running server mode without documented integration with the existing pipeline (runner, evaluator, session modules).
+
+Findings:
+- [Critical] factory/cli.py:744-748 Remove the try/except ImportError block since fastapi and uvicorn are hard dependencies and imports will always succeed. If the intent is to make them optional, move to [project.optional-dependencies] instead.
+  description: The try/except ImportError block (lines 744–748) in serve() attempts to handle missing fastapi and uvicorn. However, both packages are declared as hard dependencies in pyproject.toml (lines 16–17: 'fastapi>=0.100', 'uvicorn>=0.23'), making this ImportError unreachable. This contradicts the prior code review feedback that flagged optional dependency intent. The dead code:
+- Confuses maintainers about whether these are truly required or optional
+- Masks actual import failures (e.g., if someone accidentally removes them from dependencies without updating cli.py)
+- Increases code complexity without benefit
+- Violates the DRY principle by duplicating dependency intent in two places
+- [Warning] factory/cli.py:750-753 Wrap uvicorn.run() in try/except to catch OSError and network-related exceptions, providing clear error messages for common failures (e.g., 'Port 8000 is already in use').
+  description: The serve() function calls uvicorn.run() without try/except error handling (line 752). If uvicorn fails (e.g., port already in use, permission denied, binding failure), the exception propagates uncaught, producing an unfriendly traceback instead of a clear CLI error message. For a user-facing command, this is poor UX and violates error-handling best practices for CLI tools.
+- [Warning] tests/test_cli_serve.py:23-35 Replace empty test functions with either (a) mocked tests that verify validation logic, (b) explicit skip markers with rationale, or (c) remove them if not needed. Currently they are deceptive—they pass without testing anything.
+  description: Two test functions (test_serve_valid_port_zero and test_serve_valid_port_max, lines 23–35) contain only `pass` statements with explanatory comments. These tests appear in the test suite but do not actually execute any assertions or verify any behavior. The comments acknowledge the limitation ("can't actually start the server in tests"), but the tests should be either:
+1. Removed entirely (if not needed)
+2. Implemented with mocking of uvicorn.run() to verify the validation passes before startup
+3. Marked with @pytest.mark.skip() with explicit rationale
+
+As written, they create false confidence in test coverage—the test suite passes without verifying positive cases for port validation.
+- [Warning] tests/test_server.py:21-23 Change the content-type assertion to handle optional charset parameter: use `.startswith()` or regex to match 'application/json' regardless of charset suffix.
+  description: The test_hello_content_type() test (lines 21–23) asserts an exact match of `response.headers['content-type'] == 'application/json'`. However, FastAPI/Starlette's default JSON response includes a charset parameter: `'application/json; charset=utf-8'`. This exact-match assertion will fail if the response includes charset, causing the test to fail despite correct behavior. The assertion should use a substring check or regex match to account for optional charset.
+- [Warning] tests/test_cli_serve.py:13-20 Verify test assertion checks the correct output stream. If the error is written to stderr (err=True), check result.output (combined) or result.stderr, not result.stdout.
+  description: The test functions test_serve_invalid_port_negative() and test_serve_invalid_port_too_large() (lines 13–20) assert error messages in `result.stdout`. However, the serve() function prints errors using `typer.echo(..., err=True)`, which writes to stderr, not stdout. Depending on how CliRunner from typer/click combines output, the assertion `'Invalid port' in result.stdout` may fail because the message is on stderr. The test may be passing incorrectly or may fail depending on the runner's output capture behavior.
+- [Info] factory/server.py:7-10 Add return type annotation to hello() function for clarity and type safety.
+  description: The hello() function (lines 7–10) lacks a return type annotation. While FastAPI can infer the response type from the return value, explicitly annotating the return type improves code clarity, enables static type checking, and documents the API contract. Best practice for FastAPI endpoints is to include return type hints.
+- [Info] factory/cli.py:735-740 Add explicit validation for the host parameter to reject invalid hostnames early with clear error messages.
+  description: The serve() function accepts a host parameter (line 735: `host: str = typer.Option("127.0.0.1", ...)`) and passes it directly to uvicorn.run() without validation. While uvicorn will validate it at runtime, explicit validation at the CLI layer provides better user feedback and prevents invalid hostnames from reaching the server. Additionally, no guidance is provided on which hosts are safe (e.g., 127.0.0.1 vs 0.0.0.0).
+- [Info] tests/test_cli_serve.py:1-7 Implement or skip positive-case tests consistently. Either implement them with mocks, or mark them with @pytest.mark.skip() and explain why.
+  description: The test suite has asymmetric coverage for port validation:
+- Negative cases (invalid ports): test_serve_invalid_port_negative, test_serve_invalid_port_too_large—both have proper assertions
+- Positive cases (valid ports): test_serve_valid_port_zero, test_serve_valid_port_max—both are empty `pass` statements
+
+This creates a false sense of security. The test suite verifies that invalid inputs are rejected but does not verify that valid inputs are accepted. This violates the principle of symmetric test coverage.
+
+[agent-review]   [CRITICAL] factory/cli.py:744 Remove the try/except ImportError block since fastapi and uvicorn are hard dependencies and imports will always succeed. If the intent is to make them optional, move to [project.optional-dependencies] instead.
+[agent-review]   [WARNING] factory/cli.py:750 Wrap uvicorn.run() in try/except to catch OSError and network-related exceptions, providing clear error messages for common failures (e.g., 'Port 8000 is already in use').
+[agent-review]   [WARNING] tests/test_cli_serve.py:23 Replace empty test functions with either (a) mocked tests that verify validation logic, (b) explicit skip markers with rationale, or (c) remove them if not needed. Currently they are deceptive—they pass without testing anything.
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:23:42.294 +10:00] [progress] round:1 status [OK claude-code (101.2s)]
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:23:42.294 +10:00] [progress] agent:done round=1 id=claude-code
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:23:42.294 +10:00] [progress] round:1 done
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:23:42.294 +10:00] [progress] round:1/1 complete
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:23:42.294 +10:00] [progress] phase:done round-1
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:23:42.294 +10:00] [agent-chat] -> claude-code Normalize these findings into canonical issues (merge duplicates): [{"agent":"claude-code","severity":"Info","confidence":"High","file":"tests/test_cli_serve.py","span":{"start":1,
+…
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:23:42.294 +10:00] [progress] phase:start finalize
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:23:42.294 +10:00] [agent-chat] -> claude-code Findings: [{"agent":"claude-code","severity":"Info","confidence":"High","file":"tests/test_cli_serve.py","span":{"start":1,"end":7},"message":"Implement or skip positive-case tests
+…
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:23:42.295 +10:00] [progress] autofix:ready
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:23:42.295 +10:00] [run:c3bf5072-ec36-417b-8cec-4e10d7975d99] [2026-06-04 15:23:42.295 +10:00] [progress] phase:done finalize
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99]
+[2026-06-04 15:23:42.296 +10:00] [report]
+{
+  "agent_failures": [],
+  "analysis_markdown": "## Local Diff Analysis\n\nThis change adds HTTP API capabilities to the Factory CLI tool, introducing a new FastAPI-based server module (`factory/server.py`) with a minimal `/hello` endpoint and a new `serve` CLI command. The change includes hard-dependency additions (fastapi>=0.100, uvicorn>=0.23), test utilities (pytest, httpx), and comprehensive test coverage. **Architectural impact**: Transforms Factory from a pure CLI tool into a dual-mode system supporting both CLI and HTTP API patterns. This shifts the runtime model from short-lived request-response to long-running server process, enabling future integration with remote task orchestration, webhooks, and CI/CD systems. **Key concern**: The ImportError handling in `serve()` appears redundant since fastapi/uvicorn are now hard dependencies, not optional — this may indicate incomplete refactoring per the previous code review feedback.\n\n### Suggested Review Focus\n- Dependency Management Inconsistency: fastapi and uvicorn are listed as hard dependencies in pyproject.toml but serve() includes ImportError handling as if they're optional. This creates maintenance confusion and masks actual failures. Clarify intent: are these truly required, or should they be optional deps with graceful degradation?\n- Incomplete Test Coverage: test_cli_serve.py contains placeholder tests with empty `pass` statements (test_serve_valid_port_zero, test_serve_valid_port_max). These tests don't verify actual server startup behavior. Clarify: are these intentionally skipped to avoid hanging tests, or do they need real validation logic?\n- API Design & Integration Gap: Single /hello endpoint suggests this is a proof-of-concept. Unclear how this server integrates with the existing Factory pipeline (runner, session, evaluator modules). Will future endpoints expose task APIs? Document the intended API scope and evolution path.\n- Security & Configuration: No CORS, authentication, rate limiting, or input validation. Default binding to 127.0.0.1 is safe but restrictive. Clarify: is localhost-only intentional? Do future endpoints need auth? Should CORS be configurable?\n- Test Isolation & Practicality: test_cli_serve.py tests import and invoke the app but cannot test actual uvicorn startup (would hang). Current pattern only validates validation logic, not server launch. Verify test strategy: use mocks for uvicorn.run(), or document as integration tests?\n\n### Trade-offs\n- Hard-dependency on fastapi/uvicorn increases bundle size, startup time, and security surface area; prior code review noted dead ImportError handling suggested optional dependency intent — now unresolvable\n- Long-running server model conflicts with Factory's existing lambda-style CLI execution; no graceful shutdown or signal handling visible\n- Minimal API surface (/hello only) wastes dependency footprint; unclear if this justifies FastAPI over simpler stdlib alternatives\n- Port validation duplicates logic that could be shared with future HTTP clients; no extraction to util layer visible\n- Test coverage for CLI command only validates failure cases; no positive-case tests verify actual server startup, binding, or HTTP listening\n\n### Affected Modules\n- factory/cli.py — new serve() command added to typer app; modifies CLI routing\n- factory/server.py — new module; FastAPI app root and /hello route\n- pyproject.toml — dependencies (fastapi, uvicorn) and test extras added\n- tests/ — new test files (test_server.py, test_cli_serve.py, __init__.py)\n- Implicit: future impact on factory/runner.py if server lifecycle becomes part of task pipeline\n\n### Call Chain\n- CLI entry: `factory serve` → typer dispatch → cli.serve(host='127.0.0.1', port=8000)\n- serve() → port validation (0–65535 range check) → uvicorn.run(server_app, host, port)\n- uvicorn runtime → FastAPI app → route handler (@app.get('/hello')) → hello() → JSON response\n- Test path: CliRunner.invoke(app, ['serve', '--port', X]) → typer validation → exit code + stdout\n\n### Design Patterns\n- CLI Adapter Pattern: Typer wraps uvicorn.run(), decoupling CLI interface from server launch\n- Module Separation: Server logic isolated in server.py, avoiding CLI/server mixing\n- Fixture-Based Testing: pytest TestClient fixture provides reusable client for endpoint tests\n- Validation-First: Port validation gates server startup, failing fast with clear errors\n- Single Responsibility: serve() handles only CLI parsing + validation; server.py handles routing\n\n### Reviewer Checklist\n- ❓ **Dependency Intent**: Confirm whether fastapi/uvicorn should be hard deps or optional. If hard, remove try/except ImportError in serve(). If optional, move to [project.optional-dependencies].\n- ❓ **Test Completeness**: Verify intent of empty test bodies in test_cli_serve.py (test_serve_valid_port_zero, test_serve_valid_port_max). Are these deliberate skips, or incomplete? If intentional, add comments explaining why.\n- ✅ **Port Validation**: Logic is correct (0–65535 range). Consider extracting to `factory/validators.py` or util if reused by future HTTP clients.\n- ⚠️ **Security Baseline**: Confirm default binding to 127.0.0.1 is intentional and documented. No CORS/auth visible — acceptable for internal API?\n- ⚠️ **Error Handling**: Verify serve() handles uvicorn.run() failures (e.g., port already in use). Current code has no try/except around uvicorn.run().\n- ✅ **HTTP Semantics**: test_hello_invalid_method() correctly expects 405 for POST. Content-type validation in test_hello_content_type() is good.\n- ❓ **API Scope**: Clarify intended evolution: is /hello a proof-of-concept, or first of many? Should document roadmap for server endpoints (task APIs, webhooks, etc.).\n- ✅ **Test Isolation**: TestClient correctly isolates server tests. CLI tests validate typer routing; both avoid actual network binding.\n- ⚠️ **Integration Unclear**: No visible integration with factory/runner.py pipeline. Will server handle incoming task requests? Clarify architectural relationship.\n- 📝 **Documentation**: Add docstring to serve() explaining that it starts a long-running server (not compatible with --no-input or piping). Update CLAUDE.md or README if serve command is user-facing.\n",
+  "auto_fix": {
+    "explanation": "## Consensus Review: All 7 Findings Addressed\n\nAll findings have been consolidated into a comprehensive fix targeting code quality, test correctness, and runtime safety:\n\n### **Critical Issue – Dead Code Import Handler (FIXED)**\n- **Issue**: Try/except ImportError block was unreachable since fastapi/uvicorn are hard dependencies in pyproject.toml\n- **Fix**: Moved imports to module level (lines 738-739) at top of serve command section. Imports now succeed immediately or fail fast on missing dependencies (which should never happen given hard dependency declarations)\n- **Impact**: Eliminates confusion about optional vs. required dependencies; simplifies code flow\n\n### **Error Handling Gaps (FIXED)**\n- **Host Validation**: Added `_validate_host()` function (lines 753-768) that validates IPv4, IPv6, and hostnames before uvicorn.run()\n- **Uvicorn Runtime Errors**: Wrapped `uvicorn.run()` in try/except (lines 758-763) to catch OSError and provide user-friendly messages for common failures (e.g., \"Port already in use\")\n- **Impact**: Prevents cryptic tracebacks; improves CLI UX\n\n### **Test Coverage Issues (FIXED)**\n- **Empty Positive Test Cases**: Implemented `test_serve_valid_port_zero()` and `test_serve_valid_port_max()` with `mock.patch('uvicorn.run')` to verify validation passes without actually starting the server\n- **Added Host Validation Test**: New `test_serve_invalid_host()` test ensures invalid hostnames are rejected\n- **Stderr Output Assertion**: Changed `result.stdout` → `result.output` in both invalid port tests (lines 21, 27) to correctly capture error messages written to stderr\n- **Impact**: Symmetric test coverage; all validation paths (positive + negative) now verified\n\n### **Response Format Issue (FIXED)**\n- **Content-Type Assertion**: Changed exact match `== \"application/json\"` → `.startswith(\"application/json\")` in test_server.py line 23 to handle optional charset suffix (e.g., \"application/json; charset=utf-8\")\n- **Impact**: Test no longer fails on valid responses with charset metadata\n\n### **Type Safety (FIXED)**\n- **Return Type Annotation**: Added `Dict[str, str]` return type to `hello()` function in factory/server.py line 8\n- **Impact**: Enables static type checking; documents API contract\n\n### **Code Organization**\n- Added `from typing import Dict` and `import socket` imports at module level (lines 3-4) for socket-based host validation\n- All helper functions and imports are now organized in logical groups with clear separation markers\n\n### **Testing Command**\n```bash\npip install -e \".[test]\"\npytest tests/ -v\n```\n\nAll 7 findings are now resolved with a unified, production-ready implementation.",
+    "unified_diff": "--- a/factory/cli.py\n+++ b/factory/cli.py\n@@ -1,6 +1,8 @@\n \"\"\"\n Silverforge Factory: orchestrate AI-driven tasks on remote workers.\n \"\"\"\n+import socket\n+from typing import Dict\n import os\n \n from pathlib import Path\n@@ -734,27 +736,53 @@ def _parse_gh_repo(repo_url: str) -> Optional[str]:\n \n # ── serve ────────────────────────────────────────────────────────────────────\n \n+import uvicorn\n+from factory.server import app as server_app\n+\n+\n+def _validate_host(host: str) -> bool:\n+    \"\"\"Check if host is a valid hostname or IP address.\"\"\"\n+    try:\n+        # Try IPv4\n+        socket.inet_aton(host)\n+        return True\n+    except (socket.error, OSError):\n+        try:\n+            # Try IPv6\n+            socket.inet_pton(socket.AF_INET6, host)\n+            return True\n+        except (socket.error, OSError):\n+            try:\n+                # Try hostname resolution\n+                socket.getaddrinfo(host, None)\n+                return True\n+            except socket.gaierror:\n+                return False\n+\n+\n @app.command()\n def serve(\n     host: str = typer.Option(\"127.0.0.1\", \"--host\", \"-h\", help=\"Host to bind to\"),\n     port: int = typer.Option(8000, \"--port\", \"-p\", help=\"Port to bind to\"),\n ) -> None:\n     \"\"\"Start the Silverforge Factory API server.\"\"\"\n     if port < 0 or port > 65535:\n         typer.echo(f\"Invalid port: {port}. Must be between 0 and 65535.\", err=True)\n         raise typer.Exit(1)\n \n-    try:\n-        import uvicorn\n-        from factory.server import app as server_app\n-    except ImportError:\n-        typer.echo(\"fastapi and uvicorn are required for the serve command\", err=True)\n+    if not _validate_host(host):\n+        typer.echo(f\"Invalid host: {host}. Must be a valid IP address or hostname.\", err=True)\n         raise typer.Exit(1)\n \n     console.print(f\"Starting server on http://{host}:{port}\")\n-    uvicorn.run(server_app, host=host, port=port)\n+    try:\n+        uvicorn.run(server_app, host=host, port=port)\n+    except OSError as e:\n+        if \"Address already in use\" in str(e):\n+            typer.echo(f\"Port {port} is already in use. Try a different port.\", err=True)\n+        else:\n+            typer.echo(f\"Failed to start server: {e}\", err=True)\n+        raise typer.Exit(1)\n \n \n _FACTORY_LABELS = [\n--- a/factory/server.py\n+++ b/factory/server.py\n@@ -1,10 +1,11 @@\n \"\"\"FastAPI server for Silverforge Factory.\"\"\"\n from fastapi import FastAPI\n+from typing import Dict\n \n app = FastAPI()\n \n \n @app.get(\"/hello\")\n-def hello():\n+def hello() -> Dict[str, str]:\n     \"\"\"Hello endpoint.\"\"\"\n     return {\"message\": \"Hello from Silverforge Factory\"}\n--- a/tests/test_cli_serve.py\n+++ b/tests/test_cli_serve.py\n@@ -1,6 +1,7 @@\n \"\"\"Tests for the serve CLI command.\"\"\"\n+from unittest import mock\n import pytest\n from typer.testing import CliRunner\n from factory.cli import app\n \n \n@@ -9,21 +10,37 @@ runner = CliRunner()\n \n def test_serve_invalid_port_negative():\n     \"\"\"Test serve command rejects negative port.\"\"\"\n     result = runner.invoke(app, [\"serve\", \"--port\", \"-1\"])\n     assert result.exit_code == 1\n-    assert \"Invalid port\" in result.stdout\n+    assert \"Invalid port\" in result.output\n \n \n def test_serve_invalid_port_too_large():\n     \"\"\"Test serve command rejects port > 65535.\"\"\"\n     result = runner.invoke(app, [\"serve\", \"--port\", \"65536\"])\n     assert result.exit_code == 1\n-    assert \"Invalid port\" in result.stdout\n+    assert \"Invalid port\" in result.output\n \n \n def test_serve_valid_port_zero():\n     \"\"\"Test serve command accepts port 0.\"\"\"\n-    # We can't actually start the server in tests, but we can check validation passes\n-    # by checking that it tries to import and start (which will fail at uvicorn.run)\n-    # For now, just verify the port validation logic works by using a valid port\n-    pass\n+    \"\"\"Test serve command accepts port 0 and attempts startup.\"\"\"\n+    with mock.patch('uvicorn.run') as mock_run:\n+        result = runner.invoke(app, ['serve', '--port', '0'])\n+        # Port 0 passes validation; uvicorn.run should be called\n+        assert result.exit_code == 0\n+        mock_run.assert_called_once()\n \n \n def test_serve_valid_port_max():\n     \"\"\"Test serve command accepts port 65535.\"\"\"\n-    # Port validation passes for 65535; actual server startup would be tested elsewhere\n-    pass\n+    \"\"\"Test serve command accepts maximum valid port and attempts startup.\"\"\"\n+    with mock.patch('uvicorn.run') as mock_run:\n+        result = runner.invoke(app, ['serve', '--port', '65535'])\n+        # Port 65535 passes validation; uvicorn.run should be called\n+        assert result.exit_code == 0\n+        mock_run.assert_called_once()\n+\n+\n+def test_serve_invalid_host():\n+    \"\"\"Test serve command rejects invalid host.\"\"\"\n+    result = runner.invoke(app, ['serve', '--host', 'invalid...hostname'])\n+    assert result.exit_code == 1\n+    assert \"Invalid host\" in result.output\n--- a/tests/test_server.py\n+++ b/tests/test_server.py\n@@ -20,7 +20,7 @@ def test_hello_endpoint(client):\n \n def test_hello_content_type(client):\n     \"\"\"Test the /hello endpoint returns correct content type.\"\"\"\n     response = client.get(\"/hello\")\n-    assert response.headers[\"content-type\"] == \"application/json\"\n+    assert response.headers[\"content-type\"].startswith(\"application/json\")\n \n \n def test_hello_invalid_method(client):\n"
+  },
+  "consensus": [
+    {
+      "agreed_count": 1,
+      "file": "tests/test_cli_serve.py",
+      "reached_quorum": true,
+      "severity": "Warning",
+      "span": {
+        "end": 20,
+        "start": 13
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/cli.py",
+      "reached_quorum": true,
+      "severity": "Critical",
+      "span": {
+        "end": 748,
+        "start": 744
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/server.py",
+      "reached_quorum": true,
+      "severity": "Info",
+      "span": {
+        "end": 10,
+        "start": 7
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "tests/test_server.py",
+      "reached_quorum": true,
+      "severity": "Warning",
+      "span": {
+        "end": 23,
+        "start": 21
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "tests/test_cli_serve.py",
+      "reached_quorum": true,
+      "severity": "Info",
+      "span": {
+        "end": 7,
+        "start": 1
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/cli.py",
+      "reached_quorum": true,
+      "severity": "Info",
+      "span": {
+        "end": 740,
+        "start": 735
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "tests/test_cli_serve.py",
+      "reached_quorum": true,
+      "severity": "Warning",
+      "span": {
+        "end": 35,
+        "start": 23
+      },
+      "total_agents": 1
+    },
+    {
+      "agreed_count": 1,
+      "file": "factory/cli.py",
+      "reached_quorum": true,
+      "severity": "Warning",
+      "span": {
+        "end": 753,
+        "start": 750
+      },
+      "total_agents": 1
+    }
+  ],
+  "final_action_plan": {
+    "prioritized_steps": [
+      "[Critical] Dead code: unreachable ImportError handler for hard dependencies (factory/cli.py:744)",
+      "[Warning] No error handling for uvicorn.run() failures (factory/cli.py:750)",
+      "[Warning] Port validation tests are incomplete with assertion bugs (tests/test_cli_serve.py:10)",
+      "[Warning] Stderr assertion may fail: error printed to stderr but test checks stdout (tests/test_cli_serve.py:13)",
+      "[Warning] Empty test functions provide no verification (tests/test_cli_serve.py:23)",
+      "[Warning] Content-Type assertion may fail due to charset suffix (tests/test_server.py:21)"
+    ],
+    "quick_wins": [
+      "[Info] No validation of host parameter (factory/cli.py:735)",
+      "[Info] Missing return type annotation on hello() function (factory/server.py:7)",
+      "[Info] Inconsistent test coverage: negative cases tested, positive cases skipped (tests/test_cli_serve.py:1)"
+    ]
+  },
+  "final_analysis_markdown": "## Final Analysis\n\n- Issues: 9 (Critical: 1, Warning: 5, Info: 3)\n- Agent failures: 0\n\n### Top Issues\n- [Critical] Dead code: unreachable ImportError handler for hard dependencies `factory/cli.py:744`\n- [Warning] No error handling for uvicorn.run() failures `factory/cli.py:750`\n- [Warning] Port validation tests are incomplete with assertion bugs `tests/test_cli_serve.py:10`\n- [Warning] Stderr assertion may fail: error printed to stderr but test checks stdout `tests/test_cli_serve.py:13`\n- [Warning] Empty test functions provide no verification `tests/test_cli_serve.py:23`\n- [Warning] Content-Type assertion may fail due to charset suffix `tests/test_server.py:21`\n- [Info] No validation of host parameter `factory/cli.py:735`\n- [Info] Missing return type annotation on hello() function `factory/server.py:7`\n- [Info] Inconsistent test coverage: negative cases tested, positive cases skipped `tests/test_cli_serve.py:1`\n\n### Action Plan\n- [Critical] Dead code: unreachable ImportError handler for hard dependencies (factory/cli.py:744)\n- [Warning] No error handling for uvicorn.run() failures (factory/cli.py:750)\n- [Warning] Port validation tests are incomplete with assertion bugs (tests/test_cli_serve.py:10)\n- [Warning] Stderr assertion may fail: error printed to stderr but test checks stdout (tests/test_cli_serve.py:13)\n- [Warning] Empty test functions provide no verification (tests/test_cli_serve.py:23)\n- [Warning] Content-Type assertion may fail due to charset suffix (tests/test_server.py:21)\n",
+  "findings": [
+    {
+      "agent": "claude-code",
+      "category": "correctness",
+      "confidence": "High",
+      "description": "The test suite has asymmetric coverage for port validation:\n- Negative cases (invalid ports): test_serve_invalid_port_negative, test_serve_invalid_port_too_large—both have proper assertions\n- Positive cases (valid ports): test_serve_valid_port_zero, test_serve_valid_port_max—both are empty `pass` statements\n\nThis creates a false sense of security. The test suite verifies that invalid inputs are rejected but does not verify that valid inputs are accepted. This violates the principle of symmetric test coverage.",
+      "evidence": [
+        {
+          "location": "tests/test_cli_serve.py:1-35",
+          "quote": "def test_serve_invalid_port_negative():\n    \"\"\"Test serve command rejects negative port.\"\"\"\n    result = runner.invoke(app, [\"serve\", \"--port\", \"-1\"])\n    assert result.exit_code == 1\n    assert \"Invalid port\" in result.stdout\n\n\ndef test_serve_invalid_port_too_large():\n    \"\"\"Test serve command rejects port > 65535.\"\"\"\n    result = runner.invoke(app, [\"serve\", \"--port\", \"65536\"])\n    assert result.exit_code == 1\n    assert \"Invalid port\" in result.stdout\n\n\ndef test_serve_valid_port_zero():\n    \"\"\"Test serve command accepts port 0.\"\"\"\n    ...\n    pass\n\n\ndef test_serve_valid_port_max():\n    \"\"\"Test serve command accepts port 65535.\"\"\"\n    ...\n    pass"
+        }
+      ],
+      "file": "tests/test_cli_serve.py",
+      "message": "Implement or skip positive-case tests consistently. Either implement them with mocks, or mark them with @pytest.mark.skip() and explain why.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Info",
+      "span": {
+        "end": 7,
+        "start": 1
+      },
+      "suggested_fix": "See the fix for 'Empty test functions provide no verification' above. Implement positive cases with mocked uvicorn.run() to verify validation passes.",
+      "title": "Inconsistent test coverage: negative cases tested, positive cases skipped"
+    },
+    {
+      "agent": "claude-code",
+      "category": "testing",
+      "confidence": "High",
+      "description": "Two test functions (test_serve_valid_port_zero and test_serve_valid_port_max, lines 23–35) contain only `pass` statements with explanatory comments. These tests appear in the test suite but do not actually execute any assertions or verify any behavior. The comments acknowledge the limitation (\"can't actually start the server in tests\"), but the tests should be either:\n1. Removed entirely (if not needed)\n2. Implemented with mocking of uvicorn.run() to verify the validation passes before startup\n3. Marked with @pytest.mark.skip() with explicit rationale\n\nAs written, they create false confidence in test coverage—the test suite passes without verifying positive cases for port validation.",
+      "evidence": [
+        {
+          "location": "tests/test_cli_serve.py:23-35",
+          "quote": "def test_serve_valid_port_zero():\n    \"\"\"Test serve command accepts port 0.\"\"\"\n    # We can't actually start the server in tests, but we can check validation passes\n    # by checking that it tries to import and start (which will fail at uvicorn.run)\n    # For now, just verify the port validation logic works by using a valid port\n    pass\n\n\ndef test_serve_valid_port_max():\n    \"\"\"Test serve command accepts port 65535.\"\"\"\n    # Port validation passes for 65535; actual server startup would be tested elsewhere\n    pass"
+        }
+      ],
+      "file": "tests/test_cli_serve.py",
+      "message": "Replace empty test functions with either (a) mocked tests that verify validation logic, (b) explicit skip markers with rationale, or (c) remove them if not needed. Currently they are deceptive—they pass without testing anything.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Warning",
+      "span": {
+        "end": 35,
+        "start": 23
+      },
+      "suggested_fix": "Option 1: Mock uvicorn.run() and verify the call is attempted:\n```python\ndef test_serve_valid_port_zero(monkeypatch):\n    \"\"\"Test serve command accepts port 0.\"\"\"\n    import unittest.mock as mock\n    with mock.patch('uvicorn.run') as mock_run:\n        result = runner.invoke(app, ['serve', '--port', '0'])\n        # Port 0 passes validation; uvicorn.run should be called\n        assert result.exit_code == 0\n        mock_run.assert_called_once()\n```\n\nOption 2: Mark as intentionally skipped:\n```python\n@pytest.mark.skip(reason=\"uvicorn.run() would hang; validation tested via test_serve_invalid_port_* cases\")\ndef test_serve_valid_port_zero():\n    pass\n```",
+      "title": "Empty test functions provide no verification"
+    },
+    {
+      "agent": "claude-code",
+      "category": "testing",
+      "confidence": "Medium",
+      "description": "The test functions test_serve_invalid_port_negative() and test_serve_invalid_port_too_large() (lines 13–20) assert error messages in `result.stdout`. However, the serve() function prints errors using `typer.echo(..., err=True)`, which writes to stderr, not stdout. Depending on how CliRunner from typer/click combines output, the assertion `'Invalid port' in result.stdout` may fail because the message is on stderr. The test may be passing incorrectly or may fail depending on the runner's output capture behavior.",
+      "evidence": [
+        {
+          "location": "tests/test_cli_serve.py:10-20",
+          "quote": "def test_serve_invalid_port_negative():\n    \"\"\"Test serve command rejects negative port.\"\"\"\n    result = runner.invoke(app, [\"serve\", \"--port\", \"-1\"])\n    assert result.exit_code == 1\n    assert \"Invalid port\" in result.stdout"
+        },
+        {
+          "location": "factory/cli.py:741-742",
+          "quote": "typer.echo(f\"Invalid port: {port}. Must be between 0 and 65535.\", err=True)\n        raise typer.Exit(1)"
+        }
+      ],
+      "file": "tests/test_cli_serve.py",
+      "message": "Verify test assertion checks the correct output stream. If the error is written to stderr (err=True), check result.output (combined) or result.stderr, not result.stdout.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Warning",
+      "span": {
+        "end": 20,
+        "start": 13
+      },
+      "suggested_fix": "Change assertions to check `result.output` instead of `result.stdout` to capture combined stdout/stderr:\n```python\ndef test_serve_invalid_port_negative():\n    \"\"\"Test serve command rejects negative port.\"\"\"\n    result = runner.invoke(app, [\"serve\", \"--port\", \"-1\"])\n    assert result.exit_code == 1\n    assert \"Invalid port\" in result.output  # or result.stderr if CliRunner separates streams\n```",
+      "title": "Stderr assertion may fail: error printed to stderr but test checks stdout"
+    },
+    {
+      "agent": "claude-code",
+      "category": "security",
+      "confidence": "Medium",
+      "description": "The serve() function accepts a host parameter (line 735: `host: str = typer.Option(\"127.0.0.1\", ...)`) and passes it directly to uvicorn.run() without validation. While uvicorn will validate it at runtime, explicit validation at the CLI layer provides better user feedback and prevents invalid hostnames from reaching the server. Additionally, no guidance is provided on which hosts are safe (e.g., 127.0.0.1 vs 0.0.0.0).",
+      "evidence": [
+        {
+          "location": "factory/cli.py:735-740",
+          "quote": "def serve(\n    host: str = typer.Option(\"127.0.0.1\", \"--host\", \"-h\", help=\"Host to bind to\"),\n    port: int = typer.Option(8000, \"--port\", \"-p\", help=\"Port to bind to\"),\n) -> None:\n    \"\"\"Start the Silverforge Factory API server.\""
+        }
+      ],
+      "file": "factory/cli.py",
+      "message": "Add explicit validation for the host parameter to reject invalid hostnames early with clear error messages.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Info",
+      "span": {
+        "end": 740,
+        "start": 735
+      },
+      "suggested_fix": "Add host validation before uvicorn.run():\n```python\nimport socket\n\ndef _validate_host(host: str) -> bool:\n    \"\"\"Check if host is a valid hostname or IP address.\"\"\"\n    try:\n        socket.inet_aton(host) if ':' not in host else socket.inet_pton(socket.AF_INET6, host)\n        return True\n    except (socket.error, OSError):\n        try:\n            socket.getaddrinfo(host, None)\n            return True\n        except socket.gaierror:\n            return False\n\nif not _validate_host(host):\n    typer.echo(f\"Invalid host: {host}\", err=True)\n    raise typer.Exit(1)\n```",
+      "title": "No validation of host parameter"
+    },
+    {
+      "agent": "claude-code",
+      "category": "correctness",
+      "confidence": "High",
+      "description": "The try/except ImportError block (lines 744–748) in serve() attempts to handle missing fastapi and uvicorn. However, both packages are declared as hard dependencies in pyproject.toml (lines 16–17: 'fastapi>=0.100', 'uvicorn>=0.23'), making this ImportError unreachable. This contradicts the prior code review feedback that flagged optional dependency intent. The dead code:\n- Confuses maintainers about whether these are truly required or optional\n- Masks actual import failures (e.g., if someone accidentally removes them from dependencies without updating cli.py)\n- Increases code complexity without benefit\n- Violates the DRY principle by duplicating dependency intent in two places",
+      "evidence": [
+        {
+          "location": "factory/cli.py:744-748",
+          "quote": "try:\n        import uvicorn\n        from factory.server import app as server_app\n    except ImportError:\n        typer.echo(\"fastapi and uvicorn are required for the serve command\", err=True)"
+        },
+        {
+          "location": "pyproject.toml:16-17",
+          "quote": "\"fastapi>=0.100\",\n    \"uvicorn>=0.23\","
+        }
+      ],
+      "file": "factory/cli.py",
+      "message": "Remove the try/except ImportError block since fastapi and uvicorn are hard dependencies and imports will always succeed. If the intent is to make them optional, move to [project.optional-dependencies] instead.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Critical",
+      "span": {
+        "end": 748,
+        "start": 744
+      },
+      "suggested_fix": "Replace lines 744–748 with direct imports at module level or function top, removing the except clause: `import uvicorn` and `from factory.server import app as server_app` (or move imports to top of file). If optional deps are intended, move fastapi/uvicorn to optional-dependencies in pyproject.toml and restore error handling.",
+      "title": "Dead code: unreachable ImportError handler for hard dependencies"
+    },
+    {
+      "agent": "claude-code",
+      "category": "testing",
+      "confidence": "Medium",
+      "description": "The test_hello_content_type() test (lines 21–23) asserts an exact match of `response.headers['content-type'] == 'application/json'`. However, FastAPI/Starlette's default JSON response includes a charset parameter: `'application/json; charset=utf-8'`. This exact-match assertion will fail if the response includes charset, causing the test to fail despite correct behavior. The assertion should use a substring check or regex match to account for optional charset.",
+      "evidence": [
+        {
+          "location": "tests/test_server.py:21-23",
+          "quote": "def test_hello_content_type(client):\n    \"\"\"Test the /hello endpoint returns correct content type.\"\"\"\n    response = client.get(\"/hello\")\n    assert response.headers[\"content-type\"] == \"application/json\""
+        }
+      ],
+      "file": "tests/test_server.py",
+      "message": "Change the content-type assertion to handle optional charset parameter: use `.startswith()` or regex to match 'application/json' regardless of charset suffix.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Warning",
+      "span": {
+        "end": 23,
+        "start": 21
+      },
+      "suggested_fix": "Replace line 22 with:\n```python\nassert response.headers[\"content-type\"].startswith(\"application/json\")\n```\n\nOr more strictly:\n```python\nassert \"application/json\" in response.headers[\"content-type\"]\n```",
+      "title": "Content-Type assertion may fail due to charset suffix"
+    },
+    {
+      "agent": "claude-code",
+      "category": "correctness",
+      "confidence": "High",
+      "description": "The serve() function calls uvicorn.run() without try/except error handling (line 752). If uvicorn fails (e.g., port already in use, permission denied, binding failure), the exception propagates uncaught, producing an unfriendly traceback instead of a clear CLI error message. For a user-facing command, this is poor UX and violates error-handling best practices for CLI tools.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:750-753",
+          "quote": "console.print(f\"Starting server on http://{host}:{port}\")\n    uvicorn.run(server_app, host=host, port=port)"
+        }
+      ],
+      "file": "factory/cli.py",
+      "message": "Wrap uvicorn.run() in try/except to catch OSError and network-related exceptions, providing clear error messages for common failures (e.g., 'Port 8000 is already in use').",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Warning",
+      "span": {
+        "end": 753,
+        "start": 750
+      },
+      "suggested_fix": "Add try/except around uvicorn.run():\n```python\ntry:\n    uvicorn.run(server_app, host=host, port=port)\nexcept OSError as e:\n    if \"Address already in use\" in str(e):\n        typer.echo(f\"Port {port} is already in use. Try a different port.\", err=True)\n    else:\n        typer.echo(f\"Failed to start server: {e}\", err=True)\n    raise typer.Exit(1)\n```",
+      "title": "No error handling for uvicorn.run() failures"
+    },
+    {
+      "agent": "claude-code",
+      "category": "maintainability",
+      "confidence": "High",
+      "description": "The hello() function (lines 7–10) lacks a return type annotation. While FastAPI can infer the response type from the return value, explicitly annotating the return type improves code clarity, enables static type checking, and documents the API contract. Best practice for FastAPI endpoints is to include return type hints.",
+      "evidence": [
+        {
+          "location": "factory/server.py:7-10",
+          "quote": "@app.get(\"/hello\")\ndef hello():\n    \"\"\"Hello endpoint.\"\"\"\n    return {\"message\": \"Hello from Silverforge Factory\"}"
+        }
+      ],
+      "file": "factory/server.py",
+      "message": "Add return type annotation to hello() function for clarity and type safety.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Info",
+      "span": {
+        "end": 10,
+        "start": 7
+      },
+      "suggested_fix": "Annotate the return type:\n```python\nfrom typing import Dict\n\n@app.get(\"/hello\")\ndef hello() -> Dict[str, str]:\n    \"\"\"Hello endpoint.\"\"\"\n    return {\"message\": \"Hello from Silverforge Factory\"}\n```\n\nOr using Python 3.10+ syntax:\n```python\n@app.get(\"/hello\")\ndef hello() -> dict[str, str]:\n    \"\"\"Hello endpoint.\"\"\"\n    return {\"message\": \"Hello from Silverforge Factory\"}\n```",
+      "title": "Missing return type annotation on hello() function"
+    }
+  ],
+  "issues": [
+    {
+      "category": "correctness",
+      "description": "The try/except ImportError block (lines 744–748) in serve() attempts to handle missing fastapi and uvicorn. However, both packages are declared as hard dependencies in pyproject.toml (lines 16–17: 'fastapi>=0.100', 'uvicorn>=0.23'), making this ImportError unreachable. This contradicts the prior code review feedback that flagged optional dependency intent. The dead code:\n- Confuses maintainers about whether these are truly required or optional\n- Masks actual import failures (e.g., if someone accidentally removes them from dependencies without updating cli.py)\n- Increases code complexity without benefit\n- Violates the DRY principle by duplicating dependency intent in two places",
+      "evidence": [
+        {
+          "location": "factory/cli.py:744-748",
+          "quote": "try:\n        import uvicorn\n        from factory.server import app as server_app\n    except ImportError:\n        typer.echo(\"fastapi and uvicorn are required for the serve command\", err=True)"
+        },
+        {
+          "location": "pyproject.toml:16-17",
+          "quote": "\"fastapi>=0.100\",\n    \"uvicorn>=0.23\","
+        }
+      ],
+      "file": "factory/cli.py",
+      "line_end": 748,
+      "line_start": 744,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Critical",
+      "suggested_fix": "Replace lines 744–748 with direct imports at module level or function top, removing the except clause: `import uvicorn` and `from factory.server import app as server_app` (or move imports to top of file). If optional deps are intended, move fastapi/uvicorn to optional-dependencies in pyproject.toml and restore error handling.",
+      "title": "Dead code: unreachable ImportError handler for hard dependencies"
+    },
+    {
+      "category": "correctness",
+      "description": "The serve() function calls uvicorn.run() without try/except error handling (line 752). If uvicorn fails (e.g., port already in use, permission denied, binding failure), the exception propagates uncaught, producing an unfriendly traceback instead of a clear CLI error message. For a user-facing command, this is poor UX and violates error-handling best practices for CLI tools.",
+      "evidence": [
+        {
+          "location": "factory/cli.py:750-753",
+          "quote": "console.print(f\"Starting server on http://{host}:{port}\")\n    uvicorn.run(server_app, host=host, port=port)"
+        }
+      ],
+      "file": "factory/cli.py",
+      "line_end": 753,
+      "line_start": 750,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "Add try/except around uvicorn.run():\n```python\ntry:\n    uvicorn.run(server_app, host=host, port=port)\nexcept OSError as e:\n    if \"Address already in use\" in str(e):\n        typer.echo(f\"Port {port} is already in use. Try a different port.\", err=True)\n    else:\n        typer.echo(f\"Failed to start server: {e}\", err=True)\n    raise typer.Exit(1)\n```",
+      "title": "No error handling for uvicorn.run() failures"
+    },
+    {
+      "category": "testing",
+      "description": "The port validation test suite has three converged problems:\n\n1. **Asymmetric coverage**: Negative cases (test_serve_invalid_port_negative, test_serve_invalid_port_too_large) test properly with assertions, but positive cases (test_serve_valid_port_zero, test_serve_valid_port_max) are empty `pass` statements—providing false confidence in test coverage.\n\n2. **Empty test functions**: Lines 23–35 contain only `pass` statements without any assertions or verification logic. They appear in the test suite but execute nothing.\n\n3. **Wrong output stream assertion**: Lines 13–20 check `result.stdout` but the serve() function prints errors via `typer.echo(..., err=True)` which writes to stderr. The assertion will check the wrong stream and likely fail or give false positives depending on CliRunner behavior.",
+      "evidence": [],
+      "file": "tests/test_cli_serve.py",
+      "line_end": 35,
+      "line_start": 10,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "1. Fix stderr/stdout assertions—use `result.output` (combined stream):\n```python\ndef test_serve_invalid_port_negative():\n    result = runner.invoke(app, [\"serve\", \"--port\", \"-1\"])\n    assert result.exit_code == 1\n    assert \"Invalid port\" in result.output\n\ndef test_serve_invalid_port_too_large():\n    result = runner.invoke(app, [\"serve\", \"--port\", \"65536\"])\n    assert result.exit_code == 1\n    assert \"Invalid port\" in result.output\n```\n\n2. Implement positive cases with mocked uvicorn.run():\n```python\nimport unittest.mock as mock\n\ndef test_serve_valid_port_zero():\n    with mock.patch('uvicorn.run'):\n        result = runner.invoke(app, ['serve', '--port', '0'])\n        assert result.exit_code == 0\n\ndef test_serve_valid_port_max():\n    with mock.patch('uvicorn.run'):\n        result = runner.invoke(app, ['serve', '--port', '65535'])\n        assert result.exit_code == 0\n```",
+      "title": "Port validation tests are incomplete with assertion bugs"
+    },
+    {
+      "category": "testing",
+      "description": "The test functions test_serve_invalid_port_negative() and test_serve_invalid_port_too_large() (lines 13–20) assert error messages in `result.stdout`. However, the serve() function prints errors using `typer.echo(..., err=True)`, which writes to stderr, not stdout. Depending on how CliRunner from typer/click combines output, the assertion `'Invalid port' in result.stdout` may fail because the message is on stderr. The test may be passing incorrectly or may fail depending on the runner's output capture behavior.",
+      "evidence": [
+        {
+          "location": "tests/test_cli_serve.py:10-20",
+          "quote": "def test_serve_invalid_port_negative():\n    \"\"\"Test serve command rejects negative port.\"\"\"\n    result = runner.invoke(app, [\"serve\", \"--port\", \"-1\"])\n    assert result.exit_code == 1\n    assert \"Invalid port\" in result.stdout"
+        },
+        {
+          "location": "factory/cli.py:741-742",
+          "quote": "typer.echo(f\"Invalid port: {port}. Must be between 0 and 65535.\", err=True)\n        raise typer.Exit(1)"
+        }
+      ],
+      "file": "tests/test_cli_serve.py",
+      "line_end": 20,
+      "line_start": 13,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "Change assertions to check `result.output` instead of `result.stdout` to capture combined stdout/stderr:\n```python\ndef test_serve_invalid_port_negative():\n    \"\"\"Test serve command rejects negative port.\"\"\"\n    result = runner.invoke(app, [\"serve\", \"--port\", \"-1\"])\n    assert result.exit_code == 1\n    assert \"Invalid port\" in result.output  # or result.stderr if CliRunner separates streams\n```",
+      "title": "Stderr assertion may fail: error printed to stderr but test checks stdout"
+    },
+    {
+      "category": "testing",
+      "description": "Two test functions (test_serve_valid_port_zero and test_serve_valid_port_max, lines 23–35) contain only `pass` statements with explanatory comments. These tests appear in the test suite but do not actually execute any assertions or verify any behavior. The comments acknowledge the limitation (\"can't actually start the server in tests\"), but the tests should be either:\n1. Removed entirely (if not needed)\n2. Implemented with mocking of uvicorn.run() to verify the validation passes before startup\n3. Marked with @pytest.mark.skip() with explicit rationale\n\nAs written, they create false confidence in test coverage—the test suite passes without verifying positive cases for port validation.",
+      "evidence": [
+        {
+          "location": "tests/test_cli_serve.py:23-35",
+          "quote": "def test_serve_valid_port_zero():\n    \"\"\"Test serve command accepts port 0.\"\"\"\n    # We can't actually start the server in tests, but we can check validation passes\n    # by checking that it tries to import and start (which will fail at uvicorn.run)\n    # For now, just verify the port validation logic works by using a valid port\n    pass\n\n\ndef test_serve_valid_port_max():\n    \"\"\"Test serve command accepts port 65535.\"\"\"\n    # Port validation passes for 65535; actual server startup would be tested elsewhere\n    pass"
+        }
+      ],
+      "file": "tests/test_cli_serve.py",
+      "line_end": 35,
+      "line_start": 23,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "Option 1: Mock uvicorn.run() and verify the call is attempted:\n```python\ndef test_serve_valid_port_zero(monkeypatch):\n    \"\"\"Test serve command accepts port 0.\"\"\"\n    import unittest.mock as mock\n    with mock.patch('uvicorn.run') as mock_run:\n        result = runner.invoke(app, ['serve', '--port', '0'])\n        # Port 0 passes validation; uvicorn.run should be called\n        assert result.exit_code == 0\n        mock_run.assert_called_once()\n```\n\nOption 2: Mark as intentionally skipped:\n```python\n@pytest.mark.skip(reason=\"uvicorn.run() would hang; validation tested via test_serve_invalid_port_* cases\")\ndef test_serve_valid_port_zero():\n    pass\n```",
+      "title": "Empty test functions provide no verification"
+    },
+    {
+      "category": "testing",
+      "description": "The test_hello_content_type() test (lines 21–23) asserts an exact match of `response.headers['content-type'] == 'application/json'`. However, FastAPI/Starlette's default JSON response includes a charset parameter: `'application/json; charset=utf-8'`. This exact-match assertion will fail if the response includes charset, causing the test to fail despite correct behavior. The assertion should use a substring check or regex match to account for optional charset.",
+      "evidence": [
+        {
+          "location": "tests/test_server.py:21-23",
+          "quote": "def test_hello_content_type(client):\n    \"\"\"Test the /hello endpoint returns correct content type.\"\"\"\n    response = client.get(\"/hello\")\n    assert response.headers[\"content-type\"] == \"application/json\""
+        }
+      ],
+      "file": "tests/test_server.py",
+      "line_end": 23,
+      "line_start": 21,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "Replace line 22 with:\n```python\nassert response.headers[\"content-type\"].startswith(\"application/json\")\n```\n\nOr more strictly:\n```python\nassert \"application/json\" in response.headers[\"content-type\"]\n```",
+      "title": "Content-Type assertion may fail due to charset suffix"
+    },
+    {
+      "category": "security",
+      "description": "The serve() function accepts a host parameter (line 735: `host: str = typer.Option(\"127.0.0.1\", ...)`) and passes it directly to uvicorn.run() without validation. While uvicorn will validate it at runtime, explicit validation at the CLI layer provides better user feedback and prevents invalid hostnames from reaching the server. Additionally, no guidance is provided on which hosts are safe (e.g., 127.0.0.1 vs 0.0.0.0).",
+      "evidence": [
+        {
+          "location": "factory/cli.py:735-740",
+          "quote": "def serve(\n    host: str = typer.Option(\"127.0.0.1\", \"--host\", \"-h\", help=\"Host to bind to\"),\n    port: int = typer.Option(8000, \"--port\", \"-p\", help=\"Port to bind to\"),\n) -> None:\n    \"\"\"Start the Silverforge Factory API server.\""
+        }
+      ],
+      "file": "factory/cli.py",
+      "line_end": 740,
+      "line_start": 735,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Info",
+      "suggested_fix": "Add host validation before uvicorn.run():\n```python\nimport socket\n\ndef _validate_host(host: str) -> bool:\n    \"\"\"Check if host is a valid hostname or IP address.\"\"\"\n    try:\n        socket.inet_aton(host) if ':' not in host else socket.inet_pton(socket.AF_INET6, host)\n        return True\n    except (socket.error, OSError):\n        try:\n            socket.getaddrinfo(host, None)\n            return True\n        except socket.gaierror:\n            return False\n\nif not _validate_host(host):\n    typer.echo(f\"Invalid host: {host}\", err=True)\n    raise typer.Exit(1)\n```",
+      "title": "No validation of host parameter"
+    },
+    {
+      "category": "maintainability",
+      "description": "The hello() function (lines 7–10) lacks a return type annotation. While FastAPI can infer the response type from the return value, explicitly annotating the return type improves code clarity, enables static type checking, and documents the API contract. Best practice for FastAPI endpoints is to include return type hints.",
+      "evidence": [
+        {
+          "location": "factory/server.py:7-10",
+          "quote": "@app.get(\"/hello\")\ndef hello():\n    \"\"\"Hello endpoint.\"\"\"\n    return {\"message\": \"Hello from Silverforge Factory\"}"
+        }
+      ],
+      "file": "factory/server.py",
+      "line_end": 10,
+      "line_start": 7,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Info",
+      "suggested_fix": "Annotate the return type:\n```python\nfrom typing import Dict\n\n@app.get(\"/hello\")\ndef hello() -> Dict[str, str]:\n    \"\"\"Hello endpoint.\"\"\"\n    return {\"message\": \"Hello from Silverforge Factory\"}\n```\n\nOr using Python 3.10+ syntax:\n```python\n@app.get(\"/hello\")\ndef hello() -> dict[str, str]:\n    \"\"\"Hello endpoint.\"\"\"\n    return {\"message\": \"Hello from Silverforge Factory\"}\n```",
+      "title": "Missing return type annotation on hello() function"
+    },
+    {
+      "category": "correctness",
+      "description": "The test suite has asymmetric coverage for port validation:\n- Negative cases (invalid ports): test_serve_invalid_port_negative, test_serve_invalid_port_too_large—both have proper assertions\n- Positive cases (valid ports): test_serve_valid_port_zero, test_serve_valid_port_max—both are empty `pass` statements\n\nThis creates a false sense of security. The test suite verifies that invalid inputs are rejected but does not verify that valid inputs are accepted. This violates the principle of symmetric test coverage.",
+      "evidence": [
+        {
+          "location": "tests/test_cli_serve.py:1-35",
+          "quote": "def test_serve_invalid_port_negative():\n    \"\"\"Test serve command rejects negative port.\"\"\"\n    result = runner.invoke(app, [\"serve\", \"--port\", \"-1\"])\n    assert result.exit_code == 1\n    assert \"Invalid port\" in result.stdout\n\n\ndef test_serve_invalid_port_too_large():\n    \"\"\"Test serve command rejects port > 65535.\"\"\"\n    result = runner.invoke(app, [\"serve\", \"--port\", \"65536\"])\n    assert result.exit_code == 1\n    assert \"Invalid port\" in result.stdout\n\n\ndef test_serve_valid_port_zero():\n    \"\"\"Test serve command accepts port 0.\"\"\"\n    ...\n    pass\n\n\ndef test_serve_valid_port_max():\n    \"\"\"Test serve command accepts port 65535.\"\"\"\n    ...\n    pass"
+        }
+      ],
+      "file": "tests/test_cli_serve.py",
+      "line_end": 7,
+      "line_start": 1,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Info",
+      "suggested_fix": "See the fix for 'Empty test functions provide no verification' above. Implement positive cases with mocked uvicorn.run() to verify validation passes.",
+      "title": "Inconsistent test coverage: negative cases tested, positive cases skipped"
+    }
+  ],
+  "pr_comment_markdown": "## Crucible Review Summary\n\n- Issues: 9\n- Critical: 1, Warning: 5\n\n### Top Actions\n- [Critical] Dead code: unreachable ImportError handler for hard dependencies (factory/cli.py:744)\n- [Warning] No error handling for uvicorn.run() failures (factory/cli.py:750)\n- [Warning] Port validation tests are incomplete with assertion bugs (tests/test_cli_serve.py:10)\n- [Warning] Stderr assertion may fail: error printed to stderr but test checks stdout (tests/test_cli_serve.py:13)\n- [Warning] Empty test functions provide no verification (tests/test_cli_serve.py:23)\n- [Warning] Content-Type assertion may fail due to charset suffix (tests/test_server.py:21)\n\n### Notable Issues\n- **Dead code: unreachable ImportError handler for hard dependencies** `factory/cli.py:744`: The try/except ImportError block (lines 744–748) in serve() attempts to handle missing fastapi and uvicorn. However, both packages are declared as hard dependencies in pyproject.toml (lines 16–17: 'fastapi>=0.100', 'uvicorn>=0.23'), making this ImportError unreachable. This contradicts the prior code review feedback that flagged optional dependency intent. The dead code:\n- Confuses maintainers about whether these are truly required or optional\n- Masks actual import failures (e.g., if someone accidentally removes them from dependencies without updating cli.py)\n- Increases code complexity without benefit\n- Violates the DRY principle by duplicating dependency intent in two places\n- **No error handling for uvicorn.run() failures** `factory/cli.py:750`: The serve() function calls uvicorn.run() without try/except error handling (line 752). If uvicorn fails (e.g., port already in use, permission denied, binding failure), the exception propagates uncaught, producing an unfriendly traceback instead of a clear CLI error message. For a user-facing command, this is poor UX and violates error-handling best practices for CLI tools.\n- **Port validation tests are incomplete with assertion bugs** `tests/test_cli_serve.py:10`: The port validation test suite has three converged problems:\n\n1. **Asymmetric coverage**: Negative cases (test_serve_invalid_port_negative, test_serve_invalid_port_too_large) test properly with assertions, but positive cases (test_serve_valid_port_zero, test_serve_valid_port_max) are empty `pass` statements—providing false confidence in test coverage.\n\n2. **Empty test functions**: Lines 23–35 contain only `pass` statements without any assertions or verification logic. They appear in the test suite but execute nothing.\n\n3. **Wrong output stream assertion**: Lines 13–20 check `result.stdout` but the serve() function prints errors via `typer.echo(..., err=True)` which writes to stderr. The assertion will check the wrong stream and likely fail or give false positives depending on CliRunner behavior.\n- **Stderr assertion may fail: error printed to stderr but test checks stdout** `tests/test_cli_serve.py:13`: The test functions test_serve_invalid_port_negative() and test_serve_invalid_port_too_large() (lines 13–20) assert error messages in `result.stdout`. However, the serve() function prints errors using `typer.echo(..., err=True)`, which writes to stderr, not stdout. Depending on how CliRunner from typer/click combines output, the assertion `'Invalid port' in result.stdout` may fail because the message is on stderr. The test may be passing incorrectly or may fail depending on the runner's output capture behavior.\n- **Empty test functions provide no verification** `tests/test_cli_serve.py:23`: Two test functions (test_serve_valid_port_zero and test_serve_valid_port_max, lines 23–35) contain only `pass` statements with explanatory comments. These tests appear in the test suite but do not actually execute any assertions or verify any behavior. The comments acknowledge the limitation (\"can't actually start the server in tests\"), but the tests should be either:\n1. Removed entirely (if not needed)\n2. Implemented with mocking of uvicorn.run() to verify the validation passes before startup\n3. Marked with @pytest.mark.skip() with explicit rationale\n\nAs written, they create false confidence in test coverage—the test suite passes without verifying positive cases for port validation.\n- **Content-Type assertion may fail due to charset suffix** `tests/test_server.py:21`: The test_hello_content_type() test (lines 21–23) asserts an exact match of `response.headers['content-type'] == 'application/json'`. However, FastAPI/Starlette's default JSON response includes a charset parameter: `'application/json; charset=utf-8'`. This exact-match assertion will fail if the response includes charset, causing the test to fail despite correct behavior. The assertion should use a substring check or regex match to account for optional charset.\n- **No validation of host parameter** `factory/cli.py:735`: The serve() function accepts a host parameter (line 735: `host: str = typer.Option(\"127.0.0.1\", ...)`) and passes it directly to uvicorn.run() without validation. While uvicorn will validate it at runtime, explicit validation at the CLI layer provides better user feedback and prevents invalid hostnames from reaching the server. Additionally, no guidance is provided on which hosts are safe (e.g., 127.0.0.1 vs 0.0.0.0).\n- **Missing return type annotation on hello() function** `factory/server.py:7`: The hello() function (lines 7–10) lacks a return type annotation. While FastAPI can infer the response type from the return value, explicitly annotating the return type improves code clarity, enables static type checking, and documents the API contract. Best practice for FastAPI endpoints is to include return type hints.\n- **Inconsistent test coverage: negative cases tested, positive cases skipped** `tests/test_cli_serve.py:1`: The test suite has asymmetric coverage for port validation:\n- Negative cases (invalid ports): test_serve_invalid_port_negative, test_serve_invalid_port_too_large—both have proper assertions\n- Positive cases (valid ports): test_serve_valid_port_zero, test_serve_valid_port_max—both are empty `pass` statements\n\nThis creates a false sense of security. The test suite verifies that invalid inputs are rejected but does not verify that valid inputs are accepted. This violates the principle of symmetric test coverage.\n",
+  "pr_review_draft": {
+    "inline_comments": [
+      {
+        "body": "**Dead code: unreachable ImportError handler for hard dependencies**\n\nThe try/except ImportError block (lines 744–748) in serve() attempts to handle missing fastapi and uvicorn. However, both packages are declared as hard dependencies in pyproject.toml (lines 16–17: 'fastapi>=0.100', 'uvicorn>=0.23'), making this ImportError unreachable. This contradicts the prior code review feedback that flagged optional dependency intent. The dead code:\n- Confuses maintainers about whether these are truly required or optional\n- Masks actual import failures (e.g., if someone accidentally removes them from dependencies without updating cli.py)\n- Increases code complexity without benefit\n- Violates the DRY principle by duplicating dependency intent in two places\n\nRaised by: claude-code\n\nSuggested fix: Replace lines 744–748 with direct imports at module level or function top, removing the except clause: `import uvicorn` and `from factory.server import app as server_app` (or move imports to top of file). If optional deps are intended, move fastapi/uvicorn to optional-dependencies in pyproject.toml and restore error handling.",
+        "category": "correctness",
+        "description": "The try/except ImportError block (lines 744–748) in serve() attempts to handle missing fastapi and uvicorn. However, both packages are declared as hard dependencies in pyproject.toml (lines 16–17: 'fastapi>=0.100', 'uvicorn>=0.23'), making this ImportError unreachable. This contradicts the prior code review feedback that flagged optional dependency intent. The dead code:\n- Confuses maintainers about whether these are truly required or optional\n- Masks actual import failures (e.g., if someone accidentally removes them from dependencies without updating cli.py)\n- Increases code complexity without benefit\n- Violates the DRY principle by duplicating dependency intent in two places",
+        "line": 748,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/cli.py",
+        "severity": "Critical",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 744,
+        "start_side": "Right",
+        "title": "Dead code: unreachable ImportError handler for hard dependencies"
+      },
+      {
+        "body": "**No error handling for uvicorn.run() failures**\n\nThe serve() function calls uvicorn.run() without try/except error handling (line 752). If uvicorn fails (e.g., port already in use, permission denied, binding failure), the exception propagates uncaught, producing an unfriendly traceback instead of a clear CLI error message. For a user-facing command, this is poor UX and violates error-handling best practices for CLI tools.\n\nRaised by: claude-code\n\nSuggested fix: Add try/except around uvicorn.run():\n```python\ntry:\n    uvicorn.run(server_app, host=host, port=port)\nexcept OSError as e:\n    if \"Address already in use\" in str(e):\n        typer.echo(f\"Port {port} is already in use. Try a different port.\", err=True)\n    else:\n        typer.echo(f\"Failed to start server: {e}\", err=True)\n    raise typer.Exit(1)\n```",
+        "category": "correctness",
+        "description": "The serve() function calls uvicorn.run() without try/except error handling (line 752). If uvicorn fails (e.g., port already in use, permission denied, binding failure), the exception propagates uncaught, producing an unfriendly traceback instead of a clear CLI error message. For a user-facing command, this is poor UX and violates error-handling best practices for CLI tools.",
+        "line": 753,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/cli.py",
+        "severity": "Warning",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 750,
+        "start_side": "Right",
+        "title": "No error handling for uvicorn.run() failures"
+      },
+      {
+        "body": "**Port validation tests are incomplete with assertion bugs**\n\nThe port validation test suite has three converged problems:\n\n1. **Asymmetric coverage**: Negative cases (test_serve_invalid_port_negative, test_serve_invalid_port_too_large) test properly with assertions, but positive cases (test_serve_valid_port_zero, test_serve_valid_port_max) are empty `pass` statements—providing false confidence in test coverage.\n\n2. **Empty test functions**: Lines 23–35 contain only `pass` statements without any assertions or verification logic. They appear in the test suite but execute nothing.\n\n3. **Wrong output stream assertion**: Lines 13–20 check `result.stdout` but the serve() function prints errors via `typer.echo(..., err=True)` which writes to stderr. The assertion will check the wrong stream and likely fail or give false positives depending on CliRunner behavior.\n\nRaised by: claude-code\n\nSuggested fix: 1. Fix stderr/stdout assertions—use `result.output` (combined stream):\n```python\ndef test_serve_invalid_port_negative():\n    result = runner.invoke(app, [\"serve\", \"--port\", \"-1\"])\n    assert result.exit_code == 1\n    assert \"Invalid port\" in result.output\n\ndef test_serve_invalid_port_too_large():\n    result = runner.invoke(app, [\"serve\", \"--port\", \"65536\"])\n    assert result.exit_code == 1\n    assert \"Invalid port\" in result.output\n```\n\n2. Implement positive cases with mocked uvicorn.run():\n```python\nimport unittest.mock as mock\n\ndef test_serve_valid_port_zero():\n    with mock.patch('uvicorn.run'):\n        result = runner.invoke(app, ['serve', '--port', '0'])\n        assert result.exit_code == 0\n\ndef test_serve_valid_port_max():\n    with mock.patch('uvicorn.run'):\n        result = runner.invoke(app, ['serve', '--port', '65535'])\n        assert result.exit_code == 0\n```",
+        "category": "testing",
+        "description": "The port validation test suite has three converged problems:\n\n1. **Asymmetric coverage**: Negative cases (test_serve_invalid_port_negative, test_serve_invalid_port_too_large) test properly with assertions, but positive cases (test_serve_valid_port_zero, test_serve_valid_port_max) are empty `pass` statements—providing false confidence in test coverage.\n\n2. **Empty test functions**: Lines 23–35 contain only `pass` statements without any assertions or verification logic. They appear in the test suite but execute nothing.\n\n3. **Wrong output stream assertion**: Lines 13–20 check `result.stdout` but the serve() function prints errors via `typer.echo(..., err=True)` which writes to stderr. The assertion will check the wrong stream and likely fail or give false positives depending on CliRunner behavior.",
+        "line": 35,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "tests/test_cli_serve.py",
+        "severity": "Warning",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 10,
+        "start_side": "Right",
+        "title": "Port validation tests are incomplete with assertion bugs"
+      },
+      {
+        "body": "**Stderr assertion may fail: error printed to stderr but test checks stdout**\n\nThe test functions test_serve_invalid_port_negative() and test_serve_invalid_port_too_large() (lines 13–20) assert error messages in `result.stdout`. However, the serve() function prints errors using `typer.echo(..., err=True)`, which writes to stderr, not stdout. Depending on how CliRunner from typer/click combines output, the assertion `'Invalid port' in result.stdout` may fail because the message is on stderr. The test may be passing incorrectly or may fail depending on the runner's output capture behavior.\n\nRaised by: claude-code\n\nSuggested fix: Change assertions to check `result.output` instead of `result.stdout` to capture combined stdout/stderr:\n```python\ndef test_serve_invalid_port_negative():\n    \"\"\"Test serve command rejects negative port.\"\"\"\n    result = runner.invoke(app, [\"serve\", \"--port\", \"-1\"])\n    assert result.exit_code == 1\n    assert \"Invalid port\" in result.output  # or result.stderr if CliRunner separates streams\n```",
+        "category": "testing",
+        "description": "The test functions test_serve_invalid_port_negative() and test_serve_invalid_port_too_large() (lines 13–20) assert error messages in `result.stdout`. However, the serve() function prints errors using `typer.echo(..., err=True)`, which writes to stderr, not stdout. Depending on how CliRunner from typer/click combines output, the assertion `'Invalid port' in result.stdout` may fail because the message is on stderr. The test may be passing incorrectly or may fail depending on the runner's output capture behavior.",
+        "line": 20,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "tests/test_cli_serve.py",
+        "severity": "Warning",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 13,
+        "start_side": "Right",
+        "title": "Stderr assertion may fail: error printed to stderr but test checks stdout"
+      },
+      {
+        "body": "**Empty test functions provide no verification**\n\nTwo test functions (test_serve_valid_port_zero and test_serve_valid_port_max, lines 23–35) contain only `pass` statements with explanatory comments. These tests appear in the test suite but do not actually execute any assertions or verify any behavior. The comments acknowledge the limitation (\"can't actually start the server in tests\"), but the tests should be either:\n1. Removed entirely (if not needed)\n2. Implemented with mocking of uvicorn.run() to verify the validation passes before startup\n3. Marked with @pytest.mark.skip() with explicit rationale\n\nAs written, they create false confidence in test coverage—the test suite passes without verifying positive cases for port validation.\n\nRaised by: claude-code\n\nSuggested fix: Option 1: Mock uvicorn.run() and verify the call is attempted:\n```python\ndef test_serve_valid_port_zero(monkeypatch):\n    \"\"\"Test serve command accepts port 0.\"\"\"\n    import unittest.mock as mock\n    with mock.patch('uvicorn.run') as mock_run:\n        result = runner.invoke(app, ['serve', '--port', '0'])\n        # Port 0 passes validation; uvicorn.run should be called\n        assert result.exit_code == 0\n        mock_run.assert_called_once()\n```\n\nOption 2: Mark as intentionally skipped:\n```python\n@pytest.mark.skip(reason=\"uvicorn.run() would hang; validation tested via test_serve_invalid_port_* cases\")\ndef test_serve_valid_port_zero():\n    pass\n```",
+        "category": "testing",
+        "description": "Two test functions (test_serve_valid_port_zero and test_serve_valid_port_max, lines 23–35) contain only `pass` statements with explanatory comments. These tests appear in the test suite but do not actually execute any assertions or verify any behavior. The comments acknowledge the limitation (\"can't actually start the server in tests\"), but the tests should be either:\n1. Removed entirely (if not needed)\n2. Implemented with mocking of uvicorn.run() to verify the validation passes before startup\n3. Marked with @pytest.mark.skip() with explicit rationale\n\nAs written, they create false confidence in test coverage—the test suite passes without verifying positive cases for port validation.",
+        "line": 35,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "tests/test_cli_serve.py",
+        "severity": "Warning",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 23,
+        "start_side": "Right",
+        "title": "Empty test functions provide no verification"
+      },
+      {
+        "body": "**Content-Type assertion may fail due to charset suffix**\n\nThe test_hello_content_type() test (lines 21–23) asserts an exact match of `response.headers['content-type'] == 'application/json'`. However, FastAPI/Starlette's default JSON response includes a charset parameter: `'application/json; charset=utf-8'`. This exact-match assertion will fail if the response includes charset, causing the test to fail despite correct behavior. The assertion should use a substring check or regex match to account for optional charset.\n\nRaised by: claude-code\n\nSuggested fix: Replace line 22 with:\n```python\nassert response.headers[\"content-type\"].startswith(\"application/json\")\n```\n\nOr more strictly:\n```python\nassert \"application/json\" in response.headers[\"content-type\"]\n```",
+        "category": "testing",
+        "description": "The test_hello_content_type() test (lines 21–23) asserts an exact match of `response.headers['content-type'] == 'application/json'`. However, FastAPI/Starlette's default JSON response includes a charset parameter: `'application/json; charset=utf-8'`. This exact-match assertion will fail if the response includes charset, causing the test to fail despite correct behavior. The assertion should use a substring check or regex match to account for optional charset.",
+        "line": 23,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "tests/test_server.py",
+        "severity": "Warning",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 21,
+        "start_side": "Right",
+        "title": "Content-Type assertion may fail due to charset suffix"
+      },
+      {
+        "body": "**No validation of host parameter**\n\nThe serve() function accepts a host parameter (line 735: `host: str = typer.Option(\"127.0.0.1\", ...)`) and passes it directly to uvicorn.run() without validation. While uvicorn will validate it at runtime, explicit validation at the CLI layer provides better user feedback and prevents invalid hostnames from reaching the server. Additionally, no guidance is provided on which hosts are safe (e.g., 127.0.0.1 vs 0.0.0.0).\n\nRaised by: claude-code\n\nSuggested fix: Add host validation before uvicorn.run():\n```python\nimport socket\n\ndef _validate_host(host: str) -> bool:\n    \"\"\"Check if host is a valid hostname or IP address.\"\"\"\n    try:\n        socket.inet_aton(host) if ':' not in host else socket.inet_pton(socket.AF_INET6, host)\n        return True\n    except (socket.error, OSError):\n        try:\n            socket.getaddrinfo(host, None)\n            return True\n        except socket.gaierror:\n            return False\n\nif not _validate_host(host):\n    typer.echo(f\"Invalid host: {host}\", err=True)\n    raise typer.Exit(1)\n```",
+        "category": "security",
+        "description": "The serve() function accepts a host parameter (line 735: `host: str = typer.Option(\"127.0.0.1\", ...)`) and passes it directly to uvicorn.run() without validation. While uvicorn will validate it at runtime, explicit validation at the CLI layer provides better user feedback and prevents invalid hostnames from reaching the server. Additionally, no guidance is provided on which hosts are safe (e.g., 127.0.0.1 vs 0.0.0.0).",
+        "line": 740,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/cli.py",
+        "severity": "Info",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 735,
+        "start_side": "Right",
+        "title": "No validation of host parameter"
+      },
+      {
+        "body": "**Missing return type annotation on hello() function**\n\nThe hello() function (lines 7–10) lacks a return type annotation. While FastAPI can infer the response type from the return value, explicitly annotating the return type improves code clarity, enables static type checking, and documents the API contract. Best practice for FastAPI endpoints is to include return type hints.\n\nRaised by: claude-code\n\nSuggested fix: Annotate the return type:\n```python\nfrom typing import Dict\n\n@app.get(\"/hello\")\ndef hello() -> Dict[str, str]:\n    \"\"\"Hello endpoint.\"\"\"\n    return {\"message\": \"Hello from Silverforge Factory\"}\n```\n\nOr using Python 3.10+ syntax:\n```python\n@app.get(\"/hello\")\ndef hello() -> dict[str, str]:\n    \"\"\"Hello endpoint.\"\"\"\n    return {\"message\": \"Hello from Silverforge Factory\"}\n```",
+        "category": "maintainability",
+        "description": "The hello() function (lines 7–10) lacks a return type annotation. While FastAPI can infer the response type from the return value, explicitly annotating the return type improves code clarity, enables static type checking, and documents the API contract. Best practice for FastAPI endpoints is to include return type hints.",
+        "line": 10,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "factory/server.py",
+        "severity": "Info",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 7,
+        "start_side": "Right",
+        "title": "Missing return type annotation on hello() function"
+      },
+      {
+        "body": "**Inconsistent test coverage: negative cases tested, positive cases skipped**\n\nThe test suite has asymmetric coverage for port validation:\n- Negative cases (invalid ports): test_serve_invalid_port_negative, test_serve_invalid_port_too_large—both have proper assertions\n- Positive cases (valid ports): test_serve_valid_port_zero, test_serve_valid_port_max—both are empty `pass` statements\n\nThis creates a false sense of security. The test suite verifies that invalid inputs are rejected but does not verify that valid inputs are accepted. This violates the principle of symmetric test coverage.\n\nRaised by: claude-code\n\nSuggested fix: See the fix for 'Empty test functions provide no verification' above. Implement positive cases with mocked uvicorn.run() to verify validation passes.",
+        "category": "correctness",
+        "description": "The test suite has asymmetric coverage for port validation:\n- Negative cases (invalid ports): test_serve_invalid_port_negative, test_serve_invalid_port_too_large—both have proper assertions\n- Positive cases (valid ports): test_serve_valid_port_zero, test_serve_valid_port_max—both are empty `pass` statements\n\nThis creates a false sense of security. The test suite verifies that invalid inputs are rejected but does not verify that valid inputs are accepted. This violates the principle of symmetric test coverage.",
+        "line": 7,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "tests/test_cli_serve.py",
+        "severity": "Info",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": 1,
+        "start_side": "Right",
+        "title": "Inconsistent test coverage: negative cases tested, positive cases skipped"
+      }
+    ],
+    "overview_comment": {
+      "body": "## Crucible Review Summary\n\n- Issues: 9\n- Critical: 1, Warning: 5\n\n### Top Actions\n- [Critical] Dead code: unreachable ImportError handler for hard dependencies (factory/cli.py:744)\n- [Warning] No error handling for uvicorn.run() failures (factory/cli.py:750)\n- [Warning] Port validation tests are incomplete with assertion bugs (tests/test_cli_serve.py:10)\n- [Warning] Stderr assertion may fail: error printed to stderr but test checks stdout (tests/test_cli_serve.py:13)\n- [Warning] Empty test functions provide no verification (tests/test_cli_serve.py:23)\n- [Warning] Content-Type assertion may fail due to charset suffix (tests/test_server.py:21)\n\n### Notable Issues\n- **Dead code: unreachable ImportError handler for hard dependencies** `factory/cli.py:744`: The try/except ImportError block (lines 744–748) in serve() attempts to handle missing fastapi and uvicorn. However, both packages are declared as hard dependencies in pyproject.toml (lines 16–17: 'fastapi>=0.100', 'uvicorn>=0.23'), making this ImportError unreachable. This contradicts the prior code review feedback that flagged optional dependency intent. The dead code:\n- Confuses maintainers about whether these are truly required or optional\n- Masks actual import failures (e.g., if someone accidentally removes them from dependencies without updating cli.py)\n- Increases code complexity without benefit\n- Violates the DRY principle by duplicating dependency intent in two places\n- **No error handling for uvicorn.run() failures** `factory/cli.py:750`: The serve() function calls uvicorn.run() without try/except error handling (line 752). If uvicorn fails (e.g., port already in use, permission denied, binding failure), the exception propagates uncaught, producing an unfriendly traceback instead of a clear CLI error message. For a user-facing command, this is poor UX and violates error-handling best practices for CLI tools.\n- **Port validation tests are incomplete with assertion bugs** `tests/test_cli_serve.py:10`: The port validation test suite has three converged problems:\n\n1. **Asymmetric coverage**: Negative cases (test_serve_invalid_port_negative, test_serve_invalid_port_too_large) test properly with assertions, but positive cases (test_serve_valid_port_zero, test_serve_valid_port_max) are empty `pass` statements—providing false confidence in test coverage.\n\n2. **Empty test functions**: Lines 23–35 contain only `pass` statements without any assertions or verification logic. They appear in the test suite but execute nothing.\n\n3. **Wrong output stream assertion**: Lines 13–20 check `result.stdout` but the serve() function prints errors via `typer.echo(..., err=True)` which writes to stderr. The assertion will check the wrong stream and likely fail or give false positives depending on CliRunner behavior.\n- **Stderr assertion may fail: error printed to stderr but test checks stdout** `tests/test_cli_serve.py:13`: The test functions test_serve_invalid_port_negative() and test_serve_invalid_port_too_large() (lines 13–20) assert error messages in `result.stdout`. However, the serve() function prints errors using `typer.echo(..., err=True)`, which writes to stderr, not stdout. Depending on how CliRunner from typer/click combines output, the assertion `'Invalid port' in result.stdout` may fail because the message is on stderr. The test may be passing incorrectly or may fail depending on the runner's output capture behavior.\n- **Empty test functions provide no verification** `tests/test_cli_serve.py:23`: Two test functions (test_serve_valid_port_zero and test_serve_valid_port_max, lines 23–35) contain only `pass` statements with explanatory comments. These tests appear in the test suite but do not actually execute any assertions or verify any behavior. The comments acknowledge the limitation (\"can't actually start the server in tests\"), but the tests should be either:\n1. Removed entirely (if not needed)\n2. Implemented with mocking of uvicorn.run() to verify the validation passes before startup\n3. Marked with @pytest.mark.skip() with explicit rationale\n\nAs written, they create false confidence in test coverage—the test suite passes without verifying positive cases for port validation.\n- **Content-Type assertion may fail due to charset suffix** `tests/test_server.py:21`: The test_hello_content_type() test (lines 21–23) asserts an exact match of `response.headers['content-type'] == 'application/json'`. However, FastAPI/Starlette's default JSON response includes a charset parameter: `'application/json; charset=utf-8'`. This exact-match assertion will fail if the response includes charset, causing the test to fail despite correct behavior. The assertion should use a substring check or regex match to account for optional charset.\n- **No validation of host parameter** `factory/cli.py:735`: The serve() function accepts a host parameter (line 735: `host: str = typer.Option(\"127.0.0.1\", ...)`) and passes it directly to uvicorn.run() without validation. While uvicorn will validate it at runtime, explicit validation at the CLI layer provides better user feedback and prevents invalid hostnames from reaching the server. Additionally, no guidance is provided on which hosts are safe (e.g., 127.0.0.1 vs 0.0.0.0).\n- **Missing return type annotation on hello() function** `factory/server.py:7`: The hello() function (lines 7–10) lacks a return type annotation. While FastAPI can infer the response type from the return value, explicitly annotating the return type improves code clarity, enables static type checking, and documents the API contract. Best practice for FastAPI endpoints is to include return type hints.\n- **Inconsistent test coverage: negative cases tested, positive cases skipped** `tests/test_cli_serve.py:1`: The test suite has asymmetric coverage for port validation:\n- Negative cases (invalid ports): test_serve_invalid_port_negative, test_serve_invalid_port_too_large—both have proper assertions\n- Positive cases (valid ports): test_serve_valid_port_zero, test_serve_valid_port_max—both are empty `pass` statements\n\nThis creates a false sense of security. The test suite verifies that invalid inputs are rejected but does not verify that valid inputs are accepted. This violates the principle of symmetric test coverage.\n"
+    },
+    "overview_only_comments": []
+  },
+  "run_id": "c3bf5072-ec36-417b-8cec-4e10d7975d99",
+  "session_id": "c3bf5072-ec36-417b-8cec-4e10d7975d99",
+  "system_context_markdown": "### System Context\n- Changed files: 5\n- Reference snippets: 0\n- History commits: 20\n- Docs snippets: 1\n- Deterministic prechecks: 2\n- Affected files:\n  - factory/cli.py\n  - factory/server.py\n  - pyproject.toml\n  - tests/test_cli_serve.py\n  - tests/test_server.py\n- Precheck results:\n  - untangle-analyze-report [Fail] error: unexpected argument '.' found\n\nUsage: untangle analyze [OPTIONS] <PATH>\n\nFor more information, try '--help'.\n  - untangle-quality-report [Fail] error: unrecognized subcommand 'quality'\n\nUsage: untangle <COMMAND>\n\nFor more information, try '--help'.\n",
+  "verdict": "Block"
+}
+[run:c3bf5072-ec36-417b-8cec-4e10d7975d99]
+[2026-06-04 15:23:42.297 +10:00] [final-analysis]
+## Final Analysis
+
+- Issues: 9 (Critical: 1, Warning: 5, Info: 3)
+- Agent failures: 0
+
+### Top Issues
+- [Critical] Dead code: unreachable ImportError handler for hard dependencies `factory/cli.py:744`
+- [Warning] No error handling for uvicorn.run() failures `factory/cli.py:750`
+- [Warning] Port validation tests are incomplete with assertion bugs `tests/test_cli_serve.py:10`
+- [Warning] Stderr assertion may fail: error printed to stderr but test checks stdout `tests/test_cli_serve.py:13`
+- [Warning] Empty test functions provide no verification `tests/test_cli_serve.py:23`
+- [Warning] Content-Type assertion may fail due to charset suffix `tests/test_server.py:21`
+- [Info] No validation of host parameter `factory/cli.py:735`
+- [Info] Missing return type annotation on hello() function `factory/server.py:7`
+- [Info] Inconsistent test coverage: negative cases tested, positive cases skipped `tests/test_cli_serve.py:1`
+
+### Action Plan
+- [Critical] Dead code: unreachable ImportError handler for hard dependencies (factory/cli.py:744)
+- [Warning] No error handling for uvicorn.run() failures (factory/cli.py:750)
+- [Warning] Port validation tests are incomplete with assertion bugs (tests/test_cli_serve.py:10)
+- [Warning] Stderr assertion may fail: error printed to stderr but test checks stdout (tests/test_cli_serve.py:13)
+- [Warning] Empty test functions provide no verification (tests/test_cli_serve.py:23)
+- [Warning] Content-Type assertion may fail due to charset suffix (tests/test_server.py:21)
+
+[2026-06-04 15:23:42.297 +10:00] [pr-comment]
+## Crucible Review Summary
+
+- Issues: 9
+- Critical: 1, Warning: 5
+
+### Top Actions
+- [Critical] Dead code: unreachable ImportError handler for hard dependencies (factory/cli.py:744)
+- [Warning] No error handling for uvicorn.run() failures (factory/cli.py:750)
+- [Warning] Port validation tests are incomplete with assertion bugs (tests/test_cli_serve.py:10)
+- [Warning] Stderr assertion may fail: error printed to stderr but test checks stdout (tests/test_cli_serve.py:13)
+- [Warning] Empty test functions provide no verification (tests/test_cli_serve.py:23)
+- [Warning] Content-Type assertion may fail due to charset suffix (tests/test_server.py:21)
+
+### Notable Issues
+- **Dead code: unreachable ImportError handler for hard dependencies** `factory/cli.py:744`: The try/except ImportError block (lines 744–748) in serve() attempts to handle missing fastapi and uvicorn. However, both packages are declared as hard dependencies in pyproject.toml (lines 16–17: 'fastapi>=0.100', 'uvicorn>=0.23'), making this ImportError unreachable. This contradicts the prior code review feedback that flagged optional dependency intent. The dead code:
+- Confuses maintainers about whether these are truly required or optional
+- Masks actual import failures (e.g., if someone accidentally removes them from dependencies without updating cli.py)
+- Increases code complexity without benefit
+- Violates the DRY principle by duplicating dependency intent in two places
+- **No error handling for uvicorn.run() failures** `factory/cli.py:750`: The serve() function calls uvicorn.run() without try/except error handling (line 752). If uvicorn fails (e.g., port already in use, permission denied, binding failure), the exception propagates uncaught, producing an unfriendly traceback instead of a clear CLI error message. For a user-facing command, this is poor UX and violates error-handling best practices for CLI tools.
+- **Port validation tests are incomplete with assertion bugs** `tests/test_cli_serve.py:10`: The port validation test suite has three converged problems:
+
+1. **Asymmetric coverage**: Negative cases (test_serve_invalid_port_negative, test_serve_invalid_port_too_large) test properly with assertions, but positive cases (test_serve_valid_port_zero, test_serve_valid_port_max) are empty `pass` statements—providing false confidence in test coverage.
+
+2. **Empty test functions**: Lines 23–35 contain only `pass` statements without any assertions or verification logic. They appear in the test suite but execute nothing.
+
+3. **Wrong output stream assertion**: Lines 13–20 check `result.stdout` but the serve() function prints errors via `typer.echo(..., err=True)` which writes to stderr. The assertion will check the wrong stream and likely fail or give false positives depending on CliRunner behavior.
+- **Stderr assertion may fail: error printed to stderr but test checks stdout** `tests/test_cli_serve.py:13`: The test functions test_serve_invalid_port_negative() and test_serve_invalid_port_too_large() (lines 13–20) assert error messages in `result.stdout`. However, the serve() function prints errors using `typer.echo(..., err=True)`, which writes to stderr, not stdout. Depending on how CliRunner from typer/click combines output, the assertion `'Invalid port' in result.stdout` may fail because the message is on stderr. The test may be passing incorrectly or may fail depending on the runner's output capture behavior.
+- **Empty test functions provide no verification** `tests/test_cli_serve.py:23`: Two test functions (test_serve_valid_port_zero and test_serve_valid_port_max, lines 23–35) contain only `pass` statements with explanatory comments. These tests appear in the test suite but do not actually execute any assertions or verify any behavior. The comments acknowledge the limitation ("can't actually start the server in tests"), but the tests should be either:
+1. Removed entirely (if not needed)
+2. Implemented with mocking of uvicorn.run() to verify the validation passes before startup
+3. Marked with @pytest.mark.skip() with explicit rationale
+
+As written, they create false confidence in test coverage—the test suite passes without verifying positive cases for port validation.
+- **Content-Type assertion may fail due to charset suffix** `tests/test_server.py:21`: The test_hello_content_type() test (lines 21–23) asserts an exact match of `response.headers['content-type'] == 'application/json'`. However, FastAPI/Starlette's default JSON response includes a charset parameter: `'application/json; charset=utf-8'`. This exact-match assertion will fail if the response includes charset, causing the test to fail despite correct behavior. The assertion should use a substring check or regex match to account for optional charset.
+- **No validation of host parameter** `factory/cli.py:735`: The serve() function accepts a host parameter (line 735: `host: str = typer.Option("127.0.0.1", ...)`) and passes it directly to uvicorn.run() without validation. While uvicorn will validate it at runtime, explicit validation at the CLI layer provides better user feedback and prevents invalid hostnames from reaching the server. Additionally, no guidance is provided on which hosts are safe (e.g., 127.0.0.1 vs 0.0.0.0).
+- **Missing return type annotation on hello() function** `factory/server.py:7`: The hello() function (lines 7–10) lacks a return type annotation. While FastAPI can infer the response type from the return value, explicitly annotating the return type improves code clarity, enables static type checking, and documents the API contract. Best practice for FastAPI endpoints is to include return type hints.
+- **Inconsistent test coverage: negative cases tested, positive cases skipped** `tests/test_cli_serve.py:1`: The test suite has asymmetric coverage for port validation:
+- Negative cases (invalid ports): test_serve_invalid_port_negative, test_serve_invalid_port_too_large—both have proper assertions
+- Positive cases (valid ports): test_serve_valid_port_zero, test_serve_valid_port_max—both are empty `pass` statements
+
+This creates a false sense of security. The test suite verifies that invalid inputs are rejected but does not verify that valid inputs are accepted. This violates the principle of symmetric test coverage.
+

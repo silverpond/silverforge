@@ -26,6 +26,7 @@ factory workers                              # show active sessions + CPU/mem on
 
 Environment variables (set in `.env`, loaded automatically):
 - `FACTORY_GITHUB_TOKEN` — required for `poll` and PR creation
+- `FACTORY_GITHUB_TOKEN_CMD` — optional; a command run on demand that prints a fresh token (takes precedence over `FACTORY_GITHUB_TOKEN`, e.g. for short-lived GitHub App tokens)
 - `FACTORY_WORKER_USER` — your Unix username on the worker (set by `factory setup`)
 - `FACTORY_SSH_IDENTITY` — path to your SSH private key (set by `factory setup`)
 - `SLACK_BOT_TOKEN` — optional, enables Slack channel per run

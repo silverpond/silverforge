@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import subprocess
 from pathlib import Path
 from typing import List, Optional
@@ -645,28 +646,41 @@ def setup_cmd(
         os.environ["FACTORY_SSH_IDENTITY"] = ssh_key
         console.print(f"  [green]✓[/green] SSH key saved to [dim].env[/dim]")
 
-    # GitHub token → worker
-    github_token = os.environ.get("FACTORY_GITHUB_TOKEN")
-    if not github_token:
-        console.print("\n  [bold]GitHub[/bold] — token needed for PR creation (github.com/settings/tokens, repo scope)")
-        github_token = ask(questionary.text(
-            "FACTORY_GITHUB_TOKEN (leave blank to skip):",
-            default="",
-        )).strip()
-        if github_token:
-            _write_env_var("FACTORY_GITHUB_TOKEN", github_token)
-            os.environ["FACTORY_GITHUB_TOKEN"] = github_token
-            console.print(f"  [green]✓[/green] FACTORY_GITHUB_TOKEN saved to [dim].env[/dim]")
-    if github_token:
+    # GitHub auth → worker
+    token_cmd = os.environ.get("FACTORY_GITHUB_TOKEN_CMD")
+    if token_cmd:
+        console.print("\n  [bold]GitHub[/bold] — FACTORY_GITHUB_TOKEN_CMD is set; tokens are minted on demand")
         if ask(questionary.confirm(
-            f"Write GITHUB_TOKEN to {worker_name} (~/.factory-secrets) for git clone/push?",
+            f"Configure git on {worker_name} to mint tokens via FACTORY_GITHUB_TOKEN_CMD for clone/push?",
             default=True,
         )):
             try:
-                _write_worker_secrets(_client(worker_name, workers_path), github_token)
-                console.print(f"  [green]✓[/green] GITHUB_TOKEN written to {worker_name}:~/.factory-secrets")
+                _write_worker_token_cmd(_client(worker_name, workers_path), token_cmd)
+                console.print(f"  [green]✓[/green] git credential helper on {worker_name} now runs FACTORY_GITHUB_TOKEN_CMD")
             except Exception as exc:
-                console.print(f"  [yellow]⚠[/yellow] Could not write secrets: {exc}")
+                console.print(f"  [yellow]⚠[/yellow] Could not configure credential helper: {exc}")
+    else:
+        github_token = os.environ.get("FACTORY_GITHUB_TOKEN")
+        if not github_token:
+            console.print("\n  [bold]GitHub[/bold] — token needed for PR creation (github.com/settings/tokens, repo scope)")
+            github_token = ask(questionary.text(
+                "FACTORY_GITHUB_TOKEN (leave blank to skip):",
+                default="",
+            )).strip()
+            if github_token:
+                _write_env_var("FACTORY_GITHUB_TOKEN", github_token)
+                os.environ["FACTORY_GITHUB_TOKEN"] = github_token
+                console.print(f"  [green]✓[/green] FACTORY_GITHUB_TOKEN saved to [dim].env[/dim]")
+        if github_token:
+            if ask(questionary.confirm(
+                f"Write GITHUB_TOKEN to {worker_name} (~/.factory-secrets) for git clone/push?",
+                default=True,
+            )):
+                try:
+                    _write_worker_secrets(_client(worker_name, workers_path), github_token)
+                    console.print(f"  [green]✓[/green] GITHUB_TOKEN written to {worker_name}:~/.factory-secrets")
+                except Exception as exc:
+                    console.print(f"  [yellow]⚠[/yellow] Could not write secrets: {exc}")
 
     # Slack
     if not os.environ.get("SLACK_BOT_TOKEN"):
@@ -749,6 +763,22 @@ def _write_worker_secrets(client: SSHClient, github_token: str) -> None:
     client.run(
         "git config --global credential.helper "
         "'!f() { echo username=x-access-token; echo \"password=$GITHUB_TOKEN\"; }; f'",
+        timeout=10,
+    )
+
+
+def _write_worker_token_cmd(client: SSHClient, token_cmd: str) -> None:
+    """Point the worker's git credential helper at a token-minting command.
+
+    The helper runs token_cmd on every git auth challenge, so clone/fetch/push
+    always use a freshly minted GitHub token instead of a static one that expires.
+    """
+    helper = (
+        "!f() { echo username=x-access-token; "
+        f'echo "password=$({token_cmd})"; }}; f'
+    )
+    client.run(
+        f"git config --global credential.helper {shlex.quote(helper)}",
         timeout=10,
     )
 

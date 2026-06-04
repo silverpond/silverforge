@@ -66,6 +66,7 @@ Then edit `.env` and add:
 | Variable                  | Where to get it                                                                                            |
 | ------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | `FACTORY_GITHUB_TOKEN`    | Create at https://github.com/settings/tokens — scopes: `repo`, `issues`, `pull_requests`, `workflows`      |
+| `FACTORY_GITHUB_TOKEN_CMD` | Optional. A command that prints a fresh token to stdout, run on demand (takes precedence over `FACTORY_GITHUB_TOKEN`). Use it to drive short-lived GitHub App installation tokens. |
 | `SLACK_BOT_TOKEN`         | Ask your admin — from the shared Slack app at api.slack.com/apps                                           |
 | `SLACK_APP_TOKEN`         | Ask your admin — same Slack app, under "App-Level Tokens"                                                  |
 | `SLACK_DEFAULT_REVIEWERS` | Comma-separated Slack member IDs to invite to each run's channel (find yours at slack.com/account/profile) |

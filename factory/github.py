@@ -11,15 +11,43 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional
 
 
 def get_token() -> str:
+    """Return a GitHub token, minting a fresh one on demand when configured.
+
+    If ``FACTORY_GITHUB_TOKEN_CMD`` is set, it is run as a shell command every
+    time a token is needed and its stdout is used as the token. This lets the
+    factory drive short-lived GitHub App installation tokens (which expire
+    hourly) instead of a single static token. Falls back to the static
+    ``FACTORY_GITHUB_TOKEN`` when no command is configured.
+    """
+    cmd = os.environ.get("FACTORY_GITHUB_TOKEN_CMD")
+    if cmd:
+        try:
+            result = subprocess.run(
+                cmd, shell=True, capture_output=True, text=True, timeout=60, check=True
+            )
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(
+                f"FACTORY_GITHUB_TOKEN_CMD failed (exit {e.returncode}): {e.stderr.strip()}"
+            ) from e
+        except subprocess.TimeoutExpired as e:
+            raise RuntimeError("FACTORY_GITHUB_TOKEN_CMD timed out") from e
+        token = result.stdout.strip()
+        if not token:
+            raise RuntimeError("FACTORY_GITHUB_TOKEN_CMD produced an empty token")
+        return token
+
     token = os.environ.get("FACTORY_GITHUB_TOKEN")
     if not token:
-        raise RuntimeError("FACTORY_GITHUB_TOKEN environment variable not set")
+        raise RuntimeError(
+            "No GitHub token: set FACTORY_GITHUB_TOKEN or FACTORY_GITHUB_TOKEN_CMD"
+        )
     return token
 
 

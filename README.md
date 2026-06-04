@@ -1,6 +1,6 @@
 # Silverforge
 
-An automated software factory that runs Claude AI agents on a remote worker machine to implement tasks, reviews the code with Crucible, and opens pull requests — all from a single command.
+Hello! An automated software factory that runs Claude AI agents on a remote worker machine to implement tasks, reviews the code with Crucible, and opens pull requests — all from a single command.
 
 ---
 

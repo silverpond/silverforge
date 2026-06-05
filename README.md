@@ -58,28 +58,27 @@ The setup wizard asks for your worker username, SSH key, GitHub token, and Slack
 git clone https://github.com/silverpond/silverforge
 cd silverforge
 pip install -e .
-cp .env.example .env
+factory setup
 ```
 
-Then edit `.env` and add:
+> **Note:** `workers.yaml` is already configured for the Silverpond ares machine. Your personal SSH key and username stay in `.env` (gitignored) — not in the repo.
+
+### Environment variables
+
+`factory setup` fills these in automatically, but here's what each one does:
 
 | Variable                  | Where to get it                                                                                            |
 | ------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | `FACTORY_GITHUB_TOKEN`    | Create at https://github.com/settings/tokens — scopes: `repo`, `issues`, `pull_requests`, `workflows`      |
 | `SLACK_BOT_TOKEN`         | Ask your admin — from the shared Slack app at api.slack.com/apps                                           |
 | `SLACK_APP_TOKEN`         | Ask your admin — same Slack app, under "App-Level Tokens"                                                  |
-| `SLACK_DEFAULT_REVIEWERS` | Comma-separated Slack member IDs to invite to each run's channel (find yours at slack.com/account/profile) |
+| `SLACK_DEFAULT_REVIEWERS` | Comma-separated Slack member IDs to notify on your runs. To find yours: open Slack → click your profile picture → Profile → ⋯ menu → Copy member ID |
 
-Then run:
-
-```bash
-factory setup
-```
-
-> **Note:** `workers.yaml` is already configured for the Silverpond ares machine. Your personal SSH key and username stay in `.env` (gitignored) — not in the repo.
+Nix installs save these to `~/.config/factory/.env`. Pip installs use `.env` in the repo root (gitignored).
 
 ### Worker machine requirements
 
+- `python3`
 - `claude` CLI installed and authenticated
 - `tmux`
 - `crucible` — `nix profile install github:jonochang/crucible` (for code review)

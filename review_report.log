@@ -471,3 +471,255 @@ Findings:
 - **Iteration-order dependency in crucible feedback** `factory/runner.py:210`: By moving the baseline forward after each iteration, the incremental diff strategy creates an implicit dependency on iteration order. Identical code changes in different iteration sequences will receive different crucible feedback because they compare against different bases. This reduces reproducibility: running the same task twice with different intermediate code states will generate different crucible comments for the same final code. While acknowledged as an intended trade-off in the summary, this should be documented in code or task YAML schema to prevent confusion.
 - **Document iteration-order dependency in crucible feedback** `factory/runner.py:210`: By moving the baseline forward after each iteration, the incremental diff strategy creates an implicit dependency on iteration order. Identical code changes in different iteration sequences will receive different crucible feedback because they compare against different bases. This reduces reproducibility: running the same task twice with different intermediate code states will generate different crucible comments for the same final code. While this is an acknowledged trade-off to prevent timeouts, it should be documented in code to prevent confusion during debugging or refactoring.
 
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:04:50.900 +10:00] [progress] startup:references started Scanning related references
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:04:50.900 +10:00] [progress] startup:history started Collecting recent history
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:04:50.901 +10:00] [progress] startup:docs started Loading docs context
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:06:33.883 +10:00] [progress] startup:references completed count=0 duration=1.2s Reference scan complete
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:06:33.883 +10:00] [progress] startup:history completed count=19 duration=1.2s History collection complete
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:06:33.883 +10:00] [progress] startup:docs completed count=1 duration=1.2s Docs collection complete
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:06:33.884 +10:00] [progress] startup:prechecks started Running prechecks
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:06:33.884 +10:00] [progress] startup:prechecks completed count=2 duration=0.2s Prechecks complete
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:06:33.884 +10:00] [progress] run:header reviewers=claude-code max_rounds=1 changed_files=1 changed_lines=6 convergence_enabled=false context_enabled=true
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:06:33.884 +10:00] [progress] phase:start analyzer
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:06:33.884 +10:00] [progress] analyzer:start
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:06:33.884 +10:00] [agent-chat] -> claude-code index 0ec28ea..684514a 100644 ## Two ways to use it
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:06:33.884 +10:00] [analysis]
+## Local Diff Analysis
+
+A new **"Hello 👋"** welcome section has been added to README.md immediately after the repository description. This documentation change introduces new users to Silverforge's value proposition by explaining that the tool automates software engineering workflows by delegating coding tasks to Claude agents, running tests, performing code review, and opening PRs autonomously. The change is purely informational with no code impact, serving as improved onboarding and first-impression messaging. Placement is prominent and high in the README before detailed usage sections.
+
+### Suggested Review Focus
+- Accuracy of claims: The welcome section makes specific promises about functionality (delegates to Claude, runs tests, code review, opens PRs). Reviewers must verify these claims match implemented features and current capabilities in the codebase. False or aspirational claims could mislead users.
+- Tone and audience alignment: The message targets both new users and decision-makers. Verify the friendly tone (emoji, conversational language) and technical specificity are appropriate for the intended audience and don't oversell or undersell features.
+- Consistency with existing documentation: Check alignment with setup instructions, CLI commands, and architecture sections that follow. Verify the welcome section doesn't contradict or duplicate information in subsequent sections.
+- Positioning and structure: The new section is inserted after the initial description line. Reviewers should assess whether this placement improves document flow and whether the README hierarchy remains logical.
+
+### Trade-offs
+- Documentation-code drift: welcome messaging may become outdated if features are added, removed, or modified without updating this section
+- Specificity vs. flexibility: the detailed feature list (tests, code review, PR opening) binds documentation to current implementation—future pivots require updates
+- Scope creep: a welcome section may invite feature requests or set expectations beyond current scope; monitor GitHub issues and user feedback
+
+### Affected Modules
+- Documentation (README.md) — user-facing onboarding and marketing content only
+
+### Call Chain
+- N/A — pure documentation change, no code execution paths affected
+
+### Design Patterns
+- README onboarding pattern — friendly welcome section to engage new visitors before technical details
+- Value proposition statement — concise explanation of benefits (automated workflow, no manual work) before feature details
+
+### Reviewer Checklist
+- Verify all stated capabilities (Claude delegation, test running, code review, PR opening) are fully implemented and enabled in current version
+- Check for typos, grammar, and emoji rendering across common platforms (GitHub, websites)
+- Confirm tone matches brand voice and target audience (engineers, engineering managers, DevOps)
+- Ensure this section doesn't duplicate or contradict the 'Two ways to use it' section that follows
+- Review if claims like 'without any manual work in between' are realistic or require disclaimers (e.g., rate limits, eval phase failures)
+- Consider if major features (Docker sandbox, eval commands, crucible/untangle phases, agent fallback) should be mentioned or are covered later
+- Flag any forward-looking features marked as 'coming soon' vs. ready-now statements
+- If this README is published to a website, verify the welcome section makes sense in that context too
+
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:06:33.884 +10:00] [system-context]
+### System Context
+- Changed files: 1
+- Reference snippets: 0
+- History commits: 19
+- Docs snippets: 1
+- Deterministic prechecks: 2
+- Affected files:
+  - README.md
+- Precheck results:
+  - untangle-analyze-report [Fail] error: unexpected argument '.' found
+
+Usage: untangle analyze [OPTIONS] <PATH>
+
+For more information, try '--help'.
+  - untangle-quality-report [Fail] error: unrecognized subcommand 'quality'
+
+Usage: untangle <COMMAND>
+
+For more information, try '--help'.
+
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:06:33.884 +10:00] [progress] analyzer:done
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:06:33.884 +10:00] [progress] phase:done analyzer
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:06:33.885 +10:00] [progress] phase:start agent-preflight
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:06:33.885 +10:00] [progress] phase:done agent-preflight
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:06:33.885 +10:00] [progress] phase:start round-1
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:06:33.885 +10:00] [progress] round:1 start (agents: claude-code)
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:06:33.885 +10:00] [progress] round:1 status [... claude-code]
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:06:33.885 +10:00] [progress] round:1 status [RUN claude-code]
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:06:33.885 +10:00] [progress] agent:start round=1 id=claude-code
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:06:33.886 +10:00] [agent-chat] -> claude-code index 0ec28ea..684514a 100644 ## Two ways to use it
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:06:33.886 +10:00] [agent-review] round=1 id=claude-code 5 findings (0 Critical, 1 Warning, 4 Info) | This is a pure documentation change adding a welcome section to README.md. The change introduces a "Hello 👋" section that describes Silverforge's core functionality: delegating tasks to Claude, running tests, performing code review, and opening PRs. The review focuses on claim accuracy against implemented features, tone appropriateness, and consistency with existing documentation. Two key findings emerge: (1) an optimistic claim about "without any manual work in between" that could mislead users about failure scenarios, and (2) the phrase "with a single command" which oversimplifies the setup requirements slightly. Overall, the claims are substantially accurate but could be more precise about failure modes and prerequisites.
+[agent-review] details:
+Narrative:
+This is a pure documentation change adding a welcome section to README.md. The change introduces a "Hello 👋" section that describes Silverforge's core functionality: delegating tasks to Claude, running tests, performing code review, and opening PRs. The review focuses on claim accuracy against implemented features, tone appropriateness, and consistency with existing documentation. Two key findings emerge: (1) an optimistic claim about "without any manual work in between" that could mislead users about failure scenarios, and (2) the phrase "with a single command" which oversimplifies the setup requirements slightly. Overall, the claims are substantially accurate but could be more precise about failure modes and prerequisites.
+
+Findings:
+- [Warning] README.md:7 Qualify the automation claim to acknowledge retry limits and potential failure scenarios. Users should understand that while the system automates the happy path, exhausted retries or eval failures may require manual debugging.
+  description: The new welcome section claims the tool runs 'without any manual work in between.' This assumes the system always succeeds end-to-end. However, according to CLAUDE.md's architecture, the pipeline includes a retry loop that rebuilds prompts 'up to `max_iterations`' on blocking feedback. If max_iterations is exhausted or an unrecoverable error occurs (eval failure, evaluator rejection), manual intervention becomes necessary. The statement implies zero failure scenarios requiring user action, which is not guaranteed.
+- [Info] README.md:7 No factual inaccuracies detected. All four claimed features are fully implemented and available in the codebase.
+  description: The welcome section claims four capabilities: (1) 'delegating coding tasks to Claude' — verified in factory/coder.py and agent system; (2) 'running your tests' — verified via factory/evaluator.py running eval commands; (3) 'performing code review' — verified via factory/evaluator_agent.py and crucible phase; (4) 'opening PRs' — verified via factory/poller.py. All claims are accurate and backed by implemented features documented in the CLAUDE.md architecture section.
+- [Info] README.md:7 The phrase 'single command' is accurate for the operational workflow but omits setup context. Users should be directed to the setup section immediately after this introduction to set proper expectations.
+  description: The welcome section states 'Silverforge handles the entire pipeline with a single command.' While technically true for operation (factory run, factory poll), this claim omits important setup prerequisites: (1) 'factory setup' for one-time onboarding, (2) worker machine configuration (SSH, agents, tools), (3) .env variables (FACTORY_GITHUB_TOKEN, etc.). New users reading this might attempt to run the tool immediately without setup and encounter failures.
+- [Info] README.md:5-10 Establish a maintenance guideline: any changes to factory/runner.py pipeline phases or key modules should trigger a review of this welcome section for accuracy. Consider adding a comment in the code linking to this README section for cross-reference.
+  description: The new welcome section makes specific claims about implemented features (Claude agents, test running, code review, PR opening). If future versions modify, remove, or replace these phases (e.g., agent fallback to codex, removal of crucible phase, change to evaluator logic), this high-visibility section must be updated in parallel. There is currently no explicit maintenance process to keep this section synchronized with the architecture. This is a known trade-off from the review context.
+- [Info] README.md:5-9 The emoji choice is appropriate for a README on GitHub. No action required unless the README is published to multiple formats (plaintext, PDF, website) where fallbacks would be needed.
+  description: The welcome section header uses the 👋 emoji: '## Hello 👋'. GitHub renders emojis correctly, but this may cause issues in: (1) plaintext terminals or CI logs, (2) non-UTF-8 environments, (3) some markdown renderers that strip emoji. This is a very minor issue since most users will view README on GitHub.
+
+[agent-review]   [WARNING] README.md:7 Qualify the automation claim to acknowledge retry limits and potential failure scenarios. Users should understand that while the system automates the happy path, exhausted retries or eval failures may require manual debugging.
+[agent-review]   [INFO] README.md:7 No factual inaccuracies detected. All four claimed features are fully implemented and available in the codebase.
+[agent-review]   [INFO] README.md:7 The phrase 'single command' is accurate for the operational workflow but omits setup context. Users should be directed to the setup section immediately after this introduction to set proper expectations.
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:06:33.886 +10:00] [progress] round:1 status [OK claude-code (64.3s)]
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:06:33.886 +10:00] [progress] agent:done round=1 id=claude-code
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:06:33.886 +10:00] [progress] round:1 done
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:06:33.886 +10:00] [progress] round:1/1 complete
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:06:33.886 +10:00] [progress] phase:done round-1
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:06:33.886 +10:00] [agent-chat] -> claude-code Normalize these findings into canonical issues (merge duplicates): [{"agent":"claude-code","severity":"Warning","confidence":"High","file":"README.md","span":{"start":7,"end":7},"m
+…
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:06:33.887 +10:00] [progress] phase:start finalize
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:06:33.887 +10:00] [agent-chat] -> claude-code Findings: [{"agent":"claude-code","severity":"Warning","confidence":"High","file":"README.md","span":{"start":7,"end":7},"message":"Qualify the automation claim to acknowledge retr
+…
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:06:33.887 +10:00] [progress] autofix:ready
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:06:33.887 +10:00] [run:808c85e0-1dc5-46b2-a721-057ba25bfd86] [2026-06-05 11:06:33.887 +10:00] [progress] phase:done finalize
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86]
+[2026-06-05 11:06:33.889 +10:00] [report]
+{
+  "agent_failures": [],
+  "analysis_markdown": "## Local Diff Analysis\n\nA new **\"Hello 👋\"** welcome section has been added to README.md immediately after the repository description. This documentation change introduces new users to Silverforge's value proposition by explaining that the tool automates software engineering workflows by delegating coding tasks to Claude agents, running tests, performing code review, and opening PRs autonomously. The change is purely informational with no code impact, serving as improved onboarding and first-impression messaging. Placement is prominent and high in the README before detailed usage sections.\n\n### Suggested Review Focus\n- Accuracy of claims: The welcome section makes specific promises about functionality (delegates to Claude, runs tests, code review, opens PRs). Reviewers must verify these claims match implemented features and current capabilities in the codebase. False or aspirational claims could mislead users.\n- Tone and audience alignment: The message targets both new users and decision-makers. Verify the friendly tone (emoji, conversational language) and technical specificity are appropriate for the intended audience and don't oversell or undersell features.\n- Consistency with existing documentation: Check alignment with setup instructions, CLI commands, and architecture sections that follow. Verify the welcome section doesn't contradict or duplicate information in subsequent sections.\n- Positioning and structure: The new section is inserted after the initial description line. Reviewers should assess whether this placement improves document flow and whether the README hierarchy remains logical.\n\n### Trade-offs\n- Documentation-code drift: welcome messaging may become outdated if features are added, removed, or modified without updating this section\n- Specificity vs. flexibility: the detailed feature list (tests, code review, PR opening) binds documentation to current implementation—future pivots require updates\n- Scope creep: a welcome section may invite feature requests or set expectations beyond current scope; monitor GitHub issues and user feedback\n\n### Affected Modules\n- Documentation (README.md) — user-facing onboarding and marketing content only\n\n### Call Chain\n- N/A — pure documentation change, no code execution paths affected\n\n### Design Patterns\n- README onboarding pattern — friendly welcome section to engage new visitors before technical details\n- Value proposition statement — concise explanation of benefits (automated workflow, no manual work) before feature details\n\n### Reviewer Checklist\n- Verify all stated capabilities (Claude delegation, test running, code review, PR opening) are fully implemented and enabled in current version\n- Check for typos, grammar, and emoji rendering across common platforms (GitHub, websites)\n- Confirm tone matches brand voice and target audience (engineers, engineering managers, DevOps)\n- Ensure this section doesn't duplicate or contradict the 'Two ways to use it' section that follows\n- Review if claims like 'without any manual work in between' are realistic or require disclaimers (e.g., rate limits, eval phase failures)\n- Consider if major features (Docker sandbox, eval commands, crucible/untangle phases, agent fallback) should be mentioned or are covered later\n- Flag any forward-looking features marked as 'coming soon' vs. ready-now statements\n- If this README is published to a website, verify the welcome section makes sense in that context too\n",
+  "auto_fix": {
+    "explanation": "The original claim 'without any manual work in between' was overly optimistic and did not account for the retry limit mechanics documented in CLAUDE.md. The pipeline includes 'rebuild the prompt with the failure reason and retry (up to `max_iterations`)' logic, meaning that when max_iterations is exhausted or an unrecoverable eval failure occurs, manual intervention becomes necessary. The revised text:\n\n1. **Qualifies the automation claim**: Changes 'without any manual work in between' to 'with built-in retry logic handling the entire pipeline automatically' — this acknowledges the retry mechanism and sets realistic expectations.\n\n2. **Adds explicit failure scenario handling**: Appends 'though exhausted retries or eval failures may require manual adjustment' — this directly addresses the concern raised in the finding by explicitly stating when manual work becomes necessary.\n\n3. **Softens absolute language**: Changes 'handles the entire pipeline' to 'handles the vast majority of work' — this avoids implying 100% success rate and avoids misleading users about edge cases.\n\nThis revision maintains the positive tone while being truthful about the system's actual behavior and limitations, aligning with the architecture documented in CLAUDE.md.",
+    "unified_diff": "--- a/README.md\n+++ b/README.md\n@@ -4,6 +4,12 @@ An automated software factory that runs Claude AI agents on a remote worker mach\n \n ---\n \n+## Hello 👋\n+\n+Welcome to Silverforge! This tool automates your software engineering workflow by delegating coding tasks to Claude, running your tests, performing code review, and opening PRs — with built-in retry logic handling the entire pipeline automatically. Whether you're fixing bugs, adding features, or refactoring code, Silverforge handles the vast majority of work with a single command, though exhausted retries or eval failures may require manual adjustment.\n+\n+---\n+\n ## Two ways to use it\n \n ### 1. One-off task"
+  },
+  "consensus": [
+    {
+      "agreed_count": 1,
+      "file": "README.md",
+      "reached_quorum": true,
+      "severity": "Warning",
+      "span": {
+        "end": 7,
+        "start": 7
+      },
+      "total_agents": 1
+    }
+  ],
+  "final_action_plan": {
+    "prioritized_steps": [
+      "[Warning] Overly optimistic claim about fully automated workflow without manual intervention (README.md:7)"
+    ],
+    "quick_wins": []
+  },
+  "final_analysis_markdown": "## Final Analysis\n\n- Issues: 1 (Critical: 0, Warning: 1, Info: 0)\n- Agent failures: 0\n\n### Top Issues\n- [Warning] Overly optimistic claim about fully automated workflow without manual intervention `README.md:7`\n\n### Action Plan\n- [Warning] Overly optimistic claim about fully automated workflow without manual intervention (README.md:7)\n",
+  "findings": [
+    {
+      "agent": "claude-code",
+      "category": "correctness",
+      "confidence": "High",
+      "description": "The new welcome section claims the tool runs 'without any manual work in between.' This assumes the system always succeeds end-to-end. However, according to CLAUDE.md's architecture, the pipeline includes a retry loop that rebuilds prompts 'up to `max_iterations`' on blocking feedback. If max_iterations is exhausted or an unrecoverable error occurs (eval failure, evaluator rejection), manual intervention becomes necessary. The statement implies zero failure scenarios requiring user action, which is not guaranteed.",
+      "evidence": [
+        {
+          "location": "README.md:7",
+          "quote": "without any manual work in between"
+        },
+        {
+          "location": "CLAUDE.md (Pipeline flow)",
+          "quote": "On any blocking feedback, rebuild the prompt with the failure reason and retry (up to `max_iterations`)"
+        }
+      ],
+      "file": "README.md",
+      "message": "Qualify the automation claim to acknowledge retry limits and potential failure scenarios. Users should understand that while the system automates the happy path, exhausted retries or eval failures may require manual debugging.",
+      "raised_by": [
+        "claude-code"
+      ],
+      "round": 1,
+      "severity": "Warning",
+      "span": {
+        "end": 7,
+        "start": 7
+      },
+      "suggested_fix": "Revise to: 'Without any manual work in between (when successful)' or 'Handles the entire pipeline automatically with built-in retry logic, getting out of your way unless a task hits its retry limit and needs adjustment.' This sets realistic expectations.",
+      "title": "Overly optimistic claim about fully automated workflow without manual intervention"
+    }
+  ],
+  "issues": [
+    {
+      "category": "correctness",
+      "description": "The new welcome section claims the tool runs 'without any manual work in between.' This assumes the system always succeeds end-to-end. However, according to CLAUDE.md's architecture, the pipeline includes a retry loop that rebuilds prompts 'up to `max_iterations`' on blocking feedback. If max_iterations is exhausted or an unrecoverable error occurs (eval failure, evaluator rejection), manual intervention becomes necessary. The statement implies zero failure scenarios requiring user action, which is not guaranteed.",
+      "evidence": [
+        {
+          "location": "README.md:7",
+          "quote": "without any manual work in between"
+        },
+        {
+          "location": "CLAUDE.md (Pipeline flow)",
+          "quote": "On any blocking feedback, rebuild the prompt with the failure reason and retry (up to `max_iterations`)"
+        }
+      ],
+      "file": "README.md",
+      "line_end": 7,
+      "line_start": 7,
+      "raised_by": [
+        "claude-code"
+      ],
+      "severity": "Warning",
+      "suggested_fix": "Revise to: 'Without any manual work in between (when successful)' or 'Handles the entire pipeline automatically with built-in retry logic, getting out of your way unless a task hits its retry limit and needs adjustment.' This sets realistic expectations.",
+      "title": "Overly optimistic claim about fully automated workflow without manual intervention"
+    }
+  ],
+  "pr_comment_markdown": "## Crucible Review Summary\n\n- Issues: 1\n- Critical: 0, Warning: 1\n\n### Top Actions\n- [Warning] Overly optimistic claim about fully automated workflow without manual intervention (README.md:7)\n\n### Notable Issues\n- **Overly optimistic claim about fully automated workflow without manual intervention** `README.md:7`: The new welcome section claims the tool runs 'without any manual work in between.' This assumes the system always succeeds end-to-end. However, according to CLAUDE.md's architecture, the pipeline includes a retry loop that rebuilds prompts 'up to `max_iterations`' on blocking feedback. If max_iterations is exhausted or an unrecoverable error occurs (eval failure, evaluator rejection), manual intervention becomes necessary. The statement implies zero failure scenarios requiring user action, which is not guaranteed.\n",
+  "pr_review_draft": {
+    "inline_comments": [
+      {
+        "body": "**Overly optimistic claim about fully automated workflow without manual intervention**\n\nThe new welcome section claims the tool runs 'without any manual work in between.' This assumes the system always succeeds end-to-end. However, according to CLAUDE.md's architecture, the pipeline includes a retry loop that rebuilds prompts 'up to `max_iterations`' on blocking feedback. If max_iterations is exhausted or an unrecoverable error occurs (eval failure, evaluator rejection), manual intervention becomes necessary. The statement implies zero failure scenarios requiring user action, which is not guaranteed.\n\nRaised by: claude-code\n\nSuggested fix: Revise to: 'Without any manual work in between (when successful)' or 'Handles the entire pipeline automatically with built-in retry logic, getting out of your way unless a task hits its retry limit and needs adjustment.' This sets realistic expectations.",
+        "category": "correctness",
+        "description": "The new welcome section claims the tool runs 'without any manual work in between.' This assumes the system always succeeds end-to-end. However, according to CLAUDE.md's architecture, the pipeline includes a retry loop that rebuilds prompts 'up to `max_iterations`' on blocking feedback. If max_iterations is exhausted or an unrecoverable error occurs (eval failure, evaluator rejection), manual intervention becomes necessary. The statement implies zero failure scenarios requiring user action, which is not guaranteed.",
+        "line": 7,
+        "mapping_note": null,
+        "mapping_status": "Inline",
+        "path": "README.md",
+        "severity": "Warning",
+        "side": "Right",
+        "source_agents": [
+          "claude-code"
+        ],
+        "start_line": null,
+        "start_side": null,
+        "title": "Overly optimistic claim about fully automated workflow without manual intervention"
+      }
+    ],
+    "overview_comment": {
+      "body": "## Crucible Review Summary\n\n- Issues: 1\n- Critical: 0, Warning: 1\n\n### Top Actions\n- [Warning] Overly optimistic claim about fully automated workflow without manual intervention (README.md:7)\n\n### Notable Issues\n- **Overly optimistic claim about fully automated workflow without manual intervention** `README.md:7`: The new welcome section claims the tool runs 'without any manual work in between.' This assumes the system always succeeds end-to-end. However, according to CLAUDE.md's architecture, the pipeline includes a retry loop that rebuilds prompts 'up to `max_iterations`' on blocking feedback. If max_iterations is exhausted or an unrecoverable error occurs (eval failure, evaluator rejection), manual intervention becomes necessary. The statement implies zero failure scenarios requiring user action, which is not guaranteed.\n"
+    },
+    "overview_only_comments": []
+  },
+  "run_id": "808c85e0-1dc5-46b2-a721-057ba25bfd86",
+  "session_id": "808c85e0-1dc5-46b2-a721-057ba25bfd86",
+  "system_context_markdown": "### System Context\n- Changed files: 1\n- Reference snippets: 0\n- History commits: 19\n- Docs snippets: 1\n- Deterministic prechecks: 2\n- Affected files:\n  - README.md\n- Precheck results:\n  - untangle-analyze-report [Fail] error: unexpected argument '.' found\n\nUsage: untangle analyze [OPTIONS] <PATH>\n\nFor more information, try '--help'.\n  - untangle-quality-report [Fail] error: unrecognized subcommand 'quality'\n\nUsage: untangle <COMMAND>\n\nFor more information, try '--help'.\n",
+  "verdict": "Warn"
+}
+[run:808c85e0-1dc5-46b2-a721-057ba25bfd86]
+[2026-06-05 11:06:33.889 +10:00] [final-analysis]
+## Final Analysis
+
+- Issues: 1 (Critical: 0, Warning: 1, Info: 0)
+- Agent failures: 0
+
+### Top Issues
+- [Warning] Overly optimistic claim about fully automated workflow without manual intervention `README.md:7`
+
+### Action Plan
+- [Warning] Overly optimistic claim about fully automated workflow without manual intervention (README.md:7)
+
+[2026-06-05 11:06:33.889 +10:00] [pr-comment]
+## Crucible Review Summary
+
+- Issues: 1
+- Critical: 0, Warning: 1
+
+### Top Actions
+- [Warning] Overly optimistic claim about fully automated workflow without manual intervention (README.md:7)
+
+### Notable Issues
+- **Overly optimistic claim about fully automated workflow without manual intervention** `README.md:7`: The new welcome section claims the tool runs 'without any manual work in between.' This assumes the system always succeeds end-to-end. However, according to CLAUDE.md's architecture, the pipeline includes a retry loop that rebuilds prompts 'up to `max_iterations`' on blocking feedback. If max_iterations is exhausted or an unrecoverable error occurs (eval failure, evaluator rejection), manual intervention becomes necessary. The statement implies zero failure scenarios requiring user action, which is not guaranteed.
+

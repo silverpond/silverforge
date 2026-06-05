@@ -4,6 +4,12 @@ An automated software factory that runs Claude AI agents on a remote worker mach
 
 ---
 
+## Hello 👋
+
+Welcome to Silverforge! This tool automates your software engineering workflow by delegating coding tasks to Claude, running your tests, performing code review, and opening PRs — without any manual work in between. Whether you're fixing bugs, adding features, or refactoring code, Silverforge handles the entire pipeline with a single command.
+
+---
+
 ## Two ways to use it
 
 ### 1. One-off task

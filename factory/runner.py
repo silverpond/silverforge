@@ -419,9 +419,11 @@ def watch_task(
                                     daemon=True,
                                 )
                                 lesson_thread.start()
+                                run_unregistered = False
                                 if task.slack and task.slack.pause_for_review > 0:
                                     if run.slack_thread_ts:
                                         sess.unregister_run(client, run.slack_thread_ts)
+                                        run_unregistered = True
                                     if not _pause_for_review(slack_client, run, task.slack.pause_for_review, run_id):
                                         lesson_thread.join(timeout=95)
                                         sess.kill_session(client, session_name)
@@ -431,7 +433,7 @@ def watch_task(
                                         return run
                                 lesson_thread.join(timeout=95)
                                 sess.kill_session(client, session_name)
-                                if run.slack_thread_ts and not (task.slack and task.slack.pause_for_review > 0):
+                                if run.slack_thread_ts and not run_unregistered:
                                     sess.unregister_run(client, run.slack_thread_ts)
                                 _maybe_open_pr(run, task, worker, repo, issue_number, workers_path, slack_client)
                                 return run
@@ -518,9 +520,11 @@ def watch_task(
                         daemon=True,
                     )
                     lesson_thread.start()
+                    run_unregistered = False
                     if task.slack and task.slack.pause_for_review > 0:
                         if run.slack_thread_ts:
                             sess.unregister_run(client, run.slack_thread_ts)
+                            run_unregistered = True
                         if not _pause_for_review(slack_client, run, task.slack.pause_for_review, run_id):
                             lesson_thread.join(timeout=95)
                             sess.kill_session(client, session_name)
@@ -530,7 +534,7 @@ def watch_task(
                             return run
                     lesson_thread.join(timeout=95)
                     sess.kill_session(client, session_name)
-                    if run.slack_thread_ts and not (task.slack and task.slack.pause_for_review > 0):
+                    if run.slack_thread_ts and not run_unregistered:
                         sess.unregister_run(client, run.slack_thread_ts)
                     _maybe_open_pr(run, task, worker, repo, issue_number, workers_path, slack_client)
                     return run

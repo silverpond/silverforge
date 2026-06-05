@@ -420,18 +420,18 @@ def watch_task(
                                 )
                                 lesson_thread.start()
                                 if task.slack and task.slack.pause_for_review > 0:
+                                    if run.slack_thread_ts:
+                                        sess.unregister_run(client, run.slack_thread_ts)
                                     if not _pause_for_review(slack_client, run, task.slack.pause_for_review, run_id):
                                         lesson_thread.join(timeout=95)
                                         sess.kill_session(client, session_name)
-                                        if run.slack_thread_ts:
-                                            sess.unregister_run(client, run.slack_thread_ts)
                                         run.state = RunState.human_review
                                         store.save_run(run)
                                         _log(run_id, "  state=human_review (pause-and-review: not approved)")
                                         return run
                                 lesson_thread.join(timeout=95)
                                 sess.kill_session(client, session_name)
-                                if run.slack_thread_ts:
+                                if run.slack_thread_ts and not (task.slack and task.slack.pause_for_review > 0):
                                     sess.unregister_run(client, run.slack_thread_ts)
                                 _maybe_open_pr(run, task, worker, repo, issue_number, workers_path, slack_client)
                                 return run
@@ -519,18 +519,18 @@ def watch_task(
                     )
                     lesson_thread.start()
                     if task.slack and task.slack.pause_for_review > 0:
+                        if run.slack_thread_ts:
+                            sess.unregister_run(client, run.slack_thread_ts)
                         if not _pause_for_review(slack_client, run, task.slack.pause_for_review, run_id):
                             lesson_thread.join(timeout=95)
                             sess.kill_session(client, session_name)
-                            if run.slack_thread_ts:
-                                sess.unregister_run(client, run.slack_thread_ts)
                             run.state = RunState.human_review
                             store.save_run(run)
                             _log(run_id, "  state=human_review (pause-and-review: not approved)")
                             return run
                     lesson_thread.join(timeout=95)
                     sess.kill_session(client, session_name)
-                    if run.slack_thread_ts:
+                    if run.slack_thread_ts and not (task.slack and task.slack.pause_for_review > 0):
                         sess.unregister_run(client, run.slack_thread_ts)
                     _maybe_open_pr(run, task, worker, repo, issue_number, workers_path, slack_client)
                     return run

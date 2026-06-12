@@ -63,7 +63,10 @@ class GitHubClient:
 
     def get_authenticated_user(self) -> str:
         """Return the GitHub login of the user the token belongs to."""
-        return self._request("GET", "/user")["login"]
+        user_data = self._request("GET", "/user")
+        if isinstance(user_data, dict) and "login" in user_data:
+            return user_data["login"]
+        raise RuntimeError("Unexpected response format from GitHub /user endpoint")
 
     # ── Repo ──────────────────────────────────────────────────────────────────
 
@@ -127,6 +130,8 @@ class GitHubClient:
 
     def add_assignees(self, repo: str, number: int, assignees: List[str]) -> None:
         """Assign one or more GitHub users to a PR or issue."""
+        if not assignees:
+            return
         self._request(
             "POST",
             f"/repos/{repo}/issues/{number}/assignees",

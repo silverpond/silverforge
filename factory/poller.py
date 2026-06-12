@@ -163,6 +163,15 @@ def _push_and_pr(
         typer.echo(f"WARNING: could not open PR: {exc}")
         return None
 
+    # Assign the PR to the engineer who started the worker (owner of the token).
+    try:
+        assignee = gh.get_authenticated_user()
+        gh.add_assignees(repo, pr["number"], [assignee])
+        if number:
+            _plog(number, f"PR assigned to @{assignee}", style="green")
+    except Exception as exc:
+        typer.echo(f"WARNING: could not assign PR: {exc}")
+
     if run.gemini_summary:
         try:
             gh.comment_on_pr(repo, pr["number"], f"## Changes\n\n{run.gemini_summary}")

@@ -59,6 +59,12 @@ class GitHubClient:
         except urllib.error.HTTPError as e:
             raise RuntimeError(f"GitHub API error {e.code}: {e.read().decode()}") from e
 
+    # ── User ──────────────────────────────────────────────────────────────────
+
+    def get_authenticated_user(self) -> str:
+        """Return the GitHub login of the user the token belongs to."""
+        return self._request("GET", "/user")["login"]
+
     # ── Repo ──────────────────────────────────────────────────────────────────
 
     def get_default_branch(self, repo: str) -> str:
@@ -118,3 +124,11 @@ class GitHubClient:
             "head": head,
             "base": base,
         })
+
+    def add_assignees(self, repo: str, number: int, assignees: List[str]) -> None:
+        """Assign one or more GitHub users to a PR or issue."""
+        self._request(
+            "POST",
+            f"/repos/{repo}/issues/{number}/assignees",
+            data={"assignees": assignees},
+        )

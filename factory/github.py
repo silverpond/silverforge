@@ -59,6 +59,15 @@ class GitHubClient:
         except urllib.error.HTTPError as e:
             raise RuntimeError(f"GitHub API error {e.code}: {e.read().decode()}") from e
 
+    # ── User ──────────────────────────────────────────────────────────────────
+
+    def get_authenticated_user(self) -> str:
+        """Return the GitHub login of the user the token belongs to."""
+        user_data = self._request("GET", "/user")
+        if isinstance(user_data, dict) and "login" in user_data:
+            return user_data["login"]
+        raise RuntimeError("Unexpected response format from GitHub /user endpoint")
+
     # ── Repo ──────────────────────────────────────────────────────────────────
 
     def get_default_branch(self, repo: str) -> str:
@@ -118,3 +127,13 @@ class GitHubClient:
             "head": head,
             "base": base,
         })
+
+    def add_assignees(self, repo: str, number: int, assignees: List[str]) -> None:
+        """Assign one or more GitHub users to a PR or issue."""
+        if not assignees:
+            return
+        self._request(
+            "POST",
+            f"/repos/{repo}/issues/{number}/assignees",
+            data={"assignees": assignees},
+        )
